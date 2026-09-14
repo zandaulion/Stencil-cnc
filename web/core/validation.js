@@ -143,11 +143,23 @@ export function validateDesign(mask, config) {
       if (!surviving.has(component.id)) undersizedOpenings.push(component);
     }
     if (undersizedOpenings.length > 0) {
+      const locations = undersizedOpenings.map((component) => ({
+        componentId: component.id,
+        pixelCount: component.pixelCount,
+        bounds: component.bounds,
+      }));
       issues.push(issue(
         "MIN_OPENING_UNCUTTABLE",
         "error",
         `${undersizedOpenings.length} removed ${undersizedOpenings.length === 1 ? "region is" : "regions are"} too small for the configured minimum opening.`,
-        { componentCount: undersizedOpenings.length, minimumOpeningMm },
+        {
+          phase: "opening",
+          componentCount: undersizedOpenings.length,
+          minimumOpeningMm,
+          componentId: locations[0].componentId,
+          bounds: locations[0].bounds,
+          locations,
+        },
       ));
     }
   }
@@ -163,7 +175,7 @@ export function validateDesign(mask, config) {
         "MIN_CUT_GAP",
         "error",
         `Separate cuts are only ${gap.gapMm.toFixed(2)} mm apart; the configured minimum is ${minimumWebMm} mm.`,
-        { minimumWebMm, ...gap },
+        { phase: "cutGap", minimumWebMm, ...gap },
       ));
     }
   }
@@ -247,6 +259,8 @@ export function validateDesign(mask, config) {
     minimumWebCoreMask,
     openingCoreMask,
     undersizedOpenings,
+    removed,
+    removedMask,
     thinAreaMask,
     metrics: {
       widthMm: config.sheet.widthMm,
@@ -302,6 +316,10 @@ function findCutGapViolation(removedMask, labels, sheet, minimumGapMm) {
             return {
               gapMm,
               componentIds: [other.componentId, componentId],
+              points: [
+                { x: other.x, y: other.y },
+                { x, y },
+              ],
               bounds: {
                 minX: Math.min(x, other.x),
                 minY: Math.min(y, other.y),

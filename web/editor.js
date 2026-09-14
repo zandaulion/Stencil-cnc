@@ -130,6 +130,7 @@ const state = {
   issues: [],
   issueFilter: 'all',
   highlightedIssue: null,
+  highlightedIssueLocation: 0,
   validated: false,
   revision: 0,
   validatedRevision: -1,
@@ -846,6 +847,7 @@ function invalidateValidation({ clearAnalysis = false } = {}) {
   state.validatedRevision = -1;
   state.validation = null;
   state.highlightedIssue = null;
+  state.highlightedIssueLocation = 0;
   if (clearAnalysis) state.analysis = null;
   updateExportReadiness();
 }
@@ -971,7 +973,10 @@ async function runValidation() {
 /* ----------------------------------------------------------------- issues */
 
 function renderIssues(issues) {
-  if (state.highlightedIssue && !issues.includes(state.highlightedIssue)) state.highlightedIssue = null;
+  if (state.highlightedIssue && !issues.includes(state.highlightedIssue)) {
+    state.highlightedIssue = null;
+    state.highlightedIssueLocation = 0;
+  }
   state.issues = issues;
   const list = el('issue-list');
   if (!list) return;
@@ -1018,14 +1023,18 @@ function renderIssues(issues) {
     return;
   }
   list.innerHTML = shown.map(({ issue, index }) => {
-    const selectable = Number.isInteger(issue.details?.componentId) && issue.details?.bounds;
+    const selectable = Boolean(issue.details?.bounds);
+    const locationCount = issue.details?.locations?.length ?? 1;
+    const locationLabel = issue === state.highlightedIssue && locationCount > 1
+      ? `${state.highlightedIssueLocation + 1}/${locationCount} · Next`
+      : 'Locate';
     return `
     <li class="issue-item${issue === state.highlightedIssue ? ' is-selected' : ''}" data-severity="${issue.severity}"
       data-issue-index="${index}" ${selectable ? `data-highlightable="true" role="button" tabindex="0" aria-pressed="${issue === state.highlightedIssue}"` : ''}>
       <i class="severity-dot ${issue.severity}"></i>
       <div><strong>${escapeHtml(issue.message || issue.code || 'Issue')}</strong>
       ${detailText(issue) ? `<small>${escapeHtml(detailText(issue))}</small>` : ''}</div>
-      ${selectable ? '<span class="issue-locate" aria-hidden="true">Locate</span>' : ''}
+      ${selectable ? `<span class="issue-locate" aria-hidden="true">${locationLabel}</span>` : ''}
     </li>`;
   }).join('');
 }
@@ -1051,8 +1060,16 @@ function detailText(issue) {
     .join(' · ');
 }
 
+function activeIssueDetails(issue) {
+  const details = issue?.details;
+  const locations = details?.locations;
+  if (!Array.isArray(locations) || locations.length === 0) return details;
+  const location = locations[Math.min(state.highlightedIssueLocation, locations.length - 1)];
+  return { ...details, ...location };
+}
+
 function focusIssue(issue) {
-  const bounds = issue?.details?.bounds;
+  const bounds = activeIssueDetails(issue)?.bounds;
   const viewport = el('canvas-viewport');
   if (!bounds || !viewport || !state.designMask) return;
   const availableWidth = Math.max(80, viewport.clientWidth - 120);
@@ -1074,8 +1091,17 @@ function focusIssue(issue) {
 
 function toggleIssueHighlight(index) {
   const issue = state.issues[index];
-  if (!issue || !Number.isInteger(issue.details?.componentId) || !issue.details?.bounds) return;
-  state.highlightedIssue = state.highlightedIssue === issue ? null : issue;
+  if (!issue?.details?.bounds) return;
+  const locations = issue.details.locations;
+  if (state.highlightedIssue === issue && Array.isArray(locations) && locations.length > 1) {
+    state.highlightedIssueLocation = (state.highlightedIssueLocation + 1) % locations.length;
+  } else if (state.highlightedIssue === issue) {
+    state.highlightedIssue = null;
+    state.highlightedIssueLocation = 0;
+  } else {
+    state.highlightedIssue = issue;
+    state.highlightedIssueLocation = 0;
+  }
   renderIssues(state.issues);
   if (state.highlightedIssue) {
     setSidePanel('issues');
@@ -1159,11 +1185,12 @@ function draw() {
     .sort((first, second) => second.pixelCount - first.pixelCount || first.id - second.id)
     .slice(1)
     .map((component) => component.id));
-  const highlighted = state.highlightedIssue?.details;
+  const highlighted = activeIssueDetails(state.highlightedIssue);
   let highlightedLabels = null;
   if (highlighted?.phase === 'analysis') highlightedLabels = state.analysis?.labels;
   else if (highlighted?.phase === 'postKerf') highlightedLabels = state.validation?.postKerf?.labels;
   else if (highlighted?.phase === 'minimumWeb') highlightedLabels = state.validation?.minimumWebCore?.labels;
+  else if (highlighted?.phase === 'opening') highlightedLabels = state.validation?.removed?.labels;
   else if (highlighted) highlightedLabels = state.validation?.initial?.labels;
 
   for (let index = 0; index < shown.data.length; index += 1) {
@@ -1172,12 +1199,12 @@ function draw() {
     let r = state.view === 'backlit' ? 255 : 245;
     let g = state.view === 'backlit' ? 241 : 244;
     let b = state.view === 'backlit' ? 190 : 240;
-    if (metal) {
+    const isHighlighted = highlightedLabels &&
+      highlightedLabels[index] === highlighted.componentId;
+    if (isHighlighted) { r = 244; g = 127; b = 36; }
+    else if (metal) {
       const unsupported = labels && disconnectedIds.has(labels[index]);
-      const isHighlighted = highlightedLabels &&
-        highlightedLabels[index] === highlighted.componentId;
-      if (isHighlighted) { r = 244; g = 127; b = 36; }
-      else if (unsupported) { r = 190; g = 72; b = 48; }
+      if (unsupported) { r = 190; g = 72; b = 48; }
       else if (state.view === 'backlit') { r = 20; g = 28; b = 33; }
       else { r = 42; g = 46; b = 52; }
     }
@@ -1288,7 +1315,8 @@ function drawOverlay(overlay, mask) {
     }
   }
 
-  const bounds = state.highlightedIssue?.details?.bounds;
+  const activeDetails = activeIssueDetails(state.highlightedIssue);
+  const bounds = activeDetails?.bounds;
   if (bounds) {
     const padding = Math.max(3, 6 / Math.max(state.zoom, 0.1));
     context.strokeStyle = '#f47f24';
@@ -1301,6 +1329,21 @@ function drawOverlay(overlay, mask) {
       Math.min(mask.height - bounds.minY, bounds.height + padding * 2),
     );
     context.setLineDash([]);
+    if (Array.isArray(activeDetails.points) && activeDetails.points.length === 2) {
+      const points = activeDetails.points.map((point) => ({ x: point.x + 0.5, y: point.y + 0.5 }));
+      context.strokeStyle = '#f47f24';
+      context.fillStyle = '#f47f24';
+      context.lineWidth = Math.max(2, 3 / Math.max(state.zoom, 0.1));
+      context.beginPath();
+      context.moveTo(points[0].x, points[0].y);
+      context.lineTo(points[1].x, points[1].y);
+      context.stroke();
+      for (const point of points) {
+        context.beginPath();
+        context.arc(point.x, point.y, Math.max(2, 4 / Math.max(state.zoom, 0.1)), 0, Math.PI * 2);
+        context.fill();
+      }
+    }
   }
 }
 

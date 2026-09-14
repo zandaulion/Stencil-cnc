@@ -85,7 +85,11 @@ test("cuts closer than the configured plasma gap block export", () => {
 
   const blocked = validateDesign(tooClose, config);
   assert.equal(blocked.valid, false);
-  assert.ok(blocked.errors.some((entry) => entry.code === "MIN_CUT_GAP"));
+  const gap = blocked.errors.find((entry) => entry.code === "MIN_CUT_GAP");
+  assert.ok(gap);
+  assert.equal(gap.details.phase, "cutGap");
+  assert.equal(typeof gap.details.bounds.minX, "number");
+  assert.equal(gap.details.points.length, 2);
 
   const accepted = validateDesign(safe, { ...config, sheet: { widthMm: 12, heightMm: 5 } });
   assert.ok(!accepted.errors.some((entry) => entry.code === "MIN_CUT_GAP"));
@@ -123,7 +127,31 @@ test("minimum-opening validation rejects a removed region too small for the cutt
   });
 
   assert.equal(validation.valid, false);
-  assert.ok(validation.errors.some((entry) => entry.code === "MIN_OPENING_UNCUTTABLE"));
+  const opening = validation.errors.find((entry) => entry.code === "MIN_OPENING_UNCUTTABLE");
+  assert.ok(opening);
+  assert.equal(opening.details.phase, "opening");
+  assert.equal(opening.details.locations.length, 1);
+  assert.equal(typeof opening.details.bounds.minX, "number");
+  assert.ok(validation.removed.components.some((component) => component.id === opening.details.componentId));
+});
+
+test("a grouped opening error retains every individual location", () => {
+  const mask = maskFromAscii([
+    "#######",
+    "##.#.##",
+    "#######",
+  ]);
+  const validation = validateDesign(mask, {
+    sheet: { widthMm: 7, heightMm: 3 },
+    minimumOpeningMm: 2,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const opening = validation.errors.find((entry) => entry.code === "MIN_OPENING_UNCUTTABLE");
+
+  assert.equal(opening.details.componentCount, 2);
+  assert.equal(opening.details.locations.length, 2);
+  assert.notEqual(opening.details.locations[0].componentId, opening.details.locations[1].componentId);
 });
 
 test("project validation carries the plasma minimum opening into the pipeline", () => {

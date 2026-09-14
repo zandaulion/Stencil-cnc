@@ -26,6 +26,13 @@ test('automatic supports stay separate and advertise when artwork made them stal
   assert.match(editor, /bridge\.source === 'automatic'/);
 });
 
+test('grouped manufacturing errors retain locatable geometry', () => {
+  assert.match(editor, /function activeIssueDetails\(issue\)/);
+  assert.match(editor, /details\?\.locations/);
+  assert.match(editor, /highlighted\?\.phase === 'opening'/);
+  assert.match(editor, /Array\.isArray\(activeDetails\.points\)/);
+});
+
 test('manual geometry tools use physical gestures, previews, and snapping', () => {
   for (const id of [
     'touchup-options', 'touchup-size', 'touchup-safety',
