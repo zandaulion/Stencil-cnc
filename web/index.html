@@ -256,6 +256,10 @@
                   <span><strong>Poster stencil</strong><small>Bold light-and-dark regions. Add supports where retained features would fall out.</small></span>
                 </label>
                 <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="icoana">
+                  <span><strong>Icon stencil</strong><small>Broad back-lit shapes, restrained carved detail, and an optional segmented halo in a solid plate.</small></span>
+                </label>
+                <label class="radio-card">
                   <input type="radio" name="cutStyle" value="grafic">
                   <span><strong>Graphic portrait</strong><small>Face-aware black shapes and expressive lines on a removed background, like the supplied reference.</small></span>
                 </label>
@@ -327,6 +331,34 @@
                   <label for="style-outline"><span>Feature outlines</span><output id="style-outline-value" for="style-outline">60%</output></label>
                   <input id="style-outline" name="styleOutline" type="range" min="0" max="100" step="5" value="60">
                 </div>
+              </div>
+
+              <div id="style-icon" hidden>
+                <div class="range-control">
+                  <label for="style-icon-balance"><span>Light / dark balance</span><output id="style-icon-balance-value" for="style-icon-balance">56%</output></label>
+                  <input id="style-icon-balance" name="styleIconBalance" type="range" min="20" max="80" step="1" value="56">
+                </div>
+                <div class="range-control">
+                  <label for="style-icon-detail"><span>Carved detail <small>Retains features and opens selected folds</small></span><output id="style-icon-detail-value" for="style-icon-detail">65%</output></label>
+                  <input id="style-icon-detail" name="styleIconDetail" type="range" min="0" max="100" step="5" value="65">
+                </div>
+                <label class="field-row" for="style-icon-line-width">
+                  <span>Detail cut width</span>
+                  <span class="number-field compact"><input id="style-icon-line-width" name="styleIconLineWidth" type="number" min="2" max="20" step="0.5" value="3"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-icon-simplify">
+                  <span>Shape simplification <small>Removes painted and photographic texture</small></span>
+                  <span class="number-field compact"><input id="style-icon-simplify" name="styleIconSimplify" type="number" min="0" max="20" step="0.5" value="3"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="toggle-row" for="style-icon-halo">
+                  <span>Segmented halo<small>Creates a circular opening with structural cross bars</small></span>
+                  <input class="switch" id="style-icon-halo" name="styleIconHalo" type="checkbox" checked>
+                </label>
+                <div class="range-control" id="style-icon-halo-scale-control">
+                  <label for="style-icon-halo-scale"><span>Halo size</span><output id="style-icon-halo-scale-value" for="style-icon-halo-scale">115%</output></label>
+                  <input id="style-icon-halo-scale" name="styleIconHaloScale" type="range" min="75" max="160" step="5" value="115">
+                </div>
+                <p class="section-help">The figure is isolated automatically; the surrounding panel remains solid metal.</p>
               </div>
 
               <div id="style-graphic" hidden>

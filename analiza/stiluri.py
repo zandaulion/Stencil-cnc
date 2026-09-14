@@ -536,6 +536,160 @@ def sablon(
     return ~taiat
 
 
+def _cap_din_subiect(subiect: np.ndarray) -> tuple[float, float, float]:
+    """Estimate a head centre and radius from the upper part of a person mask.
+
+    Icon photographs are commonly full figures, so using the complete subject
+    bounds would size a halo from the shoulders or robe.  The upper quarter is
+    still dominated by the head on both busts and full-length portraits.  A
+    percentile span is less sensitive than a bounding box to an isolated hand,
+    staff, or segmentation pixel.
+    """
+    ys, xs = np.nonzero(subiect)
+    if xs.size == 0:
+        raise ReglajImposibil("Nu pot aşeza aureola fără un subiect detectat.")
+
+    sus, jos = int(ys.min()), int(ys.max())
+    inaltime = max(1, jos - sus + 1)
+    banda = (ys <= sus + 0.28 * inaltime)
+    xs_cap = xs[banda]
+    ys_cap = ys[banda]
+    if xs_cap.size < 8:
+        xs_cap, ys_cap = xs, ys
+
+    stanga, dreapta = np.percentile(xs_cap, [8, 92])
+    centru_x = float(np.median(xs_cap))
+    centru_y = float(np.percentile(ys_cap, 52))
+    latime_cap = max(1.0, float(dreapta - stanga))
+    raza = max(latime_cap * 0.62, inaltime * 0.115)
+    raza = min(raza, inaltime * 0.24, subiect.shape[1] * 0.34)
+    return centru_x, centru_y, max(1.0, raza)
+
+
+def sablon_icoana(
+    camp: np.ndarray,
+    subiect: np.ndarray,
+    mm_pe_px: float,
+    prag: float = 0.56,
+    detaliu: float = 0.65,
+    latime_linie_mm: float = 3.0,
+    simplificare_mm: float = 3.0,
+    aureola: bool = True,
+    scala_aureola: float = 1.15,
+    punte_min_mm: float = 3.0,
+    fanta_min_mm: float = 2.0,
+) -> np.ndarray:
+    """A broad, back-lit icon stencil with restrained internal linework.
+
+    The plate begins solid.  Light areas of the isolated figure become broad
+    openings, dark features and their outlines remain metal, and sparse light
+    valleys are widened into deliberate robe/hair cuts only where a surrounding
+    dark mass has enough room to survive.  An optional segmented halo is cut
+    behind the estimated head; its cross bars remain material and therefore
+    look intentional while also providing useful structure.
+
+    ``True`` always means retained material.
+    """
+    if camp.ndim != 2 or camp.shape != subiect.shape:
+        raise ValueError("Câmpul şi masca subiectului trebuie să aibă aceeaşi mărime.")
+    if not 0.0 <= prag <= 1.0 or not 0.0 <= detaliu <= 1.0:
+        raise ReglajImposibil("Pragul şi detaliul icoanei trebuie să fie între 0 şi 1.")
+    if latime_linie_mm <= 0 or simplificare_mm < 0:
+        raise ReglajImposibil("Linia icoanei trebuie să fie pozitivă, iar simplificarea nu poate fi negativă.")
+    if not 0.75 <= scala_aureola <= 1.6:
+        raise ReglajImposibil("Mărimea aureolei trebuie să fie între 75% şi 160%.")
+    _verifica_rezolutie(mm_pe_px, **{
+        "Puntea": punte_min_mm,
+        "Fanta": fanta_min_mm,
+        "Linia": max(latime_linie_mm, fanta_min_mm),
+    })
+
+    zona = subiect.astype(bool)
+    if not zona.any():
+        raise ReglajImposibil("Nu pot construi o icoană fără un subiect detectat.")
+
+    # Smooth only at the requested physical scale.  This removes painted or
+    # photographic grain while preserving the large folds that define an icon.
+    lucru = camp.astype(np.float32)
+    if simplificare_mm > 0:
+        diametru = max(1, int(round(simplificare_mm / mm_pe_px))) | 1
+        lucru = cv2.GaussianBlur(lucru, (diametru, diametru), 0)
+
+    web_px = max(1, int(np.ceil(punte_min_mm / mm_pe_px)))
+    linie_mm = max(latime_linie_mm, fanta_min_mm)
+
+    # The poster layer: broad light openings surrounded by retained dark mass.
+    material_portret = (lucru >= prag) & zona
+    if simplificare_mm > 0:
+        diametru = min(max(mm_pe_px, simplificare_mm), punte_min_mm)
+        miez = _elipsa_mm(diametru, mm_pe_px)
+        material_portret = cv2.morphologyEx(
+            material_portret.astype(np.uint8), cv2.MORPH_OPEN, miez,
+        )
+        material_portret = cv2.morphologyEx(
+            material_portret, cv2.MORPH_CLOSE, miez,
+        ).astype(bool)
+
+    # Retained contours recover eyes, mouth, fingers, veil edges and garment
+    # boundaries inside otherwise open light shapes.
+    imagine = np.clip(lucru * 255, 0, 255).astype(np.uint8)
+    sus_canny = int(round(220 - 145 * detaliu))
+    contururi = cv2.Canny(
+        imagine, max(10, sus_canny // 2), max(20, sus_canny),
+    ) > 0
+    contururi = _sterge_componente_mici(
+        contururi & zona, max(2, web_px * 2),
+    )
+    contururi = cv2.dilate(
+        contururi.astype(np.uint8), _elipsa_mm(punte_min_mm, mm_pe_px),
+    ).astype(bool) & zona
+    material_portret |= contururi
+
+    # Light valleys inside sufficiently broad dark masses become a small number
+    # of cut folds.  Requiring room on both sides prevents a decorative line
+    # from severing a narrow retained feature.
+    vecinatate_mm = max(linie_mm * 4.0, simplificare_mm * 3.0, 12.0)
+    inchidere = cv2.morphologyEx(
+        lucru, cv2.MORPH_CLOSE, _elipsa_mm(vecinatate_mm, mm_pe_px),
+    )
+    vai_luminoase = inchidere - lucru
+    prag_vale = 0.20 - 0.13 * detaliu
+    anvelopa_intunecata = (lucru >= max(0.16, prag * 0.42)) & zona
+    distanta = cv2.distanceTransform(anvelopa_intunecata.astype(np.uint8), cv2.DIST_L2, 5)
+    rezerva_px = (linie_mm / 2.0 + punte_min_mm) / mm_pe_px
+    falduri = (vai_luminoase >= prag_vale) & (distanta >= rezerva_px)
+    falduri = _sterge_componente_mici(
+        falduri, max(2, int(np.ceil(linie_mm / mm_pe_px)) * 2),
+    )
+    falduri = cv2.dilate(
+        falduri.astype(np.uint8), _elipsa_mm(linie_mm, mm_pe_px),
+    ).astype(bool) & anvelopa_intunecata
+
+    taiat = zona & ~material_portret
+    taiat |= falduri
+
+    if aureola:
+        centru_x, centru_y, raza = _cap_din_subiect(zona)
+        raza *= scala_aureola
+        yy, xx = np.ogrid[:zona.shape[0], :zona.shape[1]]
+        disc = (xx - centru_x) ** 2 + (yy - centru_y) ** 2 <= raza ** 2
+        # The figure is in front of the halo.  Only its surround is opened here;
+        # portrait tones continue to describe the face, hair, and veil.
+        taiat |= disc & ~zona
+
+        # A halo-sized cross is retained metal, with at least the configured web
+        # width.  Besides matching the reference language, it divides a very
+        # large opening into calmer, more easily supported quadrants.
+        jumatate_bara = max(web_px / 2.0, raza * 0.025)
+        cruce = disc & ~zona & (
+            (np.abs(xx - centru_x) <= jumatate_bara)
+            | (np.abs(yy - centru_y) <= jumatate_bara)
+        )
+        taiat &= ~cruce
+
+    return ~taiat
+
+
 def portret_grafic(
     camp: np.ndarray,
     subiect: np.ndarray,

@@ -121,6 +121,11 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   const values = {
     'style-threshold': '50',
     'style-outline': '60',
+    'style-icon-balance': '56',
+    'style-icon-detail': '65',
+    'style-icon-line-width': '3',
+    'style-icon-simplify': '3',
+    'style-icon-halo-scale': '115',
     'style-graphic-balance': '50',
     'style-graphic-detail': '70',
     'style-graphic-simplify': '1.5',
@@ -150,6 +155,11 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   assert.match(html, /id="style-cutout"[^>]*type="checkbox">/);
   assert.match(html, /id="style-clothes"[^>]*type="checkbox" checked>/);
   assert.match(editor, /form\.set\('gamma', String\(numberField\('style-curve', 1\.4\)\)\)/);
+  assert.match(html, /name="cutStyle" value="icoana"/);
+  assert.match(html, /id="style-icon-halo"[^>]*type="checkbox" checked/);
+  assert.match(editor, /icoana: Object\.freeze\(\{/);
+  assert.match(editor, /form\.set\('prag_icoana'/);
+  assert.match(editor, /strategy\.preferredAngleDeg = 0/);
   assert.match(editor, /form\.set\('unghi_lamele', String\(numberField\('style-slat-angle', -55\)\)\)/);
   assert.match(editor, /lamele: Object\.freeze\(\{/);
   assert.match(editor, /'style-gain': '3'/);

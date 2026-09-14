@@ -62,6 +62,14 @@ const BASE_STYLE_SETTINGS = Object.freeze({
   polarity: 'black-retained',
 });
 const STYLE_DEFAULT_SETTINGS = Object.freeze({
+  icoana: Object.freeze({
+    'style-gain': '2.8',
+    'style-smooth': '0.70',
+    'style-curve': '1.4',
+    'style-cutout': true,
+    'style-clothes': true,
+    polarity: 'black-retained',
+  }),
   lamele: Object.freeze({
     'style-gain': '3',
     'style-smooth': '0.70',
@@ -466,6 +474,13 @@ function styleParams(stil = selectedCutStyle()) {
   } else if (stil === 'sablon') {
     form.set('prag_sablon', String(numberField('style-threshold', 50) / 100));
     form.set('contur', String(numberField('style-outline', 60) / 100));
+  } else if (stil === 'icoana') {
+    form.set('prag_icoana', String(numberField('style-icon-balance', 56) / 100));
+    form.set('detaliu_icoana', String(numberField('style-icon-detail', 65) / 100));
+    form.set('latime_linie_icoana_mm', String(toMm(numberField('style-icon-line-width', 3))));
+    form.set('simplificare_icoana_mm', String(toMm(numberField('style-icon-simplify', 3))));
+    form.set('aureola_icoana', String(el('style-icon-halo')?.checked !== false));
+    form.set('scala_aureola_icoana', String(numberField('style-icon-halo-scale', 115) / 100));
   } else if (stil === 'grafic') {
     form.set('prag_grafic', String(numberField('style-graphic-balance', 50) / 100));
     form.set('detaliu_grafic', String(numberField('style-graphic-detail', 70) / 100));
@@ -545,6 +560,7 @@ function enforceStyleSpacing() {
     }
   }
   const lineField = {
+    icoana: 'style-icon-line-width',
     linii: 'style-line-width',
     contururi: 'style-contour-width',
     ornament: 'style-ornament-width',
@@ -728,6 +744,7 @@ function reflectModeControls() {
   );
   el('btn-restyle')?.toggleAttribute('hidden', lineArt);
   el('style-stencil')?.toggleAttribute('hidden', style !== 'sablon');
+  el('style-icon')?.toggleAttribute('hidden', style !== 'icoana');
   el('style-graphic')?.toggleAttribute('hidden', style !== 'grafic');
   el('style-slats')?.toggleAttribute('hidden', style !== 'lamele');
   el('style-hatch')?.toggleAttribute('hidden', style !== 'hasura');
@@ -737,6 +754,14 @@ function reflectModeControls() {
   el('style-contours')?.toggleAttribute('hidden', style !== 'contururi');
   el('style-radial')?.toggleAttribute('hidden', style !== 'raze');
   el('style-ornament')?.toggleAttribute('hidden', style !== 'ornament');
+  const cutout = el('style-cutout');
+  if (cutout) {
+    cutout.disabled = style === 'icoana';
+    if (style === 'icoana') cutout.checked = true;
+  }
+  el('style-icon-halo-scale-control')?.toggleAttribute(
+    'hidden', el('style-icon-halo')?.checked === false,
+  );
   reflectRayCentreControls();
   updateSlatStabilizerControls();
 }
@@ -1636,7 +1661,7 @@ function setSourceRecipeAvailability(available) {
   for (const node of all('#polarity input, #style-controls input, #style-controls button')) {
     node.disabled = !available;
   }
-  if (available) reflectRayCentreControls();
+  if (available) reflectModeControls();
   if (!available) setStyleStatus('Processed geometry restored. Re-import the photograph to re-render its style.');
 }
 
@@ -1855,6 +1880,7 @@ async function importFile(file) {
 const CUT_STYLE_NAMES = {
   'line-art': 'Line art',
   sablon: 'Poster stencil',
+  icoana: 'Icon stencil',
   grafic: 'Graphic portrait',
   linii: 'Negative-space linework',
   gravura: 'Icon / Woodcut',
@@ -2189,6 +2215,10 @@ function smartBridgeStrategy() {
     }
   } else if (style === 'hasura') {
     strategy.preferredAngleDeg = numberField('style-angle', 30) + 90;
+  } else if (style === 'icoana') {
+    // Horizontal ties read as intentional icon construction and align with
+    // the segmented halo instead of crossing facial features diagonally.
+    strategy.preferredAngleDeg = 0;
   } else if (style === 'raze') {
     strategy.radialCenter = sourcePointOnSheet(
       numberField('style-ray-center-x', 25) / 100,
@@ -2318,6 +2348,7 @@ function preferredManualSupportAngle(start, end) {
   const style = selectedCutStyle();
   if (style === 'lamele') return numberField('style-slat-angle', -55) + 90;
   if (style === 'hasura') return numberField('style-angle', 30) + 90;
+  if (style === 'icoana') return 0;
   if (style === 'raze') {
     const center = sourcePointOnSheet(
       numberField('style-ray-center-x', 25) / 100,
@@ -2808,7 +2839,9 @@ function wire() {
       pushHistory();
     });
   }
-  for (const id of ['style-threshold', 'style-outline', 'style-pitch', 'style-slat-angle', 'style-angle',
+  for (const id of ['style-threshold', 'style-outline', 'style-icon-balance', 'style-icon-detail',
+    'style-icon-line-width', 'style-icon-simplify', 'style-icon-halo', 'style-icon-halo-scale',
+    'style-pitch', 'style-slat-angle', 'style-angle',
     'style-row-pitch', 'style-cell', 'style-gain', 'style-smooth', 'style-curve',
     'style-line-detail', 'style-line-width', 'style-wood-spacing', 'style-wood-length',
     'style-graphic-balance', 'style-graphic-detail', 'style-graphic-simplify',
@@ -2818,6 +2851,7 @@ function wire() {
     el(id)?.addEventListener('input', () => {
       if (STYLE_SHARED_CONTROL_IDS.includes(id)) rememberStyleSettings();
       if (id === 'style-ray-center-auto') reflectRayCentreControls();
+      if (id === 'style-icon-halo') reflectModeControls();
       updateRangeOutputs();
       restyle();
     });
@@ -2862,7 +2896,7 @@ function wire() {
     for (const id of ['panel-width', 'panel-height', 'panel-margin', 'frame-width',
       'bridge-width', 'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
-      'style-graphic-simplify',
+      'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
       'style-contour-width', 'style-ray-cell', 'style-ornament-width']) {
       const node = el(id);
@@ -3317,6 +3351,9 @@ function updateRangeOutputs() {
   set('style-curve-value', numberField('style-curve', 1.4).toFixed(1));
   set('style-threshold-value', `${numberField('style-threshold', 50)}%`);
   set('style-outline-value', `${numberField('style-outline', 60)}%`);
+  set('style-icon-balance-value', `${numberField('style-icon-balance', 56)}%`);
+  set('style-icon-detail-value', `${numberField('style-icon-detail', 65)}%`);
+  set('style-icon-halo-scale-value', `${numberField('style-icon-halo-scale', 115)}%`);
   set('style-graphic-balance-value', `${numberField('style-graphic-balance', 50)}%`);
   set('style-graphic-detail-value', `${numberField('style-graphic-detail', 70)}%`);
   set('style-line-detail-value', `${numberField('style-line-detail', 40)}%`);

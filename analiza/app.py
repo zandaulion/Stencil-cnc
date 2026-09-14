@@ -37,6 +37,7 @@ from stiluri import (
     portret_grafic,
     raze,
     sablon,
+    sablon_icoana,
     silueta,
 )
 from subiect import FaraSubiect, aplica, subiect
@@ -165,6 +166,13 @@ async def analizeaza(
     # şablon portret
     prag_sablon: float = Form(0.50),
     contur: float = Form(0.60),
+    # şablon icoană
+    prag_icoana: float = Form(0.56),
+    detaliu_icoana: float = Form(0.65),
+    latime_linie_icoana_mm: float = Form(3.0),
+    simplificare_icoana_mm: float = Form(3.0),
+    aureola_icoana: bool = Form(True),
+    scala_aureola_icoana: float = Form(1.15),
     # portret grafic
     prag_grafic: float = Form(0.50),
     detaliu_grafic: float = Form(0.70),
@@ -227,12 +235,12 @@ async def analizeaza(
     masca_subiect = np.ones(mic.shape[:2], dtype=bool)
     # A silhouette has no meaningful whole-image fallback: without a detected
     # subject it would simply remove the entire artwork rectangle.
-    if fara_fundal or stil in {"silueta", "grafic"}:
+    if fara_fundal or stil in {"silueta", "grafic", "icoana"}:
         try:
             masca_subiect = subiect(mic, cu_haine=cu_haine)
         except FaraSubiect as e:
             raise HTTPException(422, str(e)) from e
-    if stil in {"sablon", "grafic", "hasura", "linii", "gravura", "contururi", "raze", "ornament", "lamele"}:
+    if stil in {"sablon", "icoana", "grafic", "hasura", "linii", "gravura", "contururi", "raze", "ornament", "lamele"}:
         camp = portret(mic, masca=masca_subiect, castig=castig, netezire=netezire)
         if stil == "lamele" and fara_fundal:
             camp = aplica(camp, masca_subiect)
@@ -259,6 +267,18 @@ async def analizeaza(
         if stil == "sablon":
             masca = sablon(camp, masca_subiect, mm_pe_px, prag=prag_sablon, contur=contur,
                            punte_min_mm=punte_min_mm, fanta_min_mm=fanta_min_mm)
+        elif stil == "icoana":
+            masca = sablon_icoana(
+                camp, masca_subiect, mm_pe_px,
+                prag=prag_icoana,
+                detaliu=detaliu_icoana,
+                latime_linie_mm=max(latime_linie_icoana_mm, fanta_min_mm),
+                simplificare_mm=simplificare_icoana_mm,
+                aureola=aureola_icoana,
+                scala_aureola=scala_aureola_icoana,
+                punte_min_mm=punte_min_mm,
+                fanta_min_mm=fanta_min_mm,
+            )
         elif stil == "grafic":
             masca = portret_grafic(
                 camp, masca_subiect, mm_pe_px, prag=prag_grafic,
@@ -320,7 +340,7 @@ async def analizeaza(
         # Gridded styles construct their cut and web dimensions analytically.
         # Free-form masks need a final physical morphology pass so photographic
         # specks and near-touching contours cannot sneak beneath the plasma limits.
-        if stil in {"sablon", "grafic", "linii", "silueta", "contururi", "ornament"}:
+        if stil in {"sablon", "icoana", "grafic", "linii", "silueta", "contururi", "ornament"}:
             masca = aplica_limite_fizice(masca, mm_pe_px, punte_min_mm, fanta_min_mm)
     except ReglajImposibil as e:
         raise HTTPException(422, str(e)) from e

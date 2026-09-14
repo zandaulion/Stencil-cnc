@@ -16,6 +16,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "analiza"))
 
 from stiluri import (  # noqa: E402
+    _cap_din_subiect,
     ReglajImposibil,
     aplica_limite_fizice,
     benzi_contur,
@@ -29,6 +30,7 @@ from stiluri import (  # noqa: E402
     portret_grafic,
     raze,
     sablon,
+    sablon_icoana,
     silueta,
 )
 
@@ -281,6 +283,66 @@ class TestSablon(unittest.TestCase):
         masca = sablon(camp, persoana, MM_PE_PX, prag=0.5, contur=0,
                        punte_min_mm=2, fanta_min_mm=4)
         self.assertTrue(masca.all(), "an opening narrower than the cutter is not proposed")
+
+
+class TestSablonIcoana(unittest.TestCase):
+    def test_placa_ramane_solida_in_afara_figurii(self):
+        camp = np.zeros((180, 220), np.float32)
+        persoana = np.zeros_like(camp, dtype=bool)
+        persoana[25:165, 55:165] = True
+        masca = sablon_icoana(
+            camp, persoana, MM_PE_PX, prag=0.56, detaliu=0,
+            simplificare_mm=0, aureola=False,
+            punte_min_mm=2, fanta_min_mm=2,
+        )
+        self.assertTrue(masca[5, 5])
+        self.assertFalse(masca[90, 110], "the light figure should be a broad back-lit opening")
+
+    def test_aureola_taie_numai_in_jurul_capului_si_lasa_bare(self):
+        camp = np.ones((280, 220), np.float32)
+        persoana = np.zeros_like(camp, dtype=np.uint8)
+        cv2.circle(persoana, (110, 55), 26, 1, -1)
+        cv2.rectangle(persoana, (65, 78), (155, 260), 1, -1)
+        persoana = persoana.astype(bool)
+        fara = sablon_icoana(
+            camp, persoana, MM_PE_PX, detaliu=0, simplificare_mm=0,
+            aureola=False, punte_min_mm=2, fanta_min_mm=2,
+        )
+        cu = sablon_icoana(
+            camp, persoana, MM_PE_PX, detaliu=0, simplificare_mm=0,
+            aureola=True, scala_aureola=1.2,
+            punte_min_mm=2, fanta_min_mm=2,
+        )
+        fundal_sus = ~persoana[:100]
+        self.assertTrue(fara[:100][fundal_sus].all())
+        self.assertGreater((~cu[:100][fundal_sus]).sum(), 20,
+                           "the halo must open a visible disk behind the head")
+        centru_x, centru_y, raza = _cap_din_subiect(persoana)
+        raza *= 1.2
+        x_bara = round(centru_x + raza * 0.82)
+        y_bara = round(centru_y)
+        y_deschis = round(centru_y - raza * 0.18)
+        self.assertFalse(persoana[y_bara, x_bara])
+        self.assertTrue(cu[y_bara, x_bara], "the horizontal halo bar remains metal")
+        self.assertFalse(cu[y_deschis, x_bara], "the area beside the halo bar remains open")
+
+    def test_detaliul_deschide_un_fald_fara_sa_gaureasca_tot_materialul(self):
+        camp = np.full((200, 200), 0.70, np.float32)
+        camp[:, 97:103] = 0.58
+        zona = np.ones_like(camp, dtype=bool)
+        simplu = sablon_icoana(
+            camp, zona, MM_PE_PX, prag=0.56, detaliu=0,
+            latime_linie_mm=2, simplificare_mm=0, aureola=False,
+            punte_min_mm=2, fanta_min_mm=2,
+        )
+        detaliat = sablon_icoana(
+            camp, zona, MM_PE_PX, prag=0.56, detaliu=1,
+            latime_linie_mm=2, simplificare_mm=0, aureola=False,
+            punte_min_mm=2, fanta_min_mm=2,
+        )
+        self.assertTrue(simplu[100, 100])
+        self.assertFalse(detaliat[100, 100], "a light valley in a broad dark robe becomes a cut fold")
+        self.assertTrue(detaliat[100, 70], "the surrounding dark mass remains material")
 
 
 class TestStiluriDinReferinte(unittest.TestCase):
