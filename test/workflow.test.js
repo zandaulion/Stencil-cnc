@@ -48,7 +48,7 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(html, /id="protect-faces"[^>]*type="checkbox" checked/);
   assert.doesNotMatch(html, /id="protect-faces"[^>]*disabled/);
   assert.match(editor, /function smartBridgeStrategy\(\)/);
-  assert.match(editor, /preferredAngleDeg = numberField\('style-slat-angle', -55\) \+ 90/);
+  assert.match(editor, /strategy\.preferredAngleDeg = barAngleDeg \+ 90/);
   assert.match(editor, /strategy: smartBridgeStrategy\(\)/);
   assert.match(editor, /minimumWebMm,\s*kerfMm,/);
   assert.match(html, /id="bridge-selection-meta"/);
@@ -56,6 +56,16 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /Safe shortest-path fallback/);
   assert.match(editor, /Planning smart supports/);
   assert.match(editor, /supportSimulation\.postKerf\.componentCount <= 1/);
+});
+
+test('slats add a configurable staggered structural stabilization pass', () => {
+  assert.match(html, /id="stabilize-slats"[^>]*type="checkbox" checked/);
+  assert.match(html, /id="max-cantilever"[^>]*value="250"/);
+  assert.doesNotMatch(html, /id="max-cantilever"[^>]*disabled/);
+  assert.match(editor, /strategy\.slatPitchMm = toMm\(numberField\('style-pitch', 38\)\) \* placedStyleScale\(\)/);
+  assert.match(editor, /strategy\.maximumUnsupportedSpanMm = toMm\(numberField\('max-cantilever', 250\)\)/);
+  assert.match(editor, /bridge\.stabilizer/);
+  assert.match(html, /Controls slat span/);
 });
 
 test('server rendering has a visible queued and in-flight progress state', () => {

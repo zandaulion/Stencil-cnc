@@ -178,3 +178,56 @@ test("the secure strategy adds a separated backup tie", () => {
   assert.equal(suggestions.filter((bridge) => bridge.redundant).length, 1);
   assert.notEqual(suggestions[0].start.y, suggestions[1].start.y);
 });
+
+test("connected slats receive staggered stabilizers at the requested span", () => {
+  const mask = createMask(21, 21);
+  const anchorMask = createMask(21, 21);
+  for (const x of [1, 5, 9, 13, 17]) {
+    for (let y = 0; y < mask.height; y += 1) mask.data[y * mask.width + x] = 1;
+  }
+  for (let x = 0; x < mask.width; x += 1) {
+    mask.data[x] = 1;
+    mask.data[(mask.height - 1) * mask.width + x] = 1;
+    anchorMask.data[x] = 1;
+    anchorMask.data[(mask.height - 1) * mask.width + x] = 1;
+  }
+  const config = {
+    sheet: { widthMm: 21, heightMm: 21 },
+    anchorMask,
+    widthMm: 2,
+    minimumWebMm: 1,
+    kerfMm: 0,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      barAngleDeg: 90,
+      slatPitchMm: 4,
+      maximumUnsupportedSpanMm: 6,
+    },
+  };
+  const first = suggestBridges(mask, config);
+  const second = suggestBridges(mask, config);
+
+  assert.deepEqual(first, second, "stabilizer placement must be deterministic");
+  assert.ok(first.length >= 4);
+  assert.ok(first.every((bridge) => bridge.stabilizer && bridge.role === "stabilizer"));
+  assert.ok(first.every((bridge) => Math.abs(bridge.start.y - bridge.end.y) <= 1.1),
+    "ties should be perpendicular to the vertical slats");
+  const stations = [...new Set(first.map((bridge) => bridge.stationMm))].sort((a, b) => a - b);
+  const supportedPositions = [1.5, ...stations, 19.5];
+  for (let index = 1; index < supportedPositions.length; index += 1) {
+    assert.ok(supportedPositions[index] - supportedPositions[index - 1] <= 6 + 1e-9);
+  }
+  for (const station of stations) {
+    const endpoints = first
+      .filter((bridge) => bridge.stationMm === station)
+      .flatMap((bridge) => [bridge.start.x, bridge.end.x]);
+    for (const slatCenter of [1.5, 5.5, 9.5, 13.5, 17.5]) {
+      assert.ok(endpoints.some((x) => Math.abs(x - slatCenter) <= 1.1),
+        `slat at ${slatCenter} must be braced at station ${station}`);
+    }
+  }
+});

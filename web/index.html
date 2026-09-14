@@ -645,7 +645,16 @@
                 <span>Follow filter direction<small>Align manual ties with Slats, Hatch, or Radial Cuts</small></span>
                 <input class="switch" id="support-follow-style" name="supportFollowStyle" type="checkbox" checked>
               </label>
-              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Secure adds a small number of separated backup ties. Orange dashed ties are safe fallbacks to review.</p>
+              <label class="toggle-row" for="stabilize-slats">
+                <span>Stabilize long slats<small>Add staggered cross-ties between neighbouring bars</small></span>
+                <input class="switch" id="stabilize-slats" name="stabilizeSlats" type="checkbox" checked>
+              </label>
+              <label class="field-row" for="max-cantilever">
+                <span>Target maximum unsupported span <small>Provisional until stock thickness is known</small></span>
+                <span class="number-field compact"><input id="max-cantilever" name="maxCantilever" type="number" min="25" max="2000" step="10" value="250"><span data-unit-label>mm</span></span>
+              </label>
+              <input id="stabilizer-version" type="hidden" value="1">
+              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Secure adds a small number of separated backup ties. Slat stabilizers include kerf allowance and the completed geometry is checked after kerf. Their span target is a guide, not a strength certification; confirm it for the stock, thickness, mounting, and cut sequence. Orange dashed ties are safe fallbacks to review.</p>
             </div>
 
             <div class="button-stack">
@@ -685,14 +694,6 @@
           </section>
 
           <section class="stage-panel" id="panel-validate" role="tabpanel" aria-labelledby="stage-validate" data-panel="validate" hidden>
-            <div class="control-section first-section">
-              <h2>Additional checks</h2>
-              <label class="field-row" for="max-cantilever">
-                <span>Fragile span warning <small>Planned for a later version</small></span>
-                <span class="number-field compact"><input id="max-cantilever" name="maxCantilever" type="number" min="1" max="2000" step="1" value="120" disabled><span data-unit-label>mm</span></span>
-              </label>
-            </div>
-
             <label class="toggle-row standalone" for="simulate-kerf">
               <span>Preview after kerf<small>Show the material that remains after cutting</small></span>
               <input class="switch" id="simulate-kerf" name="simulateKerf" type="checkbox" checked>
@@ -897,6 +898,7 @@
             <div><dt><i class="legend-swatch removed"></i>Removed</dt><dd>Cut-out</dd></div>
             <div><dt><i class="legend-swatch unsupported"></i>Unsupported</dt><dd>Will fall</dd></div>
             <div><dt><i class="legend-swatch narrow"></i>Too narrow</dt><dd>At risk</dd></div>
+            <div><dt><i class="legend-swatch stabilizer"></i>Stabilizer</dt><dd>Controls slat span</dd></div>
             <div><dt><i class="legend-swatch stale-support"></i>Stale support</dt><dd>Review</dd></div>
           </dl>
         </div>

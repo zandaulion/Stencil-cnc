@@ -2635,6 +2635,10 @@ select:focus {
   background: var(--warning);
 }
 
+.legend-swatch.stabilizer {
+  background: #008f9c;
+}
+
 .legend-swatch.stale-support {
   background: repeating-linear-gradient(135deg, #c47e14 0 3px, #fff8e7 3px 6px);
 }

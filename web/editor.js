@@ -738,6 +738,7 @@ function reflectModeControls() {
   el('style-radial')?.toggleAttribute('hidden', style !== 'raze');
   el('style-ornament')?.toggleAttribute('hidden', style !== 'ornament');
   reflectRayCentreControls();
+  updateSlatStabilizerControls();
 }
 
 function reflectRayCentreControls() {
@@ -752,6 +753,18 @@ function reflectRayCentreControls() {
   } else if (status && !automatic) {
     status.textContent = 'Manual focal point. Switch automatic placement on to conceal the solid hub in existing metal.';
   }
+}
+
+function updateSlatStabilizerControls() {
+  const isSlats = selectedCutStyle() === 'lamele';
+  const toggle = el('stabilize-slats');
+  const span = el('max-cantilever');
+  if (toggle) toggle.disabled = !isSlats;
+  if (!span) return;
+  span.disabled = !isSlats || toggle?.checked === false;
+  span.min = String(roundUnit(fromMm(25)));
+  span.max = String(roundUnit(fromMm(2000)));
+  span.step = state.unit === 'in' ? '0.25' : '10';
 }
 
 function setMode(mode) {
@@ -1166,10 +1179,13 @@ function drawOverlay(overlay, mask) {
     const selected = bridge === state.selectedBridge;
     const staleAutomatic = state.automaticSupportsStale && bridge.source === 'automatic';
     const fallbackAutomatic = bridge.source === 'automatic' && bridge.fallback === true;
+    const stabilizer = bridge.stabilizer === true;
     const needsReview = staleAutomatic || fallbackAutomatic;
     context.strokeStyle = selected
       ? '#1f7a5a'
-      : needsReview ? 'rgba(196, 126, 20, .8)' : 'rgba(31, 122, 90, .55)';
+      : needsReview
+        ? 'rgba(196, 126, 20, .8)'
+        : stabilizer ? 'rgba(0, 143, 156, .72)' : 'rgba(31, 122, 90, .55)';
     context.lineWidth = Math.max(2, bridge.width * pxPerMm);
     context.lineCap = 'round';
     context.setLineDash(needsReview ? [Math.max(4, 8 / state.zoom), Math.max(3, 5 / state.zoom)] : []);
@@ -1419,6 +1435,13 @@ function applyControls(controls = {}) {
     }
   }
   migratedControls['slats-default-version'] = '2';
+  if (!Object.hasOwn(controls, 'stabilizer-version')) {
+    migratedControls['stabilize-slats'] = true;
+    if (!Object.hasOwn(controls, 'max-cantilever') || Number(controls['max-cantilever']) === 120) {
+      migratedControls['max-cantilever'] = '250';
+    }
+  }
+  migratedControls['stabilizer-version'] = '1';
 
   for (const [key, value] of Object.entries(migratedControls)) {
     const named = [...document.getElementsByName(key)];
@@ -2070,9 +2093,32 @@ function sourcePointOnSheet(normalizedX, normalizedY) {
   const sourceX = normalizedX * Math.max(0, sourceSize.width - 1);
   const sourceY = normalizedY * Math.max(0, sourceSize.height - 1);
   return {
-    x: placement.xMm + (sourceX - bounds.minX) / Math.max(1, bounds.width) * placement.widthMm,
-    y: placement.yMm + (sourceY - bounds.minY) / Math.max(1, bounds.height) * placement.heightMm,
+    x: placement.xMm + (sourceX - bounds.x) / Math.max(1, bounds.width) * placement.widthMm,
+    y: placement.yMm + (sourceY - bounds.y) / Math.max(1, bounds.height) * placement.heightMm,
   };
+}
+
+/**
+ * Server filters express pitch in the pre-crop physical artwork. Fitting the
+ * visible crop to the panel can enlarge it again, so structural planning must
+ * use the pitch that is actually visible on the final sheet.
+ */
+function placedStyleScale() {
+  const bounds = state.contentBounds;
+  const sourceSize = state.contentSourceSize;
+  if (!state.source || !state.placement || !bounds || !sourceSize) return 1;
+  const rendered = calculateArtworkPlacement(
+    { width: state.source.width, height: state.source.height },
+    sheet(),
+    {
+      frame: frameConfig(),
+      marginMm: toMm(numberField('panel-margin', 0)),
+      fitToFrame: el('fit-artwork')?.checked !== false,
+    },
+  );
+  const croppedWidthMm = rendered.widthMm * bounds.width / Math.max(1, sourceSize.width);
+  if (!(croppedWidthMm > 0)) return 1;
+  return state.placement.widthMm / croppedWidthMm;
 }
 
 /**
@@ -2104,8 +2150,8 @@ function bridgeDetailSampler() {
         x > placement.xMm + placement.widthMm || y > placement.yMm + placement.heightMm) return 0;
     const localX = (x - placement.xMm) / Math.max(placement.widthMm, Number.EPSILON);
     const localY = (y - placement.yMm) / Math.max(placement.heightMm, Number.EPSILON);
-    const fullX = (bounds.minX + localX * bounds.width) / Math.max(1, sourceSize.width);
-    const fullY = (bounds.minY + localY * bounds.height) / Math.max(1, sourceSize.height);
+    const fullX = (bounds.x + localX * bounds.width) / Math.max(1, sourceSize.width);
+    const fullY = (bounds.y + localY * bounds.height) / Math.max(1, sourceSize.height);
     const imageX = Math.max(0, Math.min(width - 1, Math.round(fullX * (width - 1))));
     const imageY = Math.max(0, Math.min(height - 1, Math.round(fullY * (height - 1))));
     const dx = (fullX - 0.5) / 0.42;
@@ -2127,7 +2173,13 @@ function smartBridgeStrategy() {
   // A tie across parallel retained bars is their normal. It reads as one of
   // the pattern's own rungs, like the supplied diagonal-slat reference.
   if (style === 'lamele') {
-    strategy.preferredAngleDeg = numberField('style-slat-angle', -55) + 90;
+    const barAngleDeg = numberField('style-slat-angle', -55);
+    strategy.preferredAngleDeg = barAngleDeg + 90;
+    strategy.barAngleDeg = barAngleDeg;
+    strategy.slatPitchMm = toMm(numberField('style-pitch', 38)) * placedStyleScale();
+    if (el('stabilize-slats')?.checked !== false) {
+      strategy.maximumUnsupportedSpanMm = toMm(numberField('max-cantilever', 250));
+    }
   } else if (style === 'hasura') {
     strategy.preferredAngleDeg = numberField('style-angle', 30) + 90;
   } else if (style === 'raze') {
@@ -2192,9 +2244,14 @@ async function autoBridge() {
     const survivesKerf = supportSimulation.postKerf.componentCount <= 1;
     const fallbackCount = suggested.filter((bridge) => bridge.fallback).length;
     const redundantCount = suggested.filter((bridge) => bridge.redundant).length;
-    const styleName = CUT_STYLE_NAMES[selectedCutStyle()] || 'Artwork';
+    const stabilizerCount = suggested.filter((bridge) => bridge.stabilizer).length;
+    const connectorCount = suggested.length - stabilizerCount;
+    const additions = [
+      connectorCount ? `${connectorCount} connectivity ${connectorCount === 1 ? 'bridge' : 'bridges'}` : '',
+      stabilizerCount ? `${stabilizerCount} staggered slat ${stabilizerCount === 1 ? 'stabilizer' : 'stabilizers'}` : '',
+    ].filter(Boolean).join(' and ');
     toast(suggested.length
-      ? `Added ${suggested.length} ${styleName.toLowerCase()}-aware ${suggested.length === 1 ? 'support' : 'supports'}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${survivesKerf ? ' Kerf simulation stays connected.' : ' Some geometry still separates after kerf; run validation to locate it.'}`
+      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${survivesKerf ? ' Kerf simulation stays connected.' : ' Some geometry still separates after kerf; run validation to locate it.'}`
       : 'Everything is already one connected piece.');
   } catch (error) {
     console.error(error);
@@ -2219,6 +2276,7 @@ function selectBridge(bridge) {
         : '';
       const styleName = CUT_STYLE_NAMES[bridge.strategy] || 'Artwork';
       if (bridge.source !== 'automatic') metadata.textContent = 'Manual support';
+      else if (bridge.stabilizer) metadata.textContent = `Slat stabilizer · ${roundUnit(fromMm(bridge.targetSpanMm || toMm(numberField('max-cantilever', 250))))} ${state.unit} target span${length}`;
       else if (bridge.fallback) metadata.textContent = `Safe shortest-path fallback${length} · review its placement`;
       else if (bridge.redundant) metadata.textContent = `${styleName}-aware secure redundancy${length}`;
       else metadata.textContent = `${styleName}-aware smart support${length}`;
@@ -2807,6 +2865,7 @@ function wire() {
     }
     enforcePlasmaLimits();
     updateTouchupControls();
+    updateSlatStabilizerControls();
     updateReadouts(); restyle(); refresh({ immediate: true });
     pushHistory();
   });
@@ -2868,15 +2927,22 @@ function wire() {
 
   // --- bridges
   el('bridge-count')?.addEventListener('input', updateRangeOutputs);
-  el('bridge-count')?.addEventListener('change', pushHistory);
-  el('protect-faces')?.addEventListener('change', pushHistory);
+  const supportPlanChanged = () => { markAutomaticSupportsStale(); pushHistory(); };
+  el('bridge-count')?.addEventListener('change', supportPlanChanged);
+  el('protect-faces')?.addEventListener('change', supportPlanChanged);
   el('support-snap')?.addEventListener('change', pushHistory);
   el('support-follow-style')?.addEventListener('change', pushHistory);
+  el('stabilize-slats')?.addEventListener('change', () => {
+    updateSlatStabilizerControls();
+    supportPlanChanged();
+  });
+  el('max-cantilever')?.addEventListener('input', updateSlatStabilizerControls);
+  el('max-cantilever')?.addEventListener('change', supportPlanChanged);
   el('bridge-width')?.addEventListener('input', () => {
     const adjusted = enforcePlasmaLimits();
     if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
   });
-  el('bridge-width')?.addEventListener('change', pushHistory);
+  el('bridge-width')?.addEventListener('change', supportPlanChanged);
   el('btn-auto-bridge')?.addEventListener('click', autoBridge);
   el('btn-add-bridge')?.addEventListener('click', () => {
     if (!state.designMask) { toast('Import an image first.'); return; }

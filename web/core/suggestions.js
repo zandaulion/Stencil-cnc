@@ -1,4 +1,5 @@
 import { analyzeConnectivity } from "./connectivity.js";
+import { applyCapsuleBridges } from "./bridges.js";
 import { assertMask, assertSameSize, assertSheet, pixelSizeMm, positiveFinite } from "./mask.js";
 
 /**
@@ -22,8 +23,229 @@ import { assertMask, assertSameSize, assertSheet, pixelSizeMm, positiveFinite } 
  * }} config
  */
 export function suggestBridges(mask, config) {
-  if (config?.strategy?.mode === "smart") return suggestSmartBridges(mask, config);
+  if (config?.strategy?.mode === "smart") {
+    const connectivity = suggestSmartBridges(mask, config);
+    const maximumSpanMm = config.strategy.maximumUnsupportedSpanMm;
+    if (config.strategy.kind !== "lamele" || !Number.isFinite(maximumSpanMm)) return connectivity;
+    const connected = applyCapsuleBridges(mask, connectivity, config.sheet);
+    // Detect the slat centre-lines before kerf so even a narrow, warning-worthy
+    // bar still receives a brace instead of vanishing from the planner. The
+    // emitted tie width includes kerf allowance, and the completed design is
+    // subsequently checked by the normal post-kerf validation pass.
+    const stabilizers = suggestSlatStabilizers(connected, {
+      sheet: config.sheet,
+      anchorMask: config.anchorMask,
+      widthMm: Math.max(
+        config.widthMm,
+        (config.minimumWebMm ?? 0) + (config.kerfMm ?? 0),
+      ),
+      barAngleDeg: config.strategy.barAngleDeg,
+      slatPitchMm: config.strategy.slatPitchMm,
+      maximumUnsupportedSpanMm: maximumSpanMm,
+      detailAt: config.strategy.detailAt,
+      idOffset: connectivity.length,
+    });
+    return [...connectivity, ...stabilizers];
+  }
   return suggestNearestBridges(mask, config);
+}
+
+/**
+ * Adds staggered rungs between neighbouring slats. Connectivity alone is not
+ * enough for a long, narrow strip: it can be one component and still flex or
+ * heat-distort. Stations are spaced along the bar direction so neither end nor
+ * two consecutive stations exceeds the requested target span. At each station
+ * alternate gaps are joined, then the pairing flips at the next station. This
+ * braces every interior slat without drawing one conspicuous rail across the
+ * whole portrait.
+ *
+ * The span is a fabrication target, not an engineering certification. Stock
+ * material, thickness, mounting and cutting sequence remain external inputs.
+ */
+export function suggestSlatStabilizers(mask, config) {
+  assertMask(mask);
+  if (!config || typeof config !== "object") throw new TypeError("Slat stabilizer configuration is required");
+  assertSheet(config.sheet);
+  positiveFinite(config.widthMm, "widthMm");
+  positiveFinite(config.maximumUnsupportedSpanMm, "maximumUnsupportedSpanMm");
+  positiveFinite(config.slatPitchMm, "slatPitchMm");
+  if (config.anchorMask) assertSameSize(mask, config.anchorMask);
+  if (!Number.isFinite(config.barAngleDeg)) throw new RangeError("barAngleDeg must be finite");
+  if (config.detailAt !== undefined && typeof config.detailAt !== "function") {
+    throw new TypeError("detailAt must be a function");
+  }
+
+  const radians = config.barAngleDeg * Math.PI / 180;
+  const along = { x: Math.cos(radians), y: Math.sin(radians) };
+  const across = { x: -along.y, y: along.x };
+  const pixel = pixelSizeMm(mask, config.sheet);
+  const extent = orientedMaterialExtent(mask, config.anchorMask, pixel, along, across);
+  if (!extent || extent.maximumAlong - extent.minimumAlong <= config.maximumUnsupportedSpanMm) return [];
+
+  const desiredJitter = Math.min(config.slatPitchMm / 2, config.maximumUnsupportedSpanMm * 0.1);
+  const targetSpacing = Math.min(
+    config.maximumUnsupportedSpanMm,
+    Math.max(config.widthMm * 3, config.maximumUnsupportedSpanMm - desiredJitter * 2),
+  );
+  const span = extent.maximumAlong - extent.minimumAlong;
+  const segmentCount = Math.max(1, Math.ceil(span / targetSpacing));
+  const stationCount = Math.max(0, segmentCount - 1);
+  if (stationCount === 0) return [];
+  const stationSpacing = span / segmentCount;
+  const jitter = Math.max(0, Math.min(
+    desiredJitter,
+    (config.maximumUnsupportedSpanMm - stationSpacing) / 2,
+  ));
+  const maximumNeighbourGapMm = config.slatPitchMm * 1.35;
+  const sampleStepMm = Math.max(0.1, Math.min(pixel.x, pixel.y) * 0.55);
+  const bridges = [];
+  let priorStation = extent.minimumAlong;
+
+  for (let stationIndex = 0; stationIndex < stationCount; stationIndex += 1) {
+    const nominal = extent.minimumAlong + stationSpacing * (stationIndex + 1);
+    const offsets = jitter > 0 ? [-jitter, -jitter / 2, 0, jitter / 2, jitter] : [0];
+    const candidates = offsets.map((offset) => {
+      const alongPosition = nominal + offset;
+      const gaps = crossSectionGaps(
+        mask,
+        config.sheet,
+        along,
+        across,
+        alongPosition,
+        extent.minimumAcross,
+        extent.maximumAcross,
+        sampleStepMm,
+        maximumNeighbourGapMm,
+      );
+      let selected = staggeredGaps(gaps, stationIndex % 2);
+      if (!selected.length && gaps.length) {
+        selected = [gaps.reduce((best, gap) => bridgeDetail(gap, config.detailAt) < bridgeDetail(best, config.detailAt) ? gap : best)];
+      }
+      const detail = selected.reduce((sum, gap) => sum + bridgeDetail(gap, config.detailAt), 0);
+      return { alongPosition, selected, detail };
+    }).filter((candidate) => candidate.selected.length > 0 &&
+      candidate.alongPosition - priorStation <= config.maximumUnsupportedSpanMm + 1e-9);
+
+    candidates.sort((first, second) =>
+      first.detail / first.selected.length - second.detail / second.selected.length ||
+      second.selected.length - first.selected.length ||
+      Math.abs(first.alongPosition - nominal) - Math.abs(second.alongPosition - nominal));
+    const chosen = candidates[0];
+    if (!chosen) continue;
+    priorStation = chosen.alongPosition;
+    for (const gap of chosen.selected) {
+      const detailPenalty = bridgeDetail(gap, config.detailAt);
+      const index = bridges.length + (config.idOffset ?? 0) + 1;
+      bridges.push({
+        id: `auto-stabilizer-${index}`,
+        type: "capsule",
+        enabled: true,
+        units: "mm",
+        start: gap.start,
+        end: gap.end,
+        width: config.widthMm,
+        lengthMm: roundMetric(gap.lengthMm),
+        addedAreaMm2: roundMetric(gap.lengthMm * config.widthMm),
+        aestheticScore: roundMetric(gap.lengthMm * config.widthMm * (1 + detailPenalty * 3.5)),
+        angleErrorDeg: 0,
+        detailPenalty: roundMetric(detailPenalty),
+        strategy: "lamele",
+        role: "stabilizer",
+        stabilizer: true,
+        stationMm: roundMetric(chosen.alongPosition),
+        targetSpanMm: config.maximumUnsupportedSpanMm,
+        redundant: false,
+        fallback: false,
+        rank: index,
+        source: "automatic",
+      });
+    }
+  }
+  return bridges;
+}
+
+function orientedMaterialExtent(mask, anchorMask, pixel, along, across) {
+  let minimumAlong = Number.POSITIVE_INFINITY;
+  let maximumAlong = Number.NEGATIVE_INFINITY;
+  let minimumAcross = Number.POSITIVE_INFINITY;
+  let maximumAcross = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < mask.data.length; index += 1) {
+    if (mask.data[index] !== 1 || anchorMask?.data[index] === 1) continue;
+    const point = indexToMm(index, mask.width, pixel);
+    const alongPosition = point.x * along.x + point.y * along.y;
+    const acrossPosition = point.x * across.x + point.y * across.y;
+    minimumAlong = Math.min(minimumAlong, alongPosition);
+    maximumAlong = Math.max(maximumAlong, alongPosition);
+    minimumAcross = Math.min(minimumAcross, acrossPosition);
+    maximumAcross = Math.max(maximumAcross, acrossPosition);
+  }
+  if (!Number.isFinite(minimumAlong)) return null;
+  return { minimumAlong, maximumAlong, minimumAcross, maximumAcross };
+}
+
+function crossSectionGaps(mask, sheet, along, across, alongPosition,
+  minimumAcross, maximumAcross, sampleStepMm, maximumGapMm) {
+  const pixel = pixelSizeMm(mask, sheet);
+  const gaps = [];
+  let priorIndex = -1;
+  let lastRetained = null;
+  let opening = false;
+  let cluster = 0;
+  for (let acrossPosition = minimumAcross; acrossPosition <= maximumAcross + sampleStepMm / 2; acrossPosition += sampleStepMm) {
+    const point = {
+      x: alongPosition * along.x + acrossPosition * across.x,
+      y: alongPosition * along.y + acrossPosition * across.y,
+    };
+    if (point.x < 0 || point.y < 0 || point.x >= sheet.widthMm || point.y >= sheet.heightMm) continue;
+    const x = Math.max(0, Math.min(mask.width - 1, Math.floor(point.x / pixel.x)));
+    const y = Math.max(0, Math.min(mask.height - 1, Math.floor(point.y / pixel.y)));
+    const index = y * mask.width + x;
+    if (index === priorIndex) continue;
+    priorIndex = index;
+    const retained = mask.data[index] === 1;
+    const center = indexToMm(index, mask.width, pixel);
+    if (retained) {
+      if (opening && lastRetained) {
+        const lengthMm = Math.hypot(center.x - lastRetained.x, center.y - lastRetained.y);
+        if (lengthMm > Math.min(pixel.x, pixel.y) * 0.5 && lengthMm <= maximumGapMm) {
+          gaps.push({ start: lastRetained, end: center, lengthMm, cluster });
+        } else if (lengthMm > maximumGapMm) {
+          cluster += 1;
+        }
+      }
+      lastRetained = center;
+      opening = false;
+    } else if (lastRetained) {
+      opening = true;
+    }
+  }
+  return gaps;
+}
+
+function staggeredGaps(gaps, parity) {
+  const groups = new Map();
+  for (const gap of gaps) {
+    if (!groups.has(gap.cluster)) groups.set(gap.cluster, []);
+    groups.get(gap.cluster).push(gap);
+  }
+  const selected = [];
+  for (const group of groups.values()) {
+    const groupSelection = group.filter((_, index) => index % 2 === parity);
+    // Alternating pairs make the ties read as a staggered ladder. Ensure the
+    // two edge slats are not the price of that aesthetic: each local run gets
+    // its first and last gap too when the chosen parity would leave an outside
+    // bar unsupported until the following station.
+    if (group.length && !groupSelection.includes(group[0])) groupSelection.unshift(group[0]);
+    const last = group.at(-1);
+    if (last && !groupSelection.includes(last)) groupSelection.push(last);
+    selected.push(...groupSelection);
+  }
+  return selected;
+}
+
+function bridgeDetail(bridge, detailAt) {
+  if (!detailAt) return 0;
+  return sampleBridgeDetail(bridge, detailAt);
 }
 
 /**
@@ -142,6 +364,9 @@ function suggestNearestBridges(mask, config) {
  *     preferredAngleDeg?:number,
  *     radialCenter?:{x:number,y:number},
  *     detailAt?:(point:{x:number,y:number})=>number,
+ *     barAngleDeg?:number,
+ *     slatPitchMm?:number,
+ *     maximumUnsupportedSpanMm?:number,
  *   },
  * }} config
  */
