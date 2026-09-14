@@ -1390,6 +1390,40 @@ input[type="range"] {
   background: var(--teal-soft);
 }
 
+.touchup-options {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-fieldset {
+  min-width: 0;
+  margin: 2px 0 13px;
+  padding: 0;
+  border: 0;
+}
+
+.compact-fieldset > legend {
+  margin-bottom: 7px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 650;
+}
+
+.segmented-control.three-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.segmented-control.three-options span {
+  padding-inline: 3px;
+  font-size: 0.61rem;
+}
+
+.touchup-hint {
+  margin: 8px 0 0;
+}
+
 .stage-next {
   margin-top: 4px;
   justify-content: space-between;

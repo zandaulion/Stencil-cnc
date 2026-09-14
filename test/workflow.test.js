@@ -26,6 +26,22 @@ test('automatic supports stay separate and advertise when artwork made them stal
   assert.match(editor, /bridge\.source === 'automatic'/);
 });
 
+test('manual geometry tools use physical gestures, previews, and snapping', () => {
+  for (const id of [
+    'touchup-options', 'touchup-size', 'touchup-safety',
+    'support-snap', 'support-follow-style',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const mode of ['freehand', 'straight', 'region']) {
+    assert.match(html, new RegExp(`name="touchupMode" value="${mode}"`), mode);
+  }
+  assert.match(editor, /physicalStrokeIndices\(/);
+  assert.match(editor, /connectedRegionIndices\(/);
+  assert.match(editor, /state\.bridgePreview = \{ start: drawingFrom, end/);
+  assert.match(editor, /function bridgeHandleAtPointer\(/);
+  assert.match(editor, /function nearestRetainedPoint\(/);
+  assert.match(editor, /promoteBridgeToManual\(draggingBridge\.bridge\)/);
+});
+
 test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(html, /id="bridge-count"[^>]*value="2"/);
   assert.match(html, /id="bridge-count-value"[^>]*>Aesthetic</);

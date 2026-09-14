@@ -18,6 +18,7 @@ import {
   analyzeConnectivity,
   buildDesignMask,
   calculateArtworkPlacement,
+  connectedRegionIndices,
   createProject,
   decodeMask,
   deserializeProject,
@@ -26,6 +27,8 @@ import {
   exportSvg,
   maskFromImageData,
   orientSheet,
+  physicalDiscIndices,
+  physicalStrokeIndices,
   placeMaskOnSheet,
   serializeProject,
   suggestBridges,
@@ -103,8 +106,11 @@ const state = {
   // Touch-ups are kept as intent, not as a modified bitmap, so they survive a
   // change of threshold instead of being silently overwritten by it.
   painted: { keep: new Set(), remove: new Set() },
+  touchupPreview: null,
 
   bridges: [],
+  drawingBridge: false,
+  bridgePreview: null,
   automaticSupportsStale: false,
   selectedBridge: null,
   candidates: [],
@@ -1174,6 +1180,62 @@ function drawOverlay(overlay, mask) {
     context.setLineDash([]);
   }
 
+  if (state.bridgePreview) {
+    context.strokeStyle = 'rgba(31, 122, 90, .82)';
+    context.lineWidth = Math.max(2, state.bridgePreview.width * pxPerMm);
+    context.lineCap = 'round';
+    context.setLineDash([Math.max(5, 9 / state.zoom), Math.max(3, 5 / state.zoom)]);
+    context.beginPath();
+    context.moveTo(state.bridgePreview.start.x * pxPerMm, state.bridgePreview.start.y * (mask.height / heightMm));
+    context.lineTo(state.bridgePreview.end.x * pxPerMm, state.bridgePreview.end.y * (mask.height / heightMm));
+    context.stroke();
+    context.setLineDash([]);
+  }
+
+  if (state.selectedBridge) {
+    const radius = Math.max(3, 6 / Math.max(state.zoom, 0.1));
+    context.fillStyle = '#f5f4f0';
+    context.strokeStyle = '#1f7a5a';
+    context.lineWidth = Math.max(1.5, 2 / Math.max(state.zoom, 0.1));
+    for (const point of [state.selectedBridge.start, state.selectedBridge.end]) {
+      context.beginPath();
+      context.arc(point.x * pxPerMm, point.y * (mask.height / heightMm), radius, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+    }
+  }
+
+  if (state.touchupPreview && (state.tool === 'keep' || state.tool === 'remove')) {
+    const preview = state.touchupPreview;
+    const yPerMm = mask.height / heightMm;
+    const radiusMm = preview.diameterMm / 2;
+    const color = state.tool === 'keep' ? 'rgba(31, 122, 90, .88)' : 'rgba(220, 93, 48, .88)';
+    context.strokeStyle = color;
+    context.fillStyle = state.tool === 'keep' ? 'rgba(31, 122, 90, .16)' : 'rgba(220, 93, 48, .16)';
+    context.lineWidth = Math.max(1.5, 2 / Math.max(state.zoom, 0.1));
+    if (preview.mode === 'straight' && preview.start && preview.end) {
+      context.lineWidth = Math.max(2, preview.diameterMm * pxPerMm);
+      context.lineCap = 'round';
+      context.globalAlpha = 0.58;
+      context.beginPath();
+      context.moveTo(preview.start.x, preview.start.y);
+      context.lineTo(preview.end.x, preview.end.y);
+      context.stroke();
+      context.globalAlpha = 1;
+    } else if (preview.point) {
+      context.beginPath();
+      context.ellipse(
+        preview.point.x,
+        preview.point.y,
+        Math.max(2, radiusMm * pxPerMm),
+        Math.max(2, radiusMm * yPerMm),
+        0, 0, Math.PI * 2,
+      );
+      context.fill();
+      context.stroke();
+    }
+  }
+
   const bounds = state.highlightedIssue?.details?.bounds;
   if (bounds) {
     const padding = Math.max(3, 6 / Math.max(state.zoom, 0.1));
@@ -2175,6 +2237,99 @@ function distanceToSegment(point, start, end) {
   return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
 }
 
+function requiredBridgeWidthMm() {
+  return Math.max(
+    PLASMA_MIN_WEB_MM,
+    toMm(numberField('min-web', 3)) + toMm(numberField('kerf', 1.2)),
+  );
+}
+
+function safeBridgeWidthMm(value = toMm(numberField('bridge-width', 6))) {
+  return Math.max(Number.isFinite(value) ? value : 0, requiredBridgeWidthMm());
+}
+
+function preferredManualSupportAngle(start, end) {
+  if (el('support-follow-style')?.checked !== true) return null;
+  const style = selectedCutStyle();
+  if (style === 'lamele') return numberField('style-slat-angle', -55) + 90;
+  if (style === 'hasura') return numberField('style-angle', 30) + 90;
+  if (style === 'raze') {
+    const center = sourcePointOnSheet(
+      numberField('style-ray-center-x', 25) / 100,
+      numberField('style-ray-center-y', 50) / 100,
+    );
+    if (!center) return null;
+    const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    return Math.atan2(midpoint.y - center.y, midpoint.x - center.x) * 180 / Math.PI + 90;
+  }
+  return null;
+}
+
+function constrainSupportEndpoint(start, end) {
+  const angle = preferredManualSupportAngle(start, end);
+  if (!Number.isFinite(angle)) return end;
+  const radians = angle * Math.PI / 180;
+  const unit = { x: Math.cos(radians), y: Math.sin(radians) };
+  const delta = { x: end.x - start.x, y: end.y - start.y };
+  const length = Math.hypot(delta.x, delta.y);
+  if (length <= Number.EPSILON) return end;
+  const direction = delta.x * unit.x + delta.y * unit.y < 0 ? -1 : 1;
+  return { x: start.x + unit.x * length * direction, y: start.y + unit.y * length * direction };
+}
+
+function nearestRetainedPoint(point, maximumDistanceMm = 30) {
+  if (el('support-snap')?.checked !== true || !state.designMask) return point;
+  const currentSheet = sheet();
+  const mask = state.designMask;
+  const pixel = { x: currentSheet.widthMm / mask.width, y: currentSheet.heightMm / mask.height };
+  const centerX = Math.round(point.x / pixel.x - 0.5);
+  const centerY = Math.round(point.y / pixel.y - 0.5);
+  const radiusX = Math.ceil(maximumDistanceMm / pixel.x);
+  const radiusY = Math.ceil(maximumDistanceMm / pixel.y);
+  let nearest = null;
+  let nearestDistance = maximumDistanceMm;
+  for (let y = Math.max(0, centerY - radiusY); y <= Math.min(mask.height - 1, centerY + radiusY); y += 1) {
+    for (let x = Math.max(0, centerX - radiusX); x <= Math.min(mask.width - 1, centerX + radiusX); x += 1) {
+      if (mask.data[y * mask.width + x] !== RETAINED) continue;
+      const candidate = { x: (x + 0.5) * pixel.x, y: (y + 0.5) * pixel.y };
+      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = candidate;
+      }
+    }
+  }
+  return nearest ?? point;
+}
+
+function manualSupportPoint(point, start = null) {
+  const currentSheet = sheet();
+  const raw = {
+    x: Math.max(0, Math.min(currentSheet.widthMm, point.x)),
+    y: Math.max(0, Math.min(currentSheet.heightMm, point.y)),
+  };
+  const maximumDistance = Math.max(20, safeBridgeWidthMm() * 3);
+  if (!start) return nearestRetainedPoint(raw, maximumDistance);
+  const aligned = constrainSupportEndpoint(start, raw);
+  if (el('support-snap')?.checked !== true) return aligned;
+  const snappedAligned = nearestRetainedPoint(aligned, maximumDistance);
+  if (snappedAligned !== aligned) return snappedAligned;
+  // Direction guidance must never make a support miss the piece the user
+  // deliberately pointed at. When the aligned target has no nearby metal,
+  // preserve the user's target and only apply endpoint snapping there.
+  return nearestRetainedPoint(raw, maximumDistance);
+}
+
+function promoteBridgeToManual(bridge) {
+  if (!bridge || bridge.source !== 'automatic') return;
+  bridge.source = 'manual';
+  bridge.fallback = false;
+  bridge.redundant = false;
+  bridge.strategy = null;
+  bridge.lengthMm = Math.hypot(bridge.end.x - bridge.start.x, bridge.end.y - bridge.start.y);
+  updateAutomaticSupportState();
+}
+
 function pointerToMm(event) {
   const point = pointerToMask(event);
   if (!state.designMask) return { ...point, mmX: 0, mmY: 0 };
@@ -2199,6 +2354,19 @@ function bridgeAtPointer(event) {
     );
     if (distance <= Math.max(bridge.width / 2, screenToleranceMm)) return bridge;
   }
+  return null;
+}
+
+function bridgeHandleAtPointer(event) {
+  const bridge = state.selectedBridge;
+  if (!bridge || !state.designMask) return null;
+  const point = pointerToMm(event);
+  if (!point.inside) return null;
+  const canvasWidth = Math.max(1, el('editor-canvas').getBoundingClientRect().width);
+  const toleranceMm = sheet().widthMm / canvasWidth * 12;
+  const cursor = { x: point.mmX, y: point.mmY };
+  if (Math.hypot(cursor.x - bridge.start.x, cursor.y - bridge.start.y) <= toleranceMm) return 'start';
+  if (Math.hypot(cursor.x - bridge.end.x, cursor.y - bridge.end.y) <= toleranceMm) return 'end';
   return null;
 }
 
@@ -2231,6 +2399,7 @@ function exportGeometry(kind) {
 
 function setStage(stage) {
   state.stage = stage;
+  if (stage !== 'prepare' && state.tool !== 'pan') setTool('pan');
   const order = ['prepare', 'panel', 'support', 'validate', 'export'];
   for (const name of order) {
     const tab = el(`stage-${name}`);
@@ -2280,12 +2449,57 @@ function setSidePanel(panel) {
 
 function setTool(tool) {
   state.tool = tool;
+  state.touchupPreview = null;
+  state.drawingBridge = false;
+  state.bridgePreview = null;
   for (const name of ['pan', 'keep', 'remove']) {
     const button = el(`tool-${name}`);
     button?.setAttribute('aria-pressed', String(name === tool));
     button?.classList.toggle('is-selected', name === tool);
   }
+  const editing = tool === 'keep' || tool === 'remove';
+  el('touchup-options')?.toggleAttribute('hidden', !editing);
+  if (editing) updateTouchupControls();
   el('canvas-viewport').style.cursor = tool === 'pan' ? 'grab' : 'crosshair';
+  draw();
+}
+
+function touchupMode() {
+  return document.querySelector('input[name="touchupMode"]:checked')?.value || 'freehand';
+}
+
+function touchupMinimumMm() {
+  return state.tool === 'remove'
+    ? Math.max(PLASMA_MIN_OPENING_MM, toMm(numberField('min-opening', 2)))
+    : Math.max(
+      PLASMA_MIN_WEB_MM,
+      toMm(numberField('min-web', 3)) + toMm(numberField('kerf', 1.2)),
+    );
+}
+
+function touchupSizeMm() {
+  return Math.max(touchupMinimumMm(), toMm(numberField('touchup-size', 8)));
+}
+
+function updateTouchupControls() {
+  const remove = state.tool === 'remove';
+  const mode = touchupMode();
+  const size = el('touchup-size');
+  const minimum = roundUnit(fromMm(touchupMinimumMm()));
+  if (size) {
+    size.min = String(minimum);
+    size.max = String(roundUnit(fromMm(250)));
+    size.step = state.unit === 'in' ? '0.01' : '0.5';
+    size.disabled = mode === 'region';
+    if (toMm(numberField('touchup-size', minimum)) < touchupMinimumMm()) size.value = String(minimum);
+  }
+  const label = el('touchup-size-label');
+  if (label) label.innerHTML = `${remove ? 'Cut width' : 'Material width'} <small>${mode === 'region' ? 'Not used for a whole region' : 'Physical size on the panel'}</small>`;
+  const hint = el('touchup-hint');
+  if (!hint) return;
+  if (mode === 'straight') hint.textContent = `Drag between two points for a precise ${remove ? 'cut' : 'material strip'}.`;
+  else if (mode === 'region') hint.textContent = `Click a connected ${remove ? 'metal piece to remove it' : 'opening to fill it'}.`;
+  else hint.textContent = `Drag a continuous ${roundUnit(fromMm(touchupSizeMm()))} ${state.unit} physical-width stroke.`;
 }
 
 function toast(message) {
@@ -2320,25 +2534,63 @@ function pointerToMask(event) {
   return { x, y, inside: x >= 0 && y >= 0 && x < canvas.width && y < canvas.height };
 }
 
-function paintAt(event) {
-  if (!state.sourceMask || state.tool === 'pan') return;
-  const { x, y, inside } = pointerToMask(event);
-  if (!inside) return;
-  const radius = 6;
+function paintIndex(index) {
+  if (!state.sourceMask || index < 0 || index >= state.sourceMask.data.length) return false;
   const target = state.tool === 'keep' ? state.painted.keep : state.painted.remove;
   const other = state.tool === 'keep' ? state.painted.remove : state.painted.keep;
-  for (let dy = -radius; dy <= radius; dy += 1) {
-    for (let dx = -radius; dx <= radius; dx += 1) {
-      if (dx * dx + dy * dy > radius * radius) continue;
-      const px = x + dx;
-      const py = y + dy;
-      if (px < 0 || py < 0 || px >= state.sourceMask.width || py >= state.sourceMask.height) continue;
-      const index = py * state.sourceMask.width + px;
-      target.add(index);
-      other.delete(index);
-    }
+  if (target.has(index) && !other.has(index)) return false;
+  target.add(index);
+  other.delete(index);
+  return true;
+}
+
+function paintDisc(point, diameterMm = touchupSizeMm()) {
+  if (!state.sourceMask) return false;
+  let changed = false;
+  for (const index of physicalDiscIndices(state.sourceMask, point, diameterMm, sheet())) {
+    changed = paintIndex(index) || changed;
   }
-  refresh({ reanalyse: false });
+  return changed;
+}
+
+function paintSegment(start, end) {
+  if (!state.sourceMask) return false;
+  let changed = false;
+  for (const index of physicalStrokeIndices(state.sourceMask, start, end, touchupSizeMm(), sheet())) {
+    changed = paintIndex(index) || changed;
+  }
+  return changed;
+}
+
+function paintConnectedRegion(point) {
+  if (!state.sourceMask) return false;
+  const x = Math.round(point.x);
+  const y = Math.round(point.y);
+  if (x < 0 || y < 0 || x >= state.sourceMask.width || y >= state.sourceMask.height) return false;
+  const start = y * state.sourceMask.width + x;
+  const desired = state.tool === 'keep' ? RETAINED : REMOVED;
+  const original = state.sourceMask.data[start];
+  if (original === desired) return false;
+  const maximum = Math.min(50000, Math.floor(state.sourceMask.data.length * 0.15));
+  const region = connectedRegionIndices(state.sourceMask, point, { maximumPixels: Math.max(1, maximum) });
+  if (region.truncated) {
+    toast('That region is too large for a touch-up. Adjust the filter instead.');
+    return false;
+  }
+  let changed = false;
+  for (const index of region.indices) changed = paintIndex(index) || changed;
+  return changed;
+}
+
+function reportTouchupResult() {
+  if (el('touchup-safety')?.checked !== true || !state.analysis) return;
+  const loose = Math.max(0, state.analysis.componentCount - 1);
+  if (loose > 0) {
+    toast(`Edit leaves ${loose} loose ${loose === 1 ? 'piece' : 'pieces'}. They are highlighted in Problems.`);
+    setSidePanel('issues');
+  } else {
+    toast('Edit keeps the panel connected. Run validation for hole and gap checks.');
+  }
 }
 
 let styleTimer = null;
@@ -2516,6 +2768,7 @@ function wire() {
     el(id)?.addEventListener('input', () => {
       const adjusted = enforcePlasmaLimits();
       if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
+      updateTouchupControls();
       restyle();
       refresh();
     });
@@ -2542,7 +2795,7 @@ function wire() {
     // The numbers on screen are re-expressed, not re-interpreted: switching
     // units must not silently resize the panel.
     for (const id of ['panel-width', 'panel-height', 'panel-margin', 'frame-width',
-      'bridge-width', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
+      'bridge-width', 'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
@@ -2553,6 +2806,7 @@ function wire() {
       node.value = state.unit === 'in' ? Math.round(mm / MM_PER_INCH * 1000) / 1000 : Math.round(mm * 10) / 10;
     }
     enforcePlasmaLimits();
+    updateTouchupControls();
     updateReadouts(); restyle(); refresh({ immediate: true });
     pushHistory();
   });
@@ -2572,6 +2826,12 @@ function wire() {
 
   // --- tools and view
   for (const name of ['pan', 'keep', 'remove']) el(`tool-${name}`)?.addEventListener('click', () => setTool(name));
+  for (const node of all('input[name="touchupMode"]')) {
+    node.addEventListener('change', () => { updateTouchupControls(); draw(); pushHistory(); });
+  }
+  el('touchup-size')?.addEventListener('input', () => { updateTouchupControls(); draw(); });
+  el('touchup-size')?.addEventListener('change', pushHistory);
+  el('touchup-safety')?.addEventListener('change', pushHistory);
   for (const name of ['original', 'source', 'material', 'backlit', 'issues']) {
     el(`view-${name}`)?.addEventListener('click', () => setView(name));
   }
@@ -2610,6 +2870,8 @@ function wire() {
   el('bridge-count')?.addEventListener('input', updateRangeOutputs);
   el('bridge-count')?.addEventListener('change', pushHistory);
   el('protect-faces')?.addEventListener('change', pushHistory);
+  el('support-snap')?.addEventListener('change', pushHistory);
+  el('support-follow-style')?.addEventListener('change', pushHistory);
   el('bridge-width')?.addEventListener('input', () => {
     const adjusted = enforcePlasmaLimits();
     if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
@@ -2618,8 +2880,13 @@ function wire() {
   el('btn-auto-bridge')?.addEventListener('click', autoBridge);
   el('btn-add-bridge')?.addEventListener('click', () => {
     if (!state.designMask) { toast('Import an image first.'); return; }
-    toast('Drag on the canvas to draw a bridge.');
+    const safeWidth = safeBridgeWidthMm();
+    if (safeWidth > toMm(numberField('bridge-width', 6)) + 1e-9) {
+      el('bridge-width').value = roundUnit(fromMm(safeWidth));
+    }
+    toast('Drag between two pieces. Endpoints snap to metal; drag either handle later to refine it.');
     state.drawingBridge = true;
+    state.bridgePreview = null;
     el('canvas-viewport').style.cursor = 'crosshair';
   });
   el('btn-clear-auto-bridges')?.addEventListener('click', () => {
@@ -2641,7 +2908,8 @@ function wire() {
   });
   el('selected-bridge-width')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
-    state.selectedBridge.width = Math.max(PLASMA_MIN_WEB_MM, toMm(Number(event.target.value)));
+    promoteBridgeToManual(state.selectedBridge);
+    state.selectedBridge.width = safeBridgeWidthMm(toMm(Number(event.target.value)));
     event.target.value = roundUnit(fromMm(state.selectedBridge.width));
     refresh({ immediate: true, rebuildSourceMask: false });
     pushHistory();
@@ -2701,21 +2969,55 @@ function wire() {
   let panning = null;
   let drawingFrom = null;
   let draggingBridge = null;
+  let touchupStroke = null;
 
   viewport?.addEventListener('pointerdown', (event) => {
     const { x, y, inside } = pointerToMask(event);
     if (state.drawingBridge && inside) {
-      const { widthMm, heightMm } = sheet();
-      drawingFrom = { x: x / state.designMask.width * widthMm, y: y / state.designMask.height * heightMm };
+      const point = pointerToMm(event);
+      drawingFrom = manualSupportPoint({ x: point.mmX, y: point.mmY });
+      state.bridgePreview = { start: drawingFrom, end: drawingFrom, width: safeBridgeWidthMm() };
       viewport.setPointerCapture(event.pointerId);
+      draw();
       return;
     }
-    if (state.tool !== 'pan') { paintAt(event); return; }
+    if (state.tool !== 'pan') {
+      if (!inside) return;
+      const mode = touchupMode();
+      touchupStroke = {
+        mode,
+        start: { x, y },
+        last: { x, y },
+        changed: mode === 'region' ? paintConnectedRegion({ x, y }) : mode === 'freehand' ? paintDisc({ x, y }) : false,
+      };
+      state.touchupPreview = mode === 'straight'
+        ? { mode: 'straight', start: { x, y }, end: { x, y }, diameterMm: touchupSizeMm() }
+        : { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
+      viewport.setPointerCapture(event.pointerId);
+      if (touchupStroke.changed) refresh({ reanalyse: false });
+      else draw();
+      return;
+    }
+    const handle = bridgeHandleAtPointer(event);
+    if (handle && state.selectedBridge) {
+      const point = pointerToMm(event);
+      draggingBridge = {
+        mode: handle,
+        bridge: state.selectedBridge,
+        origin: { x: point.mmX, y: point.mmY },
+        start: { ...state.selectedBridge.start },
+        end: { ...state.selectedBridge.end },
+      };
+      viewport.setPointerCapture(event.pointerId);
+      viewport.style.cursor = 'crosshair';
+      return;
+    }
     const hit = bridgeAtPointer(event);
     if (hit) {
       const point = pointerToMm(event);
       selectBridge(hit);
       draggingBridge = {
+        mode: 'move',
         bridge: hit,
         origin: { x: point.mmX, y: point.mmY },
         start: { ...hit.start },
@@ -2738,55 +3040,145 @@ function wire() {
         ? `x ${(mmX / MM_PER_INCH).toFixed(2)}  y ${(mmY / MM_PER_INCH).toFixed(2)}`
         : `x ${Math.round(mmX)}  y ${Math.round(mmY)}`;
     }
-    if (draggingBridge) {
-      const currentSheet = sheet();
-      let dx = mmX - draggingBridge.origin.x;
-      let dy = mmY - draggingBridge.origin.y;
-      dx = Math.max(-Math.min(draggingBridge.start.x, draggingBridge.end.x), Math.min(
-        currentSheet.widthMm - Math.max(draggingBridge.start.x, draggingBridge.end.x), dx,
-      ));
-      dy = Math.max(-Math.min(draggingBridge.start.y, draggingBridge.end.y), Math.min(
-        currentSheet.heightMm - Math.max(draggingBridge.start.y, draggingBridge.end.y), dy,
-      ));
-      draggingBridge.bridge.start = { x: draggingBridge.start.x + dx, y: draggingBridge.start.y + dy };
-      draggingBridge.bridge.end = { x: draggingBridge.end.x + dx, y: draggingBridge.end.y + dy };
+    if (drawingFrom) {
+      if (!inside) return;
+      const end = manualSupportPoint({ x: mmX, y: mmY }, drawingFrom);
+      state.bridgePreview = { start: drawingFrom, end, width: safeBridgeWidthMm() };
+      draw();
+    } else if (touchupStroke) {
+      if (!inside) return;
+      if (touchupStroke.mode === 'freehand') {
+        touchupStroke.changed = paintSegment(touchupStroke.last, { x, y }) || touchupStroke.changed;
+        touchupStroke.last = { x, y };
+        state.touchupPreview = { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
+        refresh({ reanalyse: false });
+      } else if (touchupStroke.mode === 'straight') {
+        touchupStroke.last = { x, y };
+        state.touchupPreview = {
+          mode: 'straight', start: touchupStroke.start, end: { x, y }, diameterMm: touchupSizeMm(),
+        };
+        draw();
+      }
+    } else if (draggingBridge) {
+      promoteBridgeToManual(draggingBridge.bridge);
+      draggingBridge.bridge.width = safeBridgeWidthMm(draggingBridge.bridge.width);
+      if (draggingBridge.mode === 'start' || draggingBridge.mode === 'end') {
+        const other = draggingBridge.mode === 'start' ? draggingBridge.bridge.end : draggingBridge.bridge.start;
+        const endpoint = manualSupportPoint({ x: mmX, y: mmY }, other);
+        draggingBridge.bridge[draggingBridge.mode] = endpoint;
+      } else {
+        const currentSheet = sheet();
+        let dx = mmX - draggingBridge.origin.x;
+        let dy = mmY - draggingBridge.origin.y;
+        dx = Math.max(-Math.min(draggingBridge.start.x, draggingBridge.end.x), Math.min(
+          currentSheet.widthMm - Math.max(draggingBridge.start.x, draggingBridge.end.x), dx,
+        ));
+        dy = Math.max(-Math.min(draggingBridge.start.y, draggingBridge.end.y), Math.min(
+          currentSheet.heightMm - Math.max(draggingBridge.start.y, draggingBridge.end.y), dy,
+        ));
+        draggingBridge.bridge.start = { x: draggingBridge.start.x + dx, y: draggingBridge.start.y + dy };
+        draggingBridge.bridge.end = { x: draggingBridge.end.x + dx, y: draggingBridge.end.y + dy };
+      }
+      draggingBridge.bridge.lengthMm = Math.hypot(
+        draggingBridge.bridge.end.x - draggingBridge.bridge.start.x,
+        draggingBridge.bridge.end.y - draggingBridge.bridge.start.y,
+      );
       refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false });
     } else if (panning) {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
       applyTransform();
-    } else if (event.buttons === 1 && state.tool !== 'pan') {
-      paintAt(event);
+    } else if (state.tool !== 'pan') {
+      state.touchupPreview = inside
+        ? { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() }
+        : null;
+      draw();
     }
   });
 
   viewport?.addEventListener('pointerup', (event) => {
+    const releasePoint = pointerToMask(event);
+    const inside = releasePoint.inside;
     if (draggingBridge) {
+      draggingBridge.bridge.lengthMm = Math.hypot(
+        draggingBridge.bridge.end.x - draggingBridge.bridge.start.x,
+        draggingBridge.bridge.end.y - draggingBridge.bridge.start.y,
+      );
+      selectBridge(draggingBridge.bridge);
       draggingBridge = null;
       refresh({ immediate: true, rebuildSourceMask: false });
       pushHistory();
     }
     if (drawingFrom) {
-      const { x, y, inside } = pointerToMask(event);
-      if (inside) {
-        const { widthMm, heightMm } = sheet();
-        const end = { x: x / state.designMask.width * widthMm, y: y / state.designMask.height * heightMm };
-        state.bridges.push({
+      const end = state.bridgePreview?.end;
+      if (inside && end && Math.hypot(end.x - drawingFrom.x, end.y - drawingFrom.y) > Number.EPSILON) {
+        const bridge = {
           id: `manual-${Date.now()}`, type: 'capsule', enabled: true, units: 'mm',
           start: drawingFrom, end,
-          width: Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6))),
+          width: safeBridgeWidthMm(),
+          lengthMm: Math.hypot(end.x - drawingFrom.x, end.y - drawingFrom.y),
           source: 'manual',
-        });
+        };
+        state.bridges.push(bridge);
         refresh({ immediate: true, rebuildSourceMask: false });
+        selectBridge(bridge);
         pushHistory();
-        toast('Bridge added.');
+        toast('Support added. Drag either endpoint handle to refine it.');
       }
       drawingFrom = null;
       state.drawingBridge = false;
+      state.bridgePreview = null;
+    }
+    if (touchupStroke) {
+      if (touchupStroke.mode === 'straight' && inside) {
+        touchupStroke.changed = paintSegment(touchupStroke.start, releasePoint) || touchupStroke.changed;
+      } else if (touchupStroke.mode === 'freehand' && inside) {
+        touchupStroke.changed = paintSegment(touchupStroke.last, releasePoint) || touchupStroke.changed;
+      }
+      const changed = touchupStroke.changed;
+      touchupStroke = null;
+      state.touchupPreview = inside
+        ? { mode: 'cursor', point: releasePoint, diameterMm: touchupSizeMm() }
+        : null;
+      if (changed) {
+        refresh({ immediate: true });
+        pushHistory();
+        reportTouchupResult();
+      } else {
+        draw();
+      }
     }
     panning = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
     viewport.style.cursor = state.tool === 'pan' ? 'grab' : 'crosshair';
-    if (state.tool !== 'pan') pushHistory();
+  });
+
+  viewport?.addEventListener('pointerleave', () => {
+    if (touchupStroke || drawingFrom || draggingBridge) return;
+    state.touchupPreview = null;
+    draw();
+  });
+
+  viewport?.addEventListener('pointercancel', (event) => {
+    const painted = touchupStroke?.changed === true;
+    const movedBridge = Boolean(draggingBridge);
+    touchupStroke = null;
+    drawingFrom = null;
+    draggingBridge = null;
+    panning = null;
+    state.drawingBridge = false;
+    state.bridgePreview = null;
+    state.touchupPreview = null;
+    if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+    if (painted) {
+      refresh({ immediate: true });
+      pushHistory();
+      reportTouchupResult();
+    } else if (movedBridge) {
+      refresh({ immediate: true, rebuildSourceMask: false });
+      pushHistory();
+    } else {
+      draw();
+    }
   });
 
   viewport?.addEventListener('wheel', (event) => {
@@ -2820,6 +3212,13 @@ function wire() {
     if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomAt(state.zoom / 1.35); }
     if (event.key === '0') { event.preventDefault(); zoomAt(1); }
     if (event.key === 'f' || event.key === 'F') { event.preventDefault(); fitToView(); }
+    if (event.key === 'k' || event.key === 'K') { event.preventDefault(); setStage('prepare'); setTool('keep'); }
+    if (event.key === 'r' || event.key === 'R') { event.preventDefault(); setStage('prepare'); setTool('remove'); }
+    if ((event.key === 'b' || event.key === 'B') && state.designMask) {
+      event.preventDefault();
+      setStage('support');
+      el('btn-add-bridge')?.click();
+    }
   });
 
   window.addEventListener('beforeunload', (event) => {

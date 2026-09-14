@@ -490,14 +490,33 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V7a1.5 1.5 0 0 1 3 0v3-5a1.5 1.5 0 0 1 3 0v5-3a1.5 1.5 0 0 1 3 0v4-1a1.5 1.5 0 0 1 3 0v3c0 5-3 8-8 8h-1c-3 0-5-2-7-5l-1-2a1.6 1.6 0 0 1 2.6-1.8L8 14"></path></svg>
                   Pan
                 </button>
-                <button class="tool-button" id="tool-keep" type="button" aria-pressed="false">
+                <button class="tool-button" id="tool-keep" type="button" aria-pressed="false" aria-keyshortcuts="K">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16 9-9 4 4-9 9H4v-4Zm11-7 2-2 2 2-2 2"></path></svg>
-                  Keep metal
+                  Add material
                 </button>
-                <button class="tool-button" id="tool-remove" type="button" aria-pressed="false">
+                <button class="tool-button" id="tool-remove" type="button" aria-pressed="false" aria-keyshortcuts="R">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 15 8-8 5 5-7 7H7l-2-2a1.4 1.4 0 0 1 0-2Z"></path><path d="M11 19h9"></path></svg>
-                  Remove
+                  Remove material
                 </button>
+              </div>
+              <div class="touchup-options" id="touchup-options" hidden>
+                <label class="field-row" for="touchup-size">
+                  <span id="touchup-size-label">Brush diameter <small>Physical size on the panel</small></span>
+                  <span class="number-field compact"><input id="touchup-size" name="touchupSize" type="number" min="3" max="250" step="0.5" value="8"><span data-unit-label>mm</span></span>
+                </label>
+                <fieldset class="compact-fieldset">
+                  <legend>Gesture</legend>
+                  <div class="segmented-control three-options">
+                    <label><input type="radio" name="touchupMode" value="freehand" checked><span>Freehand</span></label>
+                    <label><input type="radio" name="touchupMode" value="straight"><span>Straight</span></label>
+                    <label><input type="radio" name="touchupMode" value="region"><span>Region</span></label>
+                  </div>
+                </fieldset>
+                <label class="toggle-row" for="touchup-safety">
+                  <span>Check after each edit<small>Warn about loose pieces immediately</small></span>
+                  <input class="switch" id="touchup-safety" name="touchupSafety" type="checkbox" checked>
+                </label>
+                <p class="section-help touchup-hint" id="touchup-hint">Drag a continuous physical-width stroke.</p>
               </div>
             </div>
 
@@ -618,6 +637,14 @@
                 <span>Protect important detail<small>Avoid high-contrast and central portrait features</small></span>
                 <input class="switch" id="protect-faces" name="protectFaces" type="checkbox" checked>
               </label>
+              <label class="toggle-row" for="support-snap">
+                <span>Snap manual support ends<small>Attach endpoints to nearby retained metal</small></span>
+                <input class="switch" id="support-snap" name="supportSnap" type="checkbox" checked>
+              </label>
+              <label class="toggle-row" for="support-follow-style">
+                <span>Follow filter direction<small>Align manual ties with Slats, Hatch, or Radial Cuts</small></span>
+                <input class="switch" id="support-follow-style" name="supportFollowStyle" type="checkbox" checked>
+              </label>
               <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Secure adds a small number of separated backup ties. Orange dashed ties are safe fallbacks to review.</p>
             </div>
 
@@ -626,9 +653,9 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2L12 3ZM6 14l.8 2.2L9 17l-2.2.8L6 20l-.8-2.2L3 17l2.2-.8L6 14Zm12-1 .9 2.1L21 16l-2.1.9L18 19l-.9-2.1L15 16l2.1-.9L18 13Z"></path></svg>
                 <span id="automatic-support-action">Suggest smart bridges</span>
               </button>
-              <button class="button button-secondary button-full" id="btn-add-bridge" type="button">
+              <button class="button button-secondary button-full" id="btn-add-bridge" type="button" aria-keyshortcuts="B">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15c4-6 10-6 14 0M7 18h10M12 7v5M9.5 9.5 12 12l2.5-2.5"></path></svg>
-                Draw a bridge
+                Add support
               </button>
               <button class="button button-quiet button-full" id="btn-clear-auto-bridges" type="button" disabled>
                 Remove automatic supports <span id="automatic-support-count" aria-hidden="true"></span>

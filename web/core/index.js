@@ -23,6 +23,7 @@ export { slatMask } from "./styles/slats.js";
 export { hatchMask } from "./styles/hatch.js";
 export { analyzeConnectivity, findUnsupportedComponents } from "./connectivity.js";
 export { applyCapsuleBridge, applyCapsuleBridges, validateBridge } from "./bridges.js";
+export { connectedRegionIndices, physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
 export { suggestBridges } from "./suggestions.js";
 export { dilateMaskPhysical, erodeMaskPhysical } from "./morphology.js";
 export { validateDesign } from "./validation.js";
