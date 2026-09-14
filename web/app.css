@@ -879,6 +879,12 @@ svg {
   align-items: center;
   flex-direction: column;
   gap: 5px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.tools-list::-webkit-scrollbar {
+  display: none;
 }
 
 .rail-tool {
@@ -927,6 +933,12 @@ svg {
   padding-top: 10px;
   border-top-color: var(--line);
   border-radius: 0 0 8px 8px;
+}
+
+.rail-tool-style {
+  margin-bottom: 5px;
+  border-bottom-color: var(--line);
+  border-radius: 8px 8px 0 0;
 }
 
 .tool-context-empty {
@@ -3044,6 +3056,8 @@ select:focus {
     flex-direction: row;
     gap: 2px;
     justify-content: space-around;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .rail-tool {
@@ -3059,6 +3073,12 @@ select:focus {
     margin-top: 0;
     padding-top: 5px;
     border-top-color: transparent;
+    border-radius: 8px;
+  }
+
+  .rail-tool-style {
+    margin-bottom: 0;
+    border-bottom-color: transparent;
     border-radius: 8px;
   }
 

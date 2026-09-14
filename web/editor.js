@@ -737,6 +737,8 @@ function setStyleStatus(text) {
 function reflectModeControls() {
   const style = document.querySelector('input[name="cutStyle"]:checked')?.value || 'line-art';
   const lineArt = style === 'line-art';
+  el('tool-icon-stencil')?.setAttribute('aria-pressed', String(style === 'icoana'));
+  el('tool-icon-stencil')?.classList.toggle('is-selected', style === 'icoana');
   el('style-controls')?.removeAttribute('hidden');
   el('tone-controls')?.toggleAttribute('hidden', !lineArt);
   el('style-photo-common')?.toggleAttribute('hidden', lineArt);
@@ -2639,6 +2641,16 @@ function activateSupportTool() {
   toast('Support tool active. Drag between two pieces; endpoints snap to metal.');
 }
 
+function activateIconStencil() {
+  setStage('prepare');
+  const option = document.querySelector('input[name="cutStyle"][value="icoana"]');
+  if (!option) return;
+  if (!option.checked) option.click();
+  else reflectModeControls();
+  el('style-icon')?.scrollIntoView({ block: 'nearest' });
+  toast('Icon stencil selected. Its halo and detail settings are open.');
+}
+
 function touchupMode() {
   return document.querySelector('input[name="touchupMode"]:checked')?.value || 'freehand';
 }
@@ -3013,6 +3025,7 @@ function wire() {
     });
   }
   el('tool-support')?.addEventListener('click', activateSupportTool);
+  el('tool-icon-stencil')?.addEventListener('click', activateIconStencil);
   el('tool-problems')?.addEventListener('click', () => {
     setStage('validate');
     setSidePanel('issues');
@@ -3405,6 +3418,7 @@ function wire() {
     if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomAt(state.zoom / 1.35); }
     if (event.key === '0') { event.preventDefault(); zoomAt(1); }
     if (event.key === 'f' || event.key === 'F') { event.preventDefault(); fitToView(); }
+    if (event.key === 'i' || event.key === 'I') { event.preventDefault(); activateIconStencil(); }
     if (event.key === 'k' || event.key === 'K') { event.preventDefault(); setStage('prepare'); setTool('keep'); }
     if (event.key === 'r' || event.key === 'R') { event.preventDefault(); setStage('prepare'); setTool('remove'); }
     if ((event.key === 'b' || event.key === 'B') && state.designMask) {

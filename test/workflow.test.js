@@ -53,9 +53,12 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
   assert.match(html, /id="tools-rail"[^>]*aria-labelledby="tools-title"/);
   assert.match(html, /id="tools-title">Tools</);
-  for (const id of ['tool-pan', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
+  for (const id of ['tool-pan', 'tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
+  assert.match(html, /id="tool-icon-stencil"[^>]*aria-keyshortcuts="I"/);
+  assert.match(editor, /function activateIconStencil\(\)[\s\S]*?value="icoana"/);
+  assert.match(editor, /el\('tool-icon-stencil'\)\?\.addEventListener\('click', activateIconStencil\)/);
   assert.doesNotMatch(html, /class="tool-grid"/);
   assert.match(editor, /state\.drawingBridge = tool === 'support'/);
   assert.match(editor, /el\('btn-add-bridge'\)\?\.addEventListener\('click', activateSupportTool\)/);
