@@ -519,7 +519,8 @@
               <p class="section-help" id="style-status">Choose an image to render.</p>
             </div>
 
-            <div class="control-section">
+            <span id="touchup-tool-settings-home" hidden></span>
+            <div class="control-section" id="touchup-tool-settings">
               <h2>Tool settings</h2>
               <p class="tool-context-empty" id="touchup-empty">Choose Add material or Remove material from the permanent Tools bar.</p>
               <div class="touchup-options" id="touchup-options" hidden>
@@ -642,6 +643,8 @@
               <span><strong>Automatic supports need review</strong><small>The artwork changed. Manual supports were preserved.</small></span>
             </div>
 
+            <span id="support-tool-settings-home" hidden></span>
+            <div id="support-tool-settings">
             <div class="control-section">
               <div class="section-title-row">
                 <h2>Bridge settings</h2>
@@ -713,6 +716,7 @@
                 </label>
                 <button class="button button-danger button-full" id="btn-delete-bridge" type="button">Remove selected bridge</button>
               </div>
+            </div>
             </div>
 
             <button class="button button-primary button-full stage-next" type="button" data-next-stage="validate">
@@ -814,15 +818,15 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M5 21c.8-4.3 3.1-6.5 7-6.5s6.2 2.2 7 6.5M12 3V1M7.8 4 6.4 2.6M16.2 4l1.4-1.4"></path></svg>
             <span>Icon</span>
           </button>
-          <button class="rail-tool" id="tool-keep" type="button" aria-pressed="false" aria-keyshortcuts="K" title="Add material (K)">
+          <button class="rail-tool" id="tool-keep" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="K" title="Add material (K)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16 9-9 4 4-9 9H4v-4Zm11-7 2-2 2 2-2 2"></path><path d="M19 14v6M16 17h6"></path></svg>
             <span>Add</span>
           </button>
-          <button class="rail-tool" id="tool-remove" type="button" aria-pressed="false" aria-keyshortcuts="R" title="Remove material (R)">
+          <button class="rail-tool" id="tool-remove" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="R" title="Remove material (R)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 15 8-8 5 5-7 7H7l-2-2a1.4 1.4 0 0 1 0-2Z"></path><path d="M14 18h7"></path></svg>
             <span>Remove</span>
           </button>
-          <button class="rail-tool" id="tool-support" type="button" aria-pressed="false" aria-keyshortcuts="B" title="Add support (B)">
+          <button class="rail-tool" id="tool-support" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="B" title="Add support (B)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15c4-6 10-6 14 0M7 18h10M12 7v5M9.5 9.5 12 12l2.5-2.5"></path></svg>
             <span>Support</span>
           </button>
@@ -838,11 +842,11 @@
         <section class="tool-options-panel" id="tool-options-panel" aria-labelledby="tool-options-title" hidden>
           <header class="tool-options-header">
             <div>
-              <span>Filter settings</span>
+              <span id="tool-options-kind">Tool settings</span>
               <h3 id="tool-options-title">Icon stencil</h3>
             </div>
             <div class="tool-options-actions" id="tool-options-actions">
-              <button class="icon-button compact-button" id="btn-close-tool-options" type="button" aria-label="Close Icon stencil settings" title="Close settings">
+              <button class="icon-button compact-button" id="btn-close-tool-options" type="button" aria-label="Close tool settings" title="Close settings">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
               </button>
             </div>

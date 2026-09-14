@@ -739,8 +739,7 @@ function reflectModeControls() {
   const style = document.querySelector('input[name="cutStyle"]:checked')?.value || 'line-art';
   const lineArt = style === 'line-art';
   if (style !== 'icoana' && toolOptionsKind === 'icon') closeToolOptions();
-  el('tool-icon-stencil')?.setAttribute('aria-pressed', String(style === 'icoana'));
-  el('tool-icon-stencil')?.classList.toggle('is-selected', style === 'icoana');
+  syncToolRailState();
   el('style-controls')?.removeAttribute('hidden');
   el('tone-controls')?.toggleAttribute('hidden', !lineArt);
   el('style-photo-common')?.toggleAttribute('hidden', lineArt);
@@ -2615,16 +2614,11 @@ function setSidePanel(panel) {
 
 function setTool(tool) {
   if (!['pan', 'keep', 'remove', 'support'].includes(tool)) return;
-  if (tool !== 'pan') closeToolOptions();
   state.tool = tool;
   state.touchupPreview = null;
   state.drawingBridge = tool === 'support';
   state.bridgePreview = null;
-  for (const name of ['pan', 'keep', 'remove', 'support']) {
-    const button = el(`tool-${name}`);
-    button?.setAttribute('aria-pressed', String(name === tool));
-    button?.classList.toggle('is-selected', name === tool);
-  }
+  syncToolRailState();
   const editing = tool === 'keep' || tool === 'remove';
   el('touchup-options')?.toggleAttribute('hidden', !editing);
   el('touchup-empty')?.toggleAttribute('hidden', editing);
@@ -2641,6 +2635,7 @@ function activateSupportTool() {
   }
   setStage('support');
   setTool('support');
+  openToolOptions('support');
   toast('Support tool active. Drag between two pieces; endpoints snap to metal.');
 }
 
@@ -2648,10 +2643,59 @@ function activateIconStencil() {
   setStage('prepare');
   const option = document.querySelector('input[name="cutStyle"][value="icoana"]');
   if (!option) return;
+  setTool('pan');
   if (!option.checked) option.click();
   else reflectModeControls();
-  openIconOptions();
+  openToolOptions('icon');
   toast('Icon stencil selected. Adjust it beside the Tools bar.');
+}
+
+function activateTouchupTool(tool) {
+  if (tool !== 'keep' && tool !== 'remove') return;
+  setStage('prepare');
+  setTool(tool);
+  openToolOptions(tool);
+}
+
+const TOOL_OPTION_CONFIG = Object.freeze({
+  icon: Object.freeze({
+    title: 'Icon stencil',
+    kind: 'Filter settings',
+    nodes: Object.freeze(['style-icon', 'style-photo-common', 'style-status']),
+    actions: Object.freeze(['btn-restyle']),
+  }),
+  keep: Object.freeze({
+    title: 'Add material',
+    kind: 'Tool settings',
+    nodes: Object.freeze(['touchup-tool-settings']),
+    actions: Object.freeze([]),
+  }),
+  remove: Object.freeze({
+    title: 'Remove material',
+    kind: 'Tool settings',
+    nodes: Object.freeze(['touchup-tool-settings']),
+    actions: Object.freeze([]),
+  }),
+  support: Object.freeze({
+    title: 'Add support',
+    kind: 'Tool settings',
+    nodes: Object.freeze(['support-tool-settings']),
+    actions: Object.freeze([]),
+  }),
+});
+
+function toolButtonId(kind) {
+  return kind === 'icon' ? 'tool-icon-stencil' : `tool-${kind}`;
+}
+
+function syncToolRailState() {
+  const active = toolOptionsKind === 'icon' ? 'icon' : state.tool;
+  for (const kind of ['pan', 'icon', 'keep', 'remove', 'support']) {
+    const button = el(toolButtonId(kind));
+    const selected = kind === active;
+    button?.setAttribute('aria-pressed', String(selected));
+    button?.classList.toggle('is-selected', selected);
+  }
 }
 
 function moveToolOptionNode(id, destination) {
@@ -2665,30 +2709,44 @@ function restoreToolOptionNode(id) {
   if (node && home) home.after(node);
 }
 
-function openIconOptions() {
+function openToolOptions(kind) {
+  const config = TOOL_OPTION_CONFIG[kind];
   const panel = el('tool-options-panel');
   const actions = el('tool-options-actions');
   const content = el('tool-options-content');
-  if (!panel || !actions || !content) return;
-  toolOptionsKind = 'icon';
-  const rerender = el('btn-restyle');
-  if (rerender) actions.prepend(rerender);
-  for (const id of ['style-icon', 'style-photo-common', 'style-status']) {
+  if (!config || !panel || !actions || !content) return;
+  if (toolOptionsKind && toolOptionsKind !== kind) closeToolOptions();
+  toolOptionsKind = kind;
+  el('tool-options-title').textContent = config.title;
+  el('tool-options-kind').textContent = config.kind;
+  for (const id of [...config.actions].reverse()) {
+    const node = el(id);
+    if (node) actions.prepend(node);
+  }
+  for (const id of config.nodes) {
     moveToolOptionNode(id, content);
   }
   panel.hidden = false;
-  el('tool-icon-stencil')?.setAttribute('aria-expanded', 'true');
+  for (const optionKind of Object.keys(TOOL_OPTION_CONFIG)) {
+    el(toolButtonId(optionKind))?.setAttribute('aria-expanded', String(optionKind === kind));
+  }
+  syncToolRailState();
 }
 
 function closeToolOptions({ returnFocus = false } = {}) {
   if (!toolOptionsKind) return;
-  for (const id of ['btn-restyle', 'style-icon', 'style-photo-common', 'style-status']) {
+  const closingKind = toolOptionsKind;
+  const config = TOOL_OPTION_CONFIG[closingKind];
+  for (const id of [...config.actions, ...config.nodes]) {
     restoreToolOptionNode(id);
   }
   el('tool-options-panel')?.setAttribute('hidden', '');
-  el('tool-icon-stencil')?.setAttribute('aria-expanded', 'false');
+  for (const optionKind of Object.keys(TOOL_OPTION_CONFIG)) {
+    el(toolButtonId(optionKind))?.setAttribute('aria-expanded', 'false');
+  }
   toolOptionsKind = null;
-  if (returnFocus) el('tool-icon-stencil')?.focus();
+  syncToolRailState();
+  if (returnFocus) el(toolButtonId(closingKind))?.focus();
 }
 
 function touchupMode() {
@@ -3057,12 +3115,12 @@ function wire() {
   });
 
   // --- tools and view
-  el('tool-pan')?.addEventListener('click', () => setTool('pan'));
+  el('tool-pan')?.addEventListener('click', () => {
+    closeToolOptions();
+    setTool('pan');
+  });
   for (const name of ['keep', 'remove']) {
-    el(`tool-${name}`)?.addEventListener('click', () => {
-      setStage('prepare');
-      setTool(name);
-    });
+    el(`tool-${name}`)?.addEventListener('click', () => activateTouchupTool(name));
   }
   el('tool-support')?.addEventListener('click', activateSupportTool);
   el('tool-icon-stencil')?.addEventListener('click', activateIconStencil);
@@ -3465,8 +3523,8 @@ function wire() {
     if (event.key === '0') { event.preventDefault(); zoomAt(1); }
     if (event.key === 'f' || event.key === 'F') { event.preventDefault(); fitToView(); }
     if (event.key === 'i' || event.key === 'I') { event.preventDefault(); activateIconStencil(); }
-    if (event.key === 'k' || event.key === 'K') { event.preventDefault(); setStage('prepare'); setTool('keep'); }
-    if (event.key === 'r' || event.key === 'R') { event.preventDefault(); setStage('prepare'); setTool('remove'); }
+    if (event.key === 'k' || event.key === 'K') { event.preventDefault(); activateTouchupTool('keep'); }
+    if (event.key === 'r' || event.key === 'R') { event.preventDefault(); activateTouchupTool('remove'); }
     if ((event.key === 'b' || event.key === 'B') && state.designMask) {
       event.preventDefault();
       setStage('support');

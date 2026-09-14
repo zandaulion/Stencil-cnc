@@ -1013,6 +1013,31 @@ svg {
   border-top: 1px solid var(--line);
 }
 
+.tool-options-content > .control-section,
+.tool-options-content > #support-tool-settings {
+  margin: 0;
+}
+
+.tool-options-content > .control-section,
+.tool-options-content > #support-tool-settings > .control-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.tool-options-content > .control-section > h2 {
+  display: none;
+}
+
+.tool-options-content #touchup-options {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.tool-options-content #support-tool-settings > .control-section:last-child {
+  margin-bottom: 4px;
+}
+
 .tool-context-empty {
   margin: 0;
   padding: 11px 12px;

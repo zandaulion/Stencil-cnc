@@ -57,11 +57,16 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /id="tool-icon-stencil"[^>]*aria-keyshortcuts="I"/);
-  assert.match(html, /id="tool-icon-stencil"[^>]*aria-controls="tool-options-panel"/);
+  for (const id of ['tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support']) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*aria-controls="tool-options-panel"`));
+  }
   assert.match(html, /id="tool-options-panel"[^>]*hidden/);
   assert.match(editor, /function activateIconStencil\(\)[\s\S]*?value="icoana"/);
-  assert.match(editor, /function openIconOptions\(\)[\s\S]*?actions\.prepend\(rerender\)/);
-  assert.match(editor, /for \(const id of \['style-icon', 'style-photo-common', 'style-status'\]\)/);
+  assert.match(editor, /function activateTouchupTool\(tool\)[\s\S]*?openToolOptions\(tool\)/);
+  assert.match(editor, /function openToolOptions\(kind\)/);
+  assert.match(editor, /nodes: Object\.freeze\(\['touchup-tool-settings'\]\)/);
+  assert.match(editor, /nodes: Object\.freeze\(\['support-tool-settings'\]\)/);
+  assert.match(editor, /const active = toolOptionsKind === 'icon' \? 'icon' : state\.tool/);
   assert.match(editor, /function closeToolOptions\(\{ returnFocus = false \} = \{\}\)/);
   assert.match(editor, /el\('tool-icon-stencil'\)\?\.addEventListener\('click', activateIconStencil\)/);
   assert.doesNotMatch(html, /class="tool-grid"/);
