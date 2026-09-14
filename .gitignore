@@ -1,0 +1,39 @@
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+data/
+site.env
+.env
+.env.*
+!*.env.example
+*.log
+.DS_Store
+coverage/
+output/
+*.stencil.json
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+
+# Photographs and generated previews are private-by-default wherever they are
+# placed. Product artwork can still be added deliberately with `git add -f`.
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+
+# Material de referinta adunat de pe Pinterest: lucrari ale unor terti,
+# tinute local ca sa ne inspire filtrele. Nu sunt ale noastre, deci nu
+# intra in depozit -- nici macar intr-unul privat, ca sa nu ajunga acolo
+# din obisnuinta in ziua in care depozitul devine public.
+samples/
+
+# Fotografiile de test sunt ale unor oameni reali, inclusiv copii. Raman
+# pe disc, niciodata in depozit.
+photos/

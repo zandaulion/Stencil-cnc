@@ -1,0 +1,28 @@
+[Unit]
+Description=Stencil CNC — topology-aware stencil PWA
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/stencil-cnc:latest
+ContainerName=stencil-cnc
+# The service is not reachable from the LAN or internet directly. Caddy is the
+# only public path, through the outbound Cloudflare Tunnel.
+PublishPort=127.0.0.1:8101:3000
+Volume=stencil-cnc-data:/data
+Network=stencil-cnc.network
+EnvironmentFile=%h/.config/stencil-cnc/stencil-cnc.env
+Environment=DATA_DIR=/data
+Environment=PORT=3000
+Environment=BIND_HOST=0.0.0.0
+# Reached by container name on the private network, never over loopback.
+Environment=ANALIZA_URL=http://stencil-cnc-analiza:8000
+NoNewPrivileges=true
+DropCapability=all
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

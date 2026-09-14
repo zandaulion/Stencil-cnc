@@ -1,0 +1,8 @@
+# Versiuni dovedite pe aarch64 (aceleaşi ca la faceslice). mediapipe 0.10.x
+# n-are roată pentru arhitectura asta; 1.0.1 are.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+numpy==2.4.6
+opencv-contrib-python-headless==5.0.0.93
+mediapipe==1.0.1

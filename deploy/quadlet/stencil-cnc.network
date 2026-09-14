@@ -1,0 +1,12 @@
+[Unit]
+Description=Private network between the Stencil CNC web app and its analysis service
+
+[Network]
+NetworkName=stencil-cnc
+# No published ports anywhere on this network. The analysis service holds no
+# sessions of its own, so the fact that nothing outside can reach it is not a
+# convenience -- it is the reason it is allowed to have no authentication.
+Internal=false
+
+[Install]
+WantedBy=default.target

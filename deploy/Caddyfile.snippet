@@ -1,0 +1,36 @@
+# Stencil CNC is reached as:
+#   stencil-cnc.zandaulion.com -> Cloudflare Tunnel -> 127.0.0.1:8017
+# Change 8017 here and in the tunnel ingress if that listener is allocated.
+# TLS terminates at Cloudflare; this listener is loopback-only plain HTTP.
+:{$STENCIL_CNC_CADDY_PORT:8017} {
+	bind 127.0.0.1
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+
+	# Defence in depth: the public origin neither exposes the admin routes nor
+	# permits a caller to smuggle either historic or current admin headers to
+	# the process. The server independently requires the secret and returns 404.
+	@stencil_admin path /api/admin /api/admin/*
+	respond @stencil_admin 404
+
+	reverse_proxy 127.0.0.1:8101 {
+		header_up -X-Admin
+		header_up -X-Admin-Token
+	}
+}
+
+# Add this handle to the existing tailnet-only/private listener that serves
+# pwa-invite-console. The console carries no secret. Caddy injects one from its
+# protected service environment, and it must equal ADMIN_TOKEN in the app env.
+handle /stencil-cnc/api/* {
+	uri strip_prefix /stencil-cnc
+	reverse_proxy 127.0.0.1:8101 {
+		header_up -X-Admin
+		header_up X-Admin-Token {$STENCIL_CNC_ADMIN_TOKEN}
+	}
+}

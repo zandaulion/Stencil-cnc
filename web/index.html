@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#142129">
+  <meta name="description" content="Turn line art and photographs into connected, CNC-ready stencil geometry.">
+  <meta name="color-scheme" content="light">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Stencil CNC">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/app.css">
+  <title>Stencil CNC</title>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to editor</a>
+
+  <main class="gate-screen" id="gate-screen" aria-labelledby="gate-title">
+    <section class="gate-card">
+      <div class="gate-brand" aria-hidden="true">
+        <svg viewBox="0 0 64 64">
+          <rect x="3" y="3" width="58" height="58" rx="17"></rect>
+          <path d="M16 18h32v9H35v8h13v12H16V36h12v-9H16z"></path>
+          <path class="brand-bridge" d="M28 23h7v19h-7z"></path>
+        </svg>
+      </div>
+      <p class="gate-eyebrow">Private workshop tool</p>
+      <h1 id="gate-title">Make every cut<br>hold together.</h1>
+      <p class="gate-intro">Turn photographs and line art into connected, CNC-ready stencil geometry.</p>
+
+      <form class="gate-form" id="gate-form" novalidate>
+        <label for="invite-code-input">Invite code</label>
+        <div class="invite-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v10H6z"></path></svg>
+          <input id="invite-code-input" name="inviteCode" type="text" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" required aria-describedby="invite-help gate-error">
+        </div>
+        <p class="field-help" id="invite-help">Use the one-time code shared by the workshop owner.</p>
+
+        <label for="device-label-input">Name this device</label>
+        <div class="invite-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="12" rx="2"></rect><path d="M9 21h6M12 17v4"></path></svg>
+          <input id="device-label-input" name="deviceLabel" type="text" autocomplete="nickname" maxlength="64" placeholder="e.g. Workshop tablet" required>
+        </div>
+
+        <p class="gate-error" id="gate-error" role="alert" hidden></p>
+        <button class="button button-primary gate-submit" id="gate-submit" type="submit">
+          <span>Open Stencil CNC</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+        </button>
+      </form>
+
+      <div class="gate-assurance">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s8-3.5 8-10V5l-8-3-8 3v6c0 6.5 8 10 8 10Z"></path><path d="m9 11 2 2 4-4"></path></svg>
+        <span><strong>Private by default</strong>Your photos and projects stay on this machine.</span>
+      </div>
+    </section>
+    <aside class="gate-visual" aria-label="Stencil design preview">
+      <div class="gate-grid" aria-hidden="true"></div>
+      <div class="gate-sheet" aria-hidden="true">
+        <span class="gate-dimension gate-dimension-x">1200 mm</span>
+        <span class="gate-dimension gate-dimension-y">800 mm</span>
+        <svg viewBox="0 0 700 470">
+          <defs>
+            <mask id="gate-cutout-mask">
+              <rect width="700" height="470" fill="white"></rect>
+              <circle cx="350" cy="190" r="116" fill="black"></circle>
+              <path d="M189 380c26-104 83-146 161-146s135 42 161 146" fill="black"></path>
+              <path d="M288 179c15-14 34-17 52-5M360 174c18-12 37-9 52 5M328 221c13 8 31 8 44 0" fill="none" stroke="white" stroke-width="17" stroke-linecap="round"></path>
+              <path d="M260 118c23-53 70-74 111-62 40 11 68 49 70 92-34-28-71-41-111-38-25 2-48 9-70 8Z" fill="white"></path>
+              <path d="M298 268c8 51 96 51 104 0" fill="none" stroke="white" stroke-width="22" stroke-linecap="round"></path>
+            </mask>
+          </defs>
+          <rect x="18" y="18" width="664" height="434" rx="5" mask="url(#gate-cutout-mask)"></rect>
+          <path class="gate-preview-bridge" d="M350 74v81M350 232v53M233 190h64M403 190h64M350 336v44"></path>
+        </svg>
+        <span class="gate-callout gate-callout-one"><i></i>Supported island</span>
+        <span class="gate-callout gate-callout-two"><i></i>6 mm bridge</span>
+      </div>
+      <div class="gate-caption">
+        <span><i class="legend-swatch retained"></i>Retained material</span>
+        <span><i class="legend-swatch removed"></i>Cut-out</span>
+        <span><i class="legend-swatch narrow"></i>Structural bridge</span>
+      </div>
+    </aside>
+  </main>
+
+  <div id="app-main" hidden>
+  <div class="app-shell" id="app">
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="Stencil CNC home">
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="3" y="3" width="42" height="42" rx="12"></rect>
+          <path d="M12 13h24v7H26v6h10v9H12v-8h9v-7h-9z"></path>
+          <path class="brand-bridge" d="M21 17h5v14h-5z"></path>
+        </svg>
+        <span class="brand-copy">
+          <strong>Stencil CNC</strong>
+          <span>Connected by design</span>
+        </span>
+      </a>
+
+      <div class="project-identity">
+        <label class="visually-hidden" for="project-name">Project name</label>
+        <input id="project-name" name="projectName" value="Untitled stencil" autocomplete="off" spellcheck="false">
+        <span class="save-state" id="save-state" role="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          Saved locally
+        </span>
+      </div>
+
+      <div class="header-actions" aria-label="Project actions">
+        <button class="icon-button" id="btn-undo" type="button" disabled aria-label="Undo" title="Undo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6"></path></svg>
+        </button>
+        <button class="icon-button" id="btn-redo" type="button" disabled aria-label="Redo" title="Redo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 5 5-5 5m4-5h-8a6 6 0 0 0-6 6"></path></svg>
+        </button>
+        <button class="button button-quiet new-project-label" id="btn-new-project" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          <span>New project</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="workflow-nav" aria-label="Stencil workflow">
+      <ol role="tablist" aria-label="Project stages">
+        <li>
+          <button id="stage-prepare" class="stage-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="panel-prepare" data-stage="prepare">
+            <span class="stage-number">1</span>
+            <span class="stage-label">Prepare</span>
+            <span class="stage-state" aria-label="Current stage"></span>
+          </button>
+        </li>
+        <li>
+          <button id="stage-panel" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-panel" data-stage="panel">
+            <span class="stage-number">2</span>
+            <span class="stage-label">Panel</span>
+            <span class="stage-state"></span>
+          </button>
+        </li>
+        <li>
+          <button id="stage-support" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-support" data-stage="support">
+            <span class="stage-number">3</span>
+            <span class="stage-label">Support</span>
+            <span class="stage-state"></span>
+          </button>
+        </li>
+        <li>
+          <button id="stage-validate" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-validate" data-stage="validate">
+            <span class="stage-number">4</span>
+            <span class="stage-label">Validate</span>
+            <span class="stage-state"></span>
+          </button>
+        </li>
+        <li>
+          <button id="stage-export" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-export" data-stage="export">
+            <span class="stage-number">5</span>
+            <span class="stage-label">Export</span>
+            <span class="stage-state"></span>
+          </button>
+        </li>
+      </ol>
+    </nav>
+
+    <main class="editor-layout">
+      <aside class="controls-pane" aria-label="Stage controls">
+        <div class="pane-heading">
+          <div>
+            <span class="eyebrow">Step <span id="current-step-number">1</span> of 5</span>
+            <h1 id="current-stage-title">Prepare artwork</h1>
+          </div>
+          <button class="icon-button pane-help" id="btn-stage-help" type="button" aria-label="Help for this stage" title="Stage help">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.8 9a2.3 2.3 0 1 1 3.8 1.8c-1 .7-1.6 1.1-1.6 2.3M12 17h.01"></path></svg>
+          </button>
+        </div>
+
+        <div class="stage-panels">
+          <section class="stage-panel is-active" id="panel-prepare" role="tabpanel" aria-labelledby="stage-prepare" data-panel="prepare">
+            <div class="upload-zone" id="drop-zone" data-state="empty">
+              <input class="visually-hidden" id="file-input" name="sourceFile" type="file" accept="image/png,image/jpeg,image/webp,application/json,.stencil.json">
+              <label for="file-input">
+                <span class="upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V5m0 0L8 9m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"></path></svg>
+                </span>
+                <span><strong>Drop an image here</strong><small>or open PNG, JPG, WebP, HEIC, or a Stencil project</small></span>
+              </label>
+              <div class="source-file" id="source-file" hidden>
+                <img id="source-preview" alt="Imported source preview">
+                <span><strong id="source-name">Source image</strong><small id="source-meta">—</small></span>
+                <button class="icon-button" id="btn-remove-source" type="button" aria-label="Remove source image">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="profile-card">
+              <span class="profile-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4"></path></svg>
+              </span>
+              <label for="manufacturing-profile"><span>Manufacturing profile</span>
+                <select id="manufacturing-profile" name="manufacturingProfile" disabled title="Custom profiles are planned for a later version">
+                  <option value="plasma" selected>Plasma · 2 mm holes · 3 mm gaps</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="control-section">
+              <h2>Plasma constraints</h2>
+              <label class="field-row" for="kerf">
+                <span>Kerf / tool diameter <small>Used for simulation and opening limits</small></span>
+                <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
+              </label>
+              <label class="field-row" for="min-web">
+                <span>Minimum gap between cuts <small>Narrowest retained metal</small></span>
+                <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="3" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
+              </label>
+              <label class="field-row" for="min-opening">
+                <span>Minimum opening <small>Smallest removable feature</small></span>
+                <span class="number-field compact"><input id="min-opening" name="minOpening" type="number" min="2" max="500" step="0.1" value="2"><span data-unit-label>mm</span></span>
+              </label>
+              <p class="section-help">These limits shape every generated filter and are checked again before export.</p>
+            </div>
+
+            <fieldset class="control-group segmented-fieldset" id="polarity">
+              <legend>Material polarity</legend>
+              <div class="segmented-control polarity-control">
+                <label>
+                  <input type="radio" name="polarity" value="black-retained" checked>
+                  <span><i class="swatch swatch-dark"></i> Black is metal</span>
+                </label>
+                <label>
+                  <input type="radio" name="polarity" value="white-retained">
+                  <span><i class="swatch swatch-light"></i> White is metal</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="control-section" id="style-controls">
+              <div class="section-title-row">
+                <h2>Cut style</h2>
+                <button class="text-button" id="btn-restyle" type="button" hidden>Re-render</button>
+              </div>
+              <p class="section-help">Choose how the uploaded image becomes cuttable geometry. The application selects the appropriate local or private-server processor automatically.</p>
+
+              <div class="stacked-options" id="style-choice">
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="line-art" checked>
+                  <span><strong>Line art</strong><small>Direct black-and-white thresholding for prepared drawings and logos.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="sablon">
+                  <span><strong>Poster stencil</strong><small>Bold light-and-dark regions. Add supports where retained features would fall out.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="grafic">
+                  <span><strong>Graphic portrait</strong><small>Face-aware black shapes and expressive lines on a removed background, like the supplied reference.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="linii">
+                  <span><strong>Negative-space linework</strong><small>Facial features and folds become bright cut lines in a solid plate.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="gravura">
+                  <span><strong>Icon / Woodcut</strong><small>Tapered marks follow the local form and light of the photograph.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="silueta">
+                  <span><strong>Silhouette</strong><small>One clean back-lit subject shape with a simplified edge.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="contururi">
+                  <span><strong>Contour bands</strong><small>Topographic cut lines follow transitions between tonal levels.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="raze">
+                  <span><strong>Radial cuts</strong><small>Back-lit dashes radiate from a configurable focal point.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="ornament">
+                  <span><strong>Ornamental symmetry</strong><small>Mirrors extracted linework into a balanced decorative motif.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="lamele">
+                  <span><strong>Slats</strong><small>Angled parallel bars that thicken where the picture is dark. Always one piece.</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="cutStyle" value="hasura">
+                  <span><strong>Hatch</strong><small>Light regions become openings; dark features remain metal for a back-lit panel.</small></span>
+                </label>
+              </div>
+
+              <div id="tone-controls">
+                <div class="section-title-row">
+                  <h3>Line-art treatment</h3>
+                  <button class="text-button" id="btn-reset-treatment" type="button">Reset</button>
+                </div>
+                <div class="range-control">
+                  <label for="threshold"><span>Threshold</span><output id="threshold-value" for="threshold">50%</output></label>
+                  <input id="threshold" name="threshold" type="range" min="0" max="100" value="50">
+                </div>
+                <div class="photo-controls" id="photo-controls" aria-label="Line-art adjustments">
+                  <div class="range-control">
+                    <label for="contrast"><span>Contrast</span><output id="contrast-value" for="contrast">0</output></label>
+                    <input id="contrast" name="contrast" type="range" min="-100" max="100" value="0">
+                  </div>
+                  <div class="range-control">
+                    <label for="blur"><span>Smoothing</span><output id="blur-value" for="blur">0 px</output></label>
+                    <input id="blur" name="blur" type="range" min="0" max="12" step="0.5" value="0">
+                  </div>
+                  <div class="range-control">
+                    <label for="despeckle"><span>Remove specks</span><output id="despeckle-value" for="despeckle">0 px²</output></label>
+                    <input id="despeckle" name="despeckle" type="range" min="0" max="500" step="5" value="0">
+                  </div>
+                </div>
+              </div>
+
+              <div id="style-stencil" hidden>
+                <div class="range-control">
+                  <label for="style-threshold"><span>Light / dark balance</span><output id="style-threshold-value" for="style-threshold">50%</output></label>
+                  <input id="style-threshold" name="styleThreshold" type="range" min="15" max="85" step="1" value="50">
+                </div>
+                <div class="range-control">
+                  <label for="style-outline"><span>Feature outlines</span><output id="style-outline-value" for="style-outline">60%</output></label>
+                  <input id="style-outline" name="styleOutline" type="range" min="0" max="100" step="5" value="60">
+                </div>
+              </div>
+
+              <div id="style-graphic" hidden>
+                <div class="range-control">
+                  <label for="style-graphic-balance"><span>Light / dark cutoff</span><output id="style-graphic-balance-value" for="style-graphic-balance">50%</output></label>
+                  <input id="style-graphic-balance" name="styleGraphicBalance" type="range" min="20" max="80" step="1" value="50">
+                </div>
+                <div class="range-control">
+                  <label for="style-graphic-detail"><span>Facial detail</span><output id="style-graphic-detail-value" for="style-graphic-detail">70%</output></label>
+                  <input id="style-graphic-detail" name="styleGraphicDetail" type="range" min="0" max="100" step="5" value="70">
+                </div>
+                <label class="field-row" for="style-graphic-simplify">
+                  <span>Shape simplification <small>Removes camera texture</small></span>
+                  <span class="number-field compact"><input id="style-graphic-simplify" name="styleGraphicSimplify" type="number" min="0" max="20" step="0.5" value="1.5"><span data-unit-label>mm</span></span>
+                </label>
+                <p class="section-help">The complete uploaded image is preserved. Crop it before uploading when a tighter composition is needed.</p>
+              </div>
+
+              <div id="style-linework" hidden>
+                <div class="range-control">
+                  <label for="style-line-detail"><span>Line detail</span><output id="style-line-detail-value" for="style-line-detail">40%</output></label>
+                  <input id="style-line-detail" name="styleLineDetail" type="range" min="0" max="100" step="5" value="40">
+                </div>
+                <label class="field-row" for="style-line-width">
+                  <span>Cut-line width <small>Never narrower than the tool</small></span>
+                  <span class="number-field compact"><input id="style-line-width" name="styleLineWidth" type="number" min="0.5" max="20" step="0.5" value="2"><span data-unit-label>mm</span></span>
+                </label>
+              </div>
+
+              <div id="style-woodcut" hidden>
+                <label class="field-row" for="style-wood-spacing">
+                  <span>Mark spacing <small>Distance between sampled strokes</small></span>
+                  <span class="number-field compact"><input id="style-wood-spacing" name="styleWoodSpacing" type="number" min="2" max="40" step="0.5" value="12"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-wood-length">
+                  <span>Maximum mark length</span>
+                  <span class="number-field compact"><input id="style-wood-length" name="styleWoodLength" type="number" min="1" max="60" step="0.5" value="20"><span data-unit-label>mm</span></span>
+                </label>
+              </div>
+
+              <div id="style-silhouette" hidden>
+                <label class="field-row" for="style-silhouette-smooth">
+                  <span>Edge simplification <small>Smooths small outline details</small></span>
+                  <span class="number-field compact"><input id="style-silhouette-smooth" name="styleSilhouetteSmooth" type="number" min="0" max="30" step="0.5" value="8"><span data-unit-label>mm</span></span>
+                </label>
+              </div>
+
+              <div id="style-contours" hidden>
+                <div class="range-control">
+                  <label for="style-contour-levels"><span>Tonal levels</span><output id="style-contour-levels-value" for="style-contour-levels">5</output></label>
+                  <input id="style-contour-levels" name="styleContourLevels" type="range" min="2" max="16" step="1" value="5">
+                </div>
+                <label class="field-row" for="style-contour-width">
+                  <span>Contour width</span>
+                  <span class="number-field compact"><input id="style-contour-width" name="styleContourWidth" type="number" min="0.5" max="20" step="0.5" value="2.5"><span data-unit-label>mm</span></span>
+                </label>
+              </div>
+
+              <div id="style-radial" hidden>
+                <div class="range-control">
+                  <label for="style-ray-count"><span>Number of rays</span><output id="style-ray-count-value" for="style-ray-count">64</output></label>
+                  <input id="style-ray-count" name="styleRayCount" type="range" min="6" max="96" step="2" value="64">
+                </div>
+                <label class="field-row" for="style-ray-cell">
+                  <span>Radial cell <small>Dash and connecting-web cycle</small></span>
+                  <span class="number-field compact"><input id="style-ray-cell" name="styleRayCell" type="number" min="2" max="60" step="0.5" value="12"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="toggle-row" for="style-ray-center-auto">
+                  <span>Place solid hub automatically<small>Fits it inside the nearest existing solid-metal area</small></span>
+                  <input class="switch" id="style-ray-center-auto" name="styleRayCenterAuto" type="checkbox" checked>
+                </label>
+                <div class="range-control">
+                  <label for="style-ray-center-x"><span>Focal point horizontal</span><output id="style-ray-center-x-value" for="style-ray-center-x">25%</output></label>
+                  <input id="style-ray-center-x" name="styleRayCenterX" type="range" min="0" max="100" step="0.1" value="25" disabled>
+                </div>
+                <div class="range-control">
+                  <label for="style-ray-center-y"><span>Focal point height</span><output id="style-ray-center-y-value" for="style-ray-center-y">50%</output></label>
+                  <input id="style-ray-center-y" name="styleRayCenterY" type="range" min="0" max="100" step="0.1" value="50" disabled>
+                </div>
+                <p class="section-help" id="style-ray-center-status">The server will place the complete solid hub inside planned metal.</p>
+                <div class="range-control">
+                  <label for="style-ray-cutoff"><span>Dark-area cutoff <small>Suppresses radial marks in shadows</small></span><output id="style-ray-cutoff-value" for="style-ray-cutoff">12%</output></label>
+                  <input id="style-ray-cutoff" name="styleRayCutoff" type="range" min="0" max="50" step="1" value="12">
+                </div>
+              </div>
+
+              <div id="style-ornament" hidden>
+                <div class="range-control">
+                  <label for="style-ornament-detail"><span>Motif detail</span><output id="style-ornament-detail-value" for="style-ornament-detail">40%</output></label>
+                  <input id="style-ornament-detail" name="styleOrnamentDetail" type="range" min="0" max="100" step="5" value="40">
+                </div>
+                <label class="field-row" for="style-ornament-width">
+                  <span>Cut-line width</span>
+                  <span class="number-field compact"><input id="style-ornament-width" name="styleOrnamentWidth" type="number" min="0.5" max="20" step="0.5" value="2"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="toggle-row" for="style-ornament-four-way">
+                  <span>Four-way symmetry<small>Mirror vertically as well as horizontally</small></span>
+                  <input class="switch" id="style-ornament-four-way" name="styleOrnamentFourWay" type="checkbox">
+                </label>
+              </div>
+
+              <div id="style-slats" hidden>
+                <label class="field-row" for="style-pitch">
+                  <span>Bar pitch <small>Centre to centre</small></span>
+                  <span class="number-field compact"><input id="style-pitch" name="stylePitch" type="number" min="1" max="40" step="0.5" value="38"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-slat-angle">
+                  <span>Bar angle <small>−55° matches the diagonal portrait style</small></span>
+                  <span class="number-field compact"><input id="style-slat-angle" name="styleSlatAngle" type="number" min="-90" max="90" step="5" value="-55"><span>°</span></span>
+                </label>
+                <input id="slats-default-version" type="hidden" value="2">
+              </div>
+
+              <div id="style-hatch" hidden>
+                <label class="field-row" for="style-angle">
+                  <span>Stroke angle</span>
+                  <span class="number-field compact"><input id="style-angle" name="styleAngle" type="number" min="-90" max="90" step="5" value="30"><span>°</span></span>
+                </label>
+                <label class="field-row" for="style-row-pitch">
+                  <span>Row spacing</span>
+                  <span class="number-field compact"><input id="style-row-pitch" name="styleRowPitch" type="number" min="1" max="30" step="0.5" value="9"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-cell">
+                  <span>Stroke cell <small>Length along the row</small></span>
+                  <span class="number-field compact"><input id="style-cell" name="styleCell" type="number" min="1" max="40" step="0.5" value="12"><span data-unit-label>mm</span></span>
+                </label>
+              </div>
+
+              <div id="style-photo-common" hidden>
+                <div class="range-control">
+                  <label for="style-gain"><span>Detail strength</span><output id="style-gain-value" for="style-gain">2.2</output></label>
+                  <input id="style-gain" name="styleGain" type="range" min="0.5" max="4" step="0.1" value="2.2">
+                </div>
+                <div class="range-control">
+                  <label for="style-smooth"><span>Flatten skin</span><output id="style-smooth-value" for="style-smooth">0.55</output></label>
+                  <input id="style-smooth" name="styleSmooth" type="range" min="0" max="1" step="0.05" value="0.55">
+                </div>
+
+                <div class="range-control" id="style-curve-control" hidden>
+                  <label for="style-curve"><span>Tone separation <small>Higher values make light and dark marks more distinct</small></span><output id="style-curve-value" for="style-curve">1.4</output></label>
+                  <input id="style-curve" name="styleCurve" type="range" min="0.5" max="3" step="0.1" value="1.4">
+                </div>
+
+                <label class="toggle-row" for="style-cutout">
+                  <span>Remove the background<small>Keep only the person</small></span>
+                  <input class="switch" id="style-cutout" name="styleCutout" type="checkbox">
+                </label>
+                <label class="toggle-row" for="style-clothes">
+                  <span>Include clothing<small>Keeps shoulders and body in full-figure photos</small></span>
+                  <input class="switch" id="style-clothes" name="styleClothes" type="checkbox" checked>
+                </label>
+
+              </div>
+              <p class="section-help" id="style-status">Choose an image to render.</p>
+            </div>
+
+            <div class="control-section">
+              <h2>Touch-up</h2>
+              <div class="tool-grid" role="group" aria-label="Mask editing tools">
+                <button class="tool-button is-selected" id="tool-pan" type="button" aria-pressed="true">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V7a1.5 1.5 0 0 1 3 0v3-5a1.5 1.5 0 0 1 3 0v5-3a1.5 1.5 0 0 1 3 0v4-1a1.5 1.5 0 0 1 3 0v3c0 5-3 8-8 8h-1c-3 0-5-2-7-5l-1-2a1.6 1.6 0 0 1 2.6-1.8L8 14"></path></svg>
+                  Pan
+                </button>
+                <button class="tool-button" id="tool-keep" type="button" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16 9-9 4 4-9 9H4v-4Zm11-7 2-2 2 2-2 2"></path></svg>
+                  Keep metal
+                </button>
+                <button class="tool-button" id="tool-remove" type="button" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 15 8-8 5 5-7 7H7l-2-2a1.4 1.4 0 0 1 0-2Z"></path><path d="M11 19h9"></path></svg>
+                  Remove
+                </button>
+              </div>
+            </div>
+
+            <button class="button button-primary button-full stage-next" type="button" data-next-stage="panel">
+              Set panel dimensions
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+            </button>
+          </section>
+
+          <section class="stage-panel" id="panel-panel" role="tabpanel" aria-labelledby="stage-panel" data-panel="panel" hidden>
+            <div class="control-section first-section">
+              <div class="section-title-row">
+                <h2>Finished size</h2>
+                <label class="unit-select" for="measurement-unit">
+                  <span class="visually-hidden">Measurement unit</span>
+                  <select id="measurement-unit" name="measurementUnit">
+                    <option value="mm" selected>mm</option>
+                    <option value="in">in</option>
+                  </select>
+                </label>
+              </div>
+              <div class="dimension-grid">
+                <label for="panel-width">Width
+                  <span class="number-field"><input id="panel-width" name="panelWidth" type="number" min="10" max="10000" step="1" value="1250"><span data-unit-label>mm</span></span>
+                </label>
+                <button class="link-dimensions" id="btn-link-dimensions" type="button" aria-pressed="false" aria-label="Keep source aspect ratio" title="Keep aspect ratio">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.7 0l2-2a4 4 0 0 0-5.7-5.7l-1.1 1.1M14 11a4 4 0 0 0-5.7 0l-2 2A4 4 0 0 0 12 18.7l1.1-1.1"></path></svg>
+                </button>
+                <label for="panel-height">Height
+                  <span class="number-field"><input id="panel-height" name="panelHeight" type="number" min="10" max="10000" step="1" value="2500"><span data-unit-label>mm</span></span>
+                </label>
+              </div>
+              <fieldset class="orientation-picker">
+                <legend>Orientation</legend>
+                <div class="segmented-control">
+                  <label><input type="radio" name="panelOrientation" value="portrait" checked><span>Portrait</span></label>
+                  <label><input type="radio" name="panelOrientation" value="landscape"><span>Landscape</span></label>
+                </div>
+              </fieldset>
+            </div>
+
+            <div class="control-section">
+              <h2>Border &amp; placement</h2>
+              <label class="field-row" for="panel-margin">
+                <span>Extra artwork margin <small>Optional clear space inside frame</small></span>
+                <span class="number-field compact"><input id="panel-margin" name="panelMargin" type="number" min="0" max="500" value="0"><span data-unit-label>mm</span></span>
+              </label>
+              <input id="placement-fit-version" type="hidden" value="2">
+              <label class="field-row" for="frame-width">
+                <span>Frame width <small>Retained perimeter material</small></span>
+                <span class="number-field compact"><input id="frame-width" name="frameWidth" type="number" min="0" max="500" value="30"><span data-unit-label>mm</span></span>
+              </label>
+              <label class="toggle-row" for="fit-artwork">
+                <span>Fit artwork to frame<small>Scale up or down · preserve proportions</small></span>
+                <input class="switch" id="fit-artwork" name="fitArtwork" type="checkbox" checked>
+              </label>
+            </div>
+
+            <fieldset class="control-section checkbox-section" id="anchor-edges">
+              <legend>Anchor edges</legend>
+              <p class="section-help">Retained material may connect to these structural edges.</p>
+              <div class="anchor-grid">
+                <label><input type="checkbox" name="anchorEdge" value="top" checked><span>Top</span></label>
+                <label><input type="checkbox" name="anchorEdge" value="right" checked><span>Right</span></label>
+                <label><input type="checkbox" name="anchorEdge" value="bottom" checked><span>Bottom</span></label>
+                <label><input type="checkbox" name="anchorEdge" value="left" checked><span>Left</span></label>
+              </div>
+            </fieldset>
+
+            <fieldset class="control-group segmented-fieldset" id="construction-mode">
+              <legend>Construction</legend>
+              <div class="stacked-options">
+                <label class="radio-card">
+                  <input type="radio" name="constructionMode" value="monolithic" checked>
+                  <span><strong>One-piece panel</strong><small>Every retained area must be connected.</small></span>
+                </label>
+                <label class="radio-card is-future" title="Planned evolution">
+                  <input type="radio" name="constructionMode" value="backed" disabled>
+                  <span><strong>Backed panel <em>Later</em></strong><small>Loose elements fixed to a rear layer.</small></span>
+                </label>
+              </div>
+            </fieldset>
+
+            <button class="button button-primary button-full stage-next" type="button" data-next-stage="support">
+              Find unsupported pieces
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+            </button>
+          </section>
+
+          <section class="stage-panel" id="panel-support" role="tabpanel" aria-labelledby="stage-support" data-panel="support" hidden>
+            <div class="connectivity-card" id="connectivity-summary" data-state="pending">
+              <span class="summary-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M8 12h8M6 8a4 4 0 1 0 0 8M18 8a4 4 0 1 1 0 8"></path></svg>
+              </span>
+              <span><strong id="island-count">Not analysed</strong><small>Run support analysis after importing artwork.</small></span>
+            </div>
+
+            <div class="support-stale" id="automatic-support-stale" role="status" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+              <span><strong>Automatic supports need review</strong><small>The artwork changed. Manual supports were preserved.</small></span>
+            </div>
+
+            <div class="control-section">
+              <div class="section-title-row">
+                <h2>Bridge settings</h2>
+                <button class="text-button" id="btn-support-settings" type="button" disabled title="Advanced support rules are planned">Advanced · later</button>
+              </div>
+              <label class="field-row" for="bridge-width">
+                <span>Bridge width <small>Width before kerf</small></span>
+                <span class="number-field compact"><input id="bridge-width" name="bridgeWidth" type="number" min="3" max="100" step="0.1" value="6"><span data-unit-label>mm</span></span>
+              </label>
+              <div class="range-control">
+                <label for="bridge-count"><span>Support strategy</span><output id="bridge-count-value" for="bridge-count">Aesthetic</output></label>
+                <input id="bridge-count" name="bridgeCount" type="range" min="1" max="3" value="2">
+                <div class="range-ends" aria-hidden="true"><span>Minimal</span><span>Secure</span></div>
+              </div>
+              <label class="toggle-row" for="protect-faces">
+                <span>Protect important detail<small>Avoid high-contrast and central portrait features</small></span>
+                <input class="switch" id="protect-faces" name="protectFaces" type="checkbox" checked>
+              </label>
+              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Secure adds a small number of separated backup ties. Orange dashed ties are safe fallbacks to review.</p>
+            </div>
+
+            <div class="button-stack">
+              <button class="button button-primary button-full" id="btn-auto-bridge" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2L12 3ZM6 14l.8 2.2L9 17l-2.2.8L6 20l-.8-2.2L3 17l2.2-.8L6 14Zm12-1 .9 2.1L21 16l-2.1.9L18 19l-.9-2.1L15 16l2.1-.9L18 13Z"></path></svg>
+                <span id="automatic-support-action">Suggest smart bridges</span>
+              </button>
+              <button class="button button-secondary button-full" id="btn-add-bridge" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15c4-6 10-6 14 0M7 18h10M12 7v5M9.5 9.5 12 12l2.5-2.5"></path></svg>
+                Draw a bridge
+              </button>
+              <button class="button button-quiet button-full" id="btn-clear-auto-bridges" type="button" disabled>
+                Remove automatic supports <span id="automatic-support-count" aria-hidden="true"></span>
+              </button>
+            </div>
+
+            <div class="control-section">
+              <h2>Bridge selection</h2>
+              <div class="selection-empty" id="bridge-selection-empty">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 14 8-6 2-2 6L5 4Z"></path></svg>
+                <p>Select a bridge on the canvas to move, resize, or remove it.</p>
+              </div>
+              <div id="bridge-selection" hidden>
+                <p class="section-help" id="bridge-selection-meta"></p>
+                <label class="field-row" for="selected-bridge-width">
+                  <span>Selected width</span>
+                  <span class="number-field compact"><input id="selected-bridge-width" type="number" min="3" step="0.1"><span data-unit-label>mm</span></span>
+                </label>
+                <button class="button button-danger button-full" id="btn-delete-bridge" type="button">Remove selected bridge</button>
+              </div>
+            </div>
+
+            <button class="button button-primary button-full stage-next" type="button" data-next-stage="validate">
+              Validate geometry
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+            </button>
+          </section>
+
+          <section class="stage-panel" id="panel-validate" role="tabpanel" aria-labelledby="stage-validate" data-panel="validate" hidden>
+            <div class="control-section first-section">
+              <h2>Additional checks</h2>
+              <label class="field-row" for="max-cantilever">
+                <span>Fragile span warning <small>Planned for a later version</small></span>
+                <span class="number-field compact"><input id="max-cantilever" name="maxCantilever" type="number" min="1" max="2000" step="1" value="120" disabled><span data-unit-label>mm</span></span>
+              </label>
+            </div>
+
+            <label class="toggle-row standalone" for="simulate-kerf">
+              <span>Preview after kerf<small>Show the material that remains after cutting</small></span>
+              <input class="switch" id="simulate-kerf" name="simulateKerf" type="checkbox" checked>
+            </label>
+
+            <button class="button button-primary button-full" id="btn-validate" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>
+              Run all checks
+            </button>
+
+            <p class="validation-note">Connectivity, uncuttable openings, and gaps below the Plasma profile block export. Non-critical edge-thickness findings remain visible as warnings.</p>
+
+            <button class="button button-primary button-full stage-next" type="button" data-next-stage="export" disabled>
+              Review export
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+            </button>
+          </section>
+
+          <section class="stage-panel" id="panel-export" role="tabpanel" aria-labelledby="stage-export" data-panel="export" hidden>
+            <div class="export-readiness" id="export-readiness" data-state="blocked">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+              <span><strong>Validation required</strong><small>Run all checks before exporting geometry.</small></span>
+            </div>
+
+            <div class="control-section first-section">
+              <h2>Geometry</h2>
+              <label class="field-row" for="export-units">
+                <span>Drawing units</span>
+                <select id="export-units" name="exportUnits">
+                  <option value="mm" selected>Millimetres</option>
+                  <option value="in">Inches</option>
+                </select>
+              </label>
+              <label class="field-row" for="curve-tolerance">
+                <span>Curve tolerance <small>Planned for a later version</small></span>
+                <span class="number-field compact"><input id="curve-tolerance" name="curveTolerance" type="number" min="0.01" max="10" step="0.01" value="0.2" disabled><span data-unit-label>mm</span></span>
+              </label>
+              <label class="toggle-row" for="export-frame">
+                <span>Include outer frame</span>
+                <input class="switch" id="export-frame" name="exportFrame" type="checkbox" checked>
+              </label>
+              <label class="toggle-row" for="export-kerf">
+                <span>Bake in kerf compensation<small>Planned; for now leave compensation to CAM</small></span>
+                <input class="switch" id="export-kerf" name="exportKerf" type="checkbox" disabled>
+              </label>
+            </div>
+
+            <div class="scale-card">
+              <span>Output size</span>
+              <strong id="export-size">1250 × 2500 mm</strong>
+              <small id="export-unit-scale">1 drawing unit = 1 mm</small>
+            </div>
+
+            <div class="export-buttons">
+              <button class="button button-primary button-full" id="btn-export-svg" type="button" disabled>
+                <span class="file-badge">SVG</span>
+                <span><strong>Export SVG</strong><small>For CAM and vector editors</small></span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"></path></svg>
+              </button>
+              <button class="button button-secondary button-full" id="btn-export-dxf" type="button" disabled>
+                <span class="file-badge">DXF</span>
+                <span><strong>Export DXF</strong><small>Closed contours, drawing units</small></span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"></path></svg>
+              </button>
+            </div>
+
+            <button class="text-button centered" id="btn-download-project" type="button">Download editable project file</button>
+          </section>
+        </div>
+      </aside>
+
+      <section class="workspace-pane" id="workspace" aria-labelledby="workspace-title">
+        <h2 class="visually-hidden" id="workspace-title">Stencil editor canvas</h2>
+
+        <div class="canvas-toolbar" aria-label="Canvas tools">
+          <div class="toolbar-group view-modes" role="group" aria-label="Preview mode">
+            <button class="toolbar-button" id="view-original" type="button" aria-pressed="false">Original</button>
+            <button class="toolbar-button" id="view-source" type="button" aria-pressed="false">Artwork</button>
+            <button class="toolbar-button is-selected" id="view-material" type="button" aria-pressed="true">Material</button>
+            <button class="toolbar-button" id="view-backlit" type="button" aria-pressed="false">Back-lit</button>
+            <button class="toolbar-button" id="view-issues" type="button" aria-pressed="false">Problems</button>
+          </div>
+          <div class="toolbar-separator" aria-hidden="true"></div>
+          <div class="toolbar-group" role="group" aria-label="Zoom controls">
+            <button class="icon-button compact-button" id="btn-zoom-out" type="button" aria-label="Zoom out" aria-keyshortcuts="-" title="Zoom out (−)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10"></path></svg>
+            </button>
+            <button class="zoom-value" id="btn-zoom-reset" type="button" aria-label="Actual size" aria-keyshortcuts="0" title="Actual size (0)"><span id="zoom-value">100%</span></button>
+            <button class="icon-button compact-button" id="btn-zoom-in" type="button" aria-label="Zoom in" aria-keyshortcuts="+" title="Zoom in (+)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v10M7 12h10"></path></svg>
+            </button>
+            <button class="icon-button compact-button fit-button" id="btn-fit" type="button" aria-label="Fit panel to view" aria-keyshortcuts="F" title="Fit panel to view (F)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M8 20H4v-4"></path></svg>
+            </button>
+          </div>
+          <label class="grid-toggle" for="show-grid">
+            <input id="show-grid" type="checkbox" checked>
+            <span>Grid</span>
+          </label>
+        </div>
+
+        <div class="canvas-viewport" id="canvas-viewport" tabindex="0" aria-label="Interactive panel preview. Import an image to begin.">
+          <div class="ruler ruler-horizontal" aria-hidden="true"><span>0</span><span>312.5</span><span>625</span><span>937.5</span><span>1250</span></div>
+          <div class="ruler ruler-vertical" aria-hidden="true"><span>0</span><span>625</span><span>1250</span><span>1875</span><span>2500</span></div>
+          <div class="canvas-stage" id="canvas-stage">
+            <canvas id="editor-canvas" width="1400" height="900">Your browser does not support the stencil preview canvas.</canvas>
+            <canvas id="overlay-canvas" width="1400" height="900" aria-hidden="true"></canvas>
+            <div class="empty-state" id="empty-state">
+              <span class="empty-illustration" aria-hidden="true">
+                <svg viewBox="0 0 180 132">
+                  <path class="sheet" d="M25 12h130a10 10 0 0 1 10 10v88a10 10 0 0 1-10 10H25a10 10 0 0 1-10-10V22a10 10 0 0 1 10-10Z"></path>
+                  <path class="cut" d="M49 92c7-21 15-28 23-31-7-6-9-17-4-25 4-7 12-11 21-11 12 0 22 8 23 20 1 7-2 13-7 17 11 5 20 15 27 30"></path>
+                  <path class="bridge" d="M89 57v34"></path>
+                  <circle cx="89" cy="47" r="12"></circle>
+                  <path class="spark" d="m145 25 2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6Z"></path>
+                </svg>
+              </span>
+              <h3>Start with an image</h3>
+              <p>Import black-and-white artwork or a photograph. Your source stays on this machine.</p>
+              <button class="button button-primary" id="btn-empty-import" type="button">Choose an image</button>
+              <small>PNG, JPG, or WebP · up to 30 MB</small>
+            </div>
+          </div>
+          <div class="render-progress" id="render-progress" role="status" aria-live="polite" aria-atomic="true" hidden>
+            <span class="render-progress-spinner" aria-hidden="true"></span>
+            <span class="render-progress-copy">
+              <strong id="render-progress-title">Updating preview…</strong>
+              <small id="render-progress-detail">Rendering on the private server.</small>
+            </span>
+            <span class="render-progress-track" aria-hidden="true"><i></i></span>
+          </div>
+          <div class="scale-indicator" id="scale-readout" aria-hidden="true"><span></span><small>100 mm</small></div>
+        </div>
+
+        <footer class="canvas-statusbar">
+          <div class="app-status" id="app-status" role="status" aria-live="polite">
+            <span class="status-dot status-dot-ready" aria-hidden="true"></span>
+            Ready for an image
+          </div>
+          <div class="canvas-metrics" aria-label="Canvas details">
+            <span id="pointer-position">x — &nbsp; y —</span>
+            <span id="panel-scale-status">1250 × 2500 mm</span>
+          </div>
+        </footer>
+      </section>
+
+      <aside class="issues-pane" aria-label="Creative candidates and geometry issues">
+        <div class="side-rail-tabs" role="tablist" aria-label="Right panel">
+          <button class="side-rail-tab is-selected" id="side-candidates" type="button" role="tab" aria-selected="true" aria-controls="candidate-side-panel">Candidates</button>
+          <button class="side-rail-tab" id="side-issues" type="button" role="tab" aria-selected="false" aria-controls="issues-side-panel">Problems</button>
+        </div>
+
+        <section class="candidate-side-panel" id="candidate-side-panel" role="tabpanel" aria-labelledby="side-candidates">
+          <div class="candidate-heading">
+            <div>
+              <span class="eyebrow">Creative workspace</span>
+              <h2>Saved candidates</h2>
+            </div>
+            <span class="candidate-total" id="candidate-total" aria-label="No saved candidates">0</span>
+          </div>
+          <p class="candidate-intro">Keep promising versions while you explore styles and settings. Candidates remain on this device.</p>
+          <button class="button button-primary button-full" id="btn-save-candidate" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            Save current candidate
+          </button>
+          <ol class="candidate-list" id="candidate-list" aria-live="polite">
+            <li class="candidate-empty"><strong>No candidates yet</strong><span>Tune the artwork, then save a version you may want to return to.</span></li>
+          </ol>
+        </section>
+
+        <section class="issues-side-panel" id="issues-side-panel" role="tabpanel" aria-labelledby="side-issues" hidden>
+        <div class="issues-heading">
+          <div>
+            <span class="eyebrow">Geometry health</span>
+            <h2 id="issues-title">Issues</h2>
+          </div>
+          <span class="issue-total" id="issue-total" aria-label="No issues">0</span>
+        </div>
+
+        <div class="health-summary" id="health-summary" data-state="idle">
+          <div class="health-ring" aria-hidden="true"><span>—</span></div>
+          <div><strong>Waiting for artwork</strong><small>Connectivity and strength checks will appear here.</small></div>
+        </div>
+
+        <div class="issue-filters" role="group" aria-label="Filter issues">
+          <button class="filter-chip is-selected" type="button" data-issue-filter="all" aria-pressed="true">All <span id="filter-count-all">0</span></button>
+          <button class="filter-chip" type="button" data-issue-filter="error" aria-pressed="false"><i class="severity-dot error"></i> Errors <span id="filter-count-error">0</span></button>
+          <button class="filter-chip" type="button" data-issue-filter="warning" aria-pressed="false"><i class="severity-dot warning"></i> Warnings <span id="filter-count-warning">0</span></button>
+        </div>
+
+        <ol class="issue-list" id="issue-list" aria-live="polite">
+          <li class="issues-empty" data-empty>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10M7 12h7M7 16h5"></path><rect x="4" y="3" width="16" height="18" rx="3"></rect></svg>
+            <p><strong>No analysis yet</strong><span>Import artwork, add a panel, then run validation.</span></p>
+          </li>
+        </ol>
+
+        <div class="legend">
+          <h3>Preview legend</h3>
+          <dl>
+            <div><dt><i class="legend-swatch retained"></i>Retained</dt><dd>Metal</dd></div>
+            <div><dt><i class="legend-swatch removed"></i>Removed</dt><dd>Cut-out</dd></div>
+            <div><dt><i class="legend-swatch unsupported"></i>Unsupported</dt><dd>Will fall</dd></div>
+            <div><dt><i class="legend-swatch narrow"></i>Too narrow</dt><dd>At risk</dd></div>
+            <div><dt><i class="legend-swatch stale-support"></i>Stale support</dt><dd>Review</dd></div>
+          </dl>
+        </div>
+
+        <button class="button button-secondary button-full issues-validate" id="btn-validate-sidebar" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.3-5.7M20 4v7h-7"></path></svg>
+          Refresh analysis
+        </button>
+        </section>
+      </aside>
+    </main>
+  </div>
+  </div>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <dialog class="app-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-title">
+    <form method="dialog">
+      <h2 id="confirm-dialog-title">Confirm action</h2>
+      <p id="confirm-dialog-message"></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="confirm-dialog-action" value="confirm">Continue</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

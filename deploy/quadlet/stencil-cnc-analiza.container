@@ -1,0 +1,22 @@
+[Unit]
+Description=Stencil CNC — photograph analysis
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/stencil-cnc-analiza:latest
+ContainerName=stencil-cnc-analiza
+Network=stencil-cnc.network
+# Deliberately no PublishPort: reachable only by the web app, over the private
+# network, and by nothing else on the host.
+Environment=MODEL_DIR=/app/models
+Environment=LATIME_LUCRU=900
+NoNewPrivileges=true
+DropCapability=all
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

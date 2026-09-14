@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Updating Stencil CNC…</title>
+<style>
+  body { display:grid; place-items:center; min-height:100vh; margin:0;
+    font-family:system-ui,sans-serif; background:#101814; color:#eef5f0; text-align:center }
+  .spinner { width:34px; height:34px; margin:0 auto 16px; border:3px solid #ffffff30;
+    border-top-color:#68d391; border-radius:50%; animation:spin .8s linear infinite }
+  @keyframes spin { to { transform:rotate(360deg) } }
+  @media (prefers-reduced-motion:reduce) { .spinner { animation-duration:3s } }
+</style>
+<main>
+  <div class="spinner" aria-hidden="true"></div>
+  <h1>Updating…</h1>
+  <p>Clearing cached files and loading the current version.</p>
+</main>
+<script>
+(async () => {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+  } catch (error) {
+    console.warn('could not fully clear:', error);
+  }
+  sessionStorage.setItem('pwa-kit:updated', '1');
+  location.replace('/');
+})();
+</script>
+</html>
