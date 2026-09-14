@@ -759,7 +759,9 @@ function updateSlatStabilizerControls() {
   const isSlats = selectedCutStyle() === 'lamele';
   const toggle = el('stabilize-slats');
   const span = el('max-cantilever');
+  const organic = el('stabilizer-organic');
   if (toggle) toggle.disabled = !isSlats;
+  if (organic) organic.disabled = !isSlats || toggle?.checked === false;
   if (!span) return;
   span.disabled = !isSlats || toggle?.checked === false;
   span.min = String(roundUnit(fromMm(25)));
@@ -1435,13 +1437,17 @@ function applyControls(controls = {}) {
     }
   }
   migratedControls['slats-default-version'] = '2';
-  if (!Object.hasOwn(controls, 'stabilizer-version')) {
+  const stabilizerVersion = Number(controls['stabilizer-version'] ?? 0);
+  if (stabilizerVersion < 1) {
     migratedControls['stabilize-slats'] = true;
     if (!Object.hasOwn(controls, 'max-cantilever') || Number(controls['max-cantilever']) === 120) {
       migratedControls['max-cantilever'] = '250';
     }
   }
-  migratedControls['stabilizer-version'] = '1';
+  if (stabilizerVersion < 2 && !Object.hasOwn(controls, 'stabilizer-organic')) {
+    migratedControls['stabilizer-organic'] = '75';
+  }
+  migratedControls['stabilizer-version'] = '2';
 
   for (const [key, value] of Object.entries(migratedControls)) {
     const named = [...document.getElementsByName(key)];
@@ -2177,6 +2183,7 @@ function smartBridgeStrategy() {
     strategy.preferredAngleDeg = barAngleDeg + 90;
     strategy.barAngleDeg = barAngleDeg;
     strategy.slatPitchMm = toMm(numberField('style-pitch', 38)) * placedStyleScale();
+    strategy.organicVariation = numberField('stabilizer-organic', 75) / 100;
     if (el('stabilize-slats')?.checked !== false) {
       strategy.maximumUnsupportedSpanMm = toMm(numberField('max-cantilever', 250));
     }
@@ -2938,6 +2945,8 @@ function wire() {
   });
   el('max-cantilever')?.addEventListener('input', updateSlatStabilizerControls);
   el('max-cantilever')?.addEventListener('change', supportPlanChanged);
+  el('stabilizer-organic')?.addEventListener('input', updateRangeOutputs);
+  el('stabilizer-organic')?.addEventListener('change', supportPlanChanged);
   el('bridge-width')?.addEventListener('input', () => {
     const adjusted = enforcePlasmaLimits();
     if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
@@ -3302,6 +3311,7 @@ function updateRangeOutputs() {
   set('despeckle-value', `${numberField('despeckle', 0)} px²`);
   const secure = Number(el('bridge-count')?.value || 2);
   set('bridge-count-value', ['Minimal', 'Aesthetic', 'Secure'][secure - 1] ?? 'Aesthetic');
+  set('stabilizer-organic-value', `${numberField('stabilizer-organic', 75)}%`);
   set('style-gain-value', numberField('style-gain', 2.2).toFixed(1));
   set('style-smooth-value', numberField('style-smooth', 0.55).toFixed(2));
   set('style-curve-value', numberField('style-curve', 1.4).toFixed(1));

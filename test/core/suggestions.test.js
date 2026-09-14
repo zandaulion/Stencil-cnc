@@ -206,6 +206,7 @@ test("connected slats receive staggered stabilizers at the requested span", () =
       barAngleDeg: 90,
       slatPitchMm: 4,
       maximumUnsupportedSpanMm: 6,
+      organicVariation: 0,
     },
   };
   const first = suggestBridges(mask, config);
@@ -228,6 +229,57 @@ test("connected slats receive staggered stabilizers at the requested span", () =
     for (const slatCenter of [1.5, 5.5, 9.5, 13.5, 17.5]) {
       assert.ok(endpoints.some((x) => Math.abs(x - slatCenter) <= 1.1),
         `slat at ${slatCenter} must be braced at station ${station}`);
+    }
+  }
+});
+
+test("organic slat stabilizers vary independently without exceeding the span target", () => {
+  const mask = createMask(31, 31);
+  const anchorMask = createMask(31, 31);
+  for (const x of [1, 6, 11, 16, 21, 26]) {
+    for (let y = 0; y < mask.height; y += 1) mask.data[y * mask.width + x] = 1;
+  }
+  for (let x = 0; x < mask.width; x += 1) {
+    mask.data[x] = 1;
+    mask.data[(mask.height - 1) * mask.width + x] = 1;
+    anchorMask.data[x] = 1;
+    anchorMask.data[(mask.height - 1) * mask.width + x] = 1;
+  }
+  const config = {
+    sheet: { widthMm: 31, heightMm: 31 },
+    anchorMask,
+    widthMm: 2,
+    minimumWebMm: 1,
+    kerfMm: 0,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      barAngleDeg: 90,
+      slatPitchMm: 5,
+      maximumUnsupportedSpanMm: 8,
+      organicVariation: 0.85,
+    },
+  };
+  const first = suggestBridges(mask, config);
+  const second = suggestBridges(mask, config);
+
+  assert.deepEqual(first, second, "organic placement must remain repeatable");
+  assert.ok(first.some((bridge) => Math.abs(bridge.organicOffsetMm) >= 0.5));
+  const byNominalStation = Map.groupBy(first, (bridge) => bridge.nominalStationMm);
+  assert.ok([...byNominalStation.values()].some((bridges) =>
+    new Set(bridges.map((bridge) => bridge.stationMm)).size > 1),
+  "ties at one nominal station should no longer form a rigid row");
+
+  for (const slatCenter of [1.5, 6.5, 11.5, 16.5, 21.5, 26.5]) {
+    const positions = [1.5, 29.5, ...first.flatMap((bridge) => [bridge.start, bridge.end])
+      .filter((point) => Math.abs(point.x - slatCenter) <= 1.1)
+      .map((point) => point.y)].sort((a, b) => a - b);
+    for (let index = 1; index < positions.length; index += 1) {
+      assert.ok(positions[index] - positions[index - 1] <= 8 + 1e-9,
+        `slat at ${slatCenter} exceeds its target span`);
     }
   }
 });

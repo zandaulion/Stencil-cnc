@@ -42,6 +42,7 @@ export function suggestBridges(mask, config) {
       barAngleDeg: config.strategy.barAngleDeg,
       slatPitchMm: config.strategy.slatPitchMm,
       maximumUnsupportedSpanMm: maximumSpanMm,
+      organicVariation: config.strategy.organicVariation,
       detailAt: config.strategy.detailAt,
       idOffset: connectivity.length,
     });
@@ -71,6 +72,10 @@ export function suggestSlatStabilizers(mask, config) {
   positiveFinite(config.slatPitchMm, "slatPitchMm");
   if (config.anchorMask) assertSameSize(mask, config.anchorMask);
   if (!Number.isFinite(config.barAngleDeg)) throw new RangeError("barAngleDeg must be finite");
+  const organicVariation = config.organicVariation ?? 0.7;
+  if (!Number.isFinite(organicVariation) || organicVariation < 0 || organicVariation > 1) {
+    throw new RangeError("organicVariation must be between 0 and 1");
+  }
   if (config.detailAt !== undefined && typeof config.detailAt !== "function") {
     throw new TypeError("detailAt must be a function");
   }
@@ -82,10 +87,13 @@ export function suggestSlatStabilizers(mask, config) {
   const extent = orientedMaterialExtent(mask, config.anchorMask, pixel, along, across);
   if (!extent || extent.maximumAlong - extent.minimumAlong <= config.maximumUnsupportedSpanMm) return [];
 
-  const desiredJitter = Math.min(config.slatPitchMm / 2, config.maximumUnsupportedSpanMm * 0.1);
+  const desiredJitter = Math.min(
+    config.slatPitchMm * 0.65,
+    config.maximumUnsupportedSpanMm * 0.22,
+  ) * organicVariation;
   const targetSpacing = Math.min(
     config.maximumUnsupportedSpanMm,
-    Math.max(config.widthMm * 3, config.maximumUnsupportedSpanMm - desiredJitter * 2),
+    Math.max(config.widthMm * 3, config.maximumUnsupportedSpanMm - desiredJitter * 1.5),
   );
   const span = extent.maximumAlong - extent.minimumAlong;
   const segmentCount = Math.max(1, Math.ceil(span / targetSpacing));
@@ -94,16 +102,18 @@ export function suggestSlatStabilizers(mask, config) {
   const stationSpacing = span / segmentCount;
   const jitter = Math.max(0, Math.min(
     desiredJitter,
-    (config.maximumUnsupportedSpanMm - stationSpacing) / 2,
+    (config.maximumUnsupportedSpanMm - stationSpacing) / 1.5,
   ));
   const maximumNeighbourGapMm = config.slatPitchMm * 1.35;
   const sampleStepMm = Math.max(0.1, Math.min(pixel.x, pixel.y) * 0.55);
   const bridges = [];
-  let priorStation = extent.minimumAlong;
 
   for (let stationIndex = 0; stationIndex < stationCount; stationIndex += 1) {
     const nominal = extent.minimumAlong + stationSpacing * (stationIndex + 1);
-    const offsets = jitter > 0 ? [-jitter, -jitter / 2, 0, jitter / 2, jitter] : [0];
+    const offsets = jitter > 0
+      ? [-jitter, -jitter * 0.75, -jitter / 2, -jitter * 0.25, 0,
+        jitter * 0.25, jitter / 2, jitter * 0.75, jitter]
+      : [0];
     const candidates = offsets.map((offset) => {
       const alongPosition = nominal + offset;
       const gaps = crossSectionGaps(
@@ -122,37 +132,67 @@ export function suggestSlatStabilizers(mask, config) {
         selected = [gaps.reduce((best, gap) => bridgeDetail(gap, config.detailAt) < bridgeDetail(best, config.detailAt) ? gap : best)];
       }
       const detail = selected.reduce((sum, gap) => sum + bridgeDetail(gap, config.detailAt), 0);
-      return { alongPosition, selected, detail };
-    }).filter((candidate) => candidate.selected.length > 0 &&
-      candidate.alongPosition - priorStation <= config.maximumUnsupportedSpanMm + 1e-9);
+      return { alongPosition, offset, gaps, selected, detail };
+    }).filter((candidate) => candidate.selected.length > 0);
 
     candidates.sort((first, second) =>
-      first.detail / first.selected.length - second.detail / second.selected.length ||
       second.selected.length - first.selected.length ||
+      first.detail / first.selected.length - second.detail / second.selected.length ||
       Math.abs(first.alongPosition - nominal) - Math.abs(second.alongPosition - nominal));
     const chosen = candidates[0];
     if (!chosen) continue;
-    priorStation = chosen.alongPosition;
     for (const gap of chosen.selected) {
-      const detailPenalty = bridgeDetail(gap, config.detailAt);
+      const positionedGap = chooseOrganicGap(
+        gap,
+        candidates,
+        nominal,
+        jitter,
+        stationIndex,
+        config.slatPitchMm,
+        along,
+        across,
+        config.detailAt,
+      );
+      const organicGap = skewOrganicGap(
+        positionedGap,
+        mask,
+        config.sheet,
+        pixel,
+        along,
+        across,
+        stationIndex,
+        config.slatPitchMm,
+        config.maximumUnsupportedSpanMm,
+        organicVariation,
+      );
+      const detailPenalty = bridgeDetail(organicGap, config.detailAt);
+      const actualStation = projectedMidpoint(organicGap, along);
+      const actualAngle = Math.atan2(
+        organicGap.end.y - organicGap.start.y,
+        organicGap.end.x - organicGap.start.x,
+      ) * 180 / Math.PI;
       const index = bridges.length + (config.idOffset ?? 0) + 1;
       bridges.push({
         id: `auto-stabilizer-${index}`,
         type: "capsule",
         enabled: true,
         units: "mm",
-        start: gap.start,
-        end: gap.end,
+        start: organicGap.start,
+        end: organicGap.end,
         width: config.widthMm,
-        lengthMm: roundMetric(gap.lengthMm),
-        addedAreaMm2: roundMetric(gap.lengthMm * config.widthMm),
-        aestheticScore: roundMetric(gap.lengthMm * config.widthMm * (1 + detailPenalty * 3.5)),
-        angleErrorDeg: 0,
+        lengthMm: roundMetric(organicGap.lengthMm),
+        addedAreaMm2: roundMetric(organicGap.lengthMm * config.widthMm),
+        aestheticScore: roundMetric(organicGap.lengthMm * config.widthMm * (1 + detailPenalty * 3.5)),
+        angleErrorDeg: roundMetric(angleDistance180(actualAngle, config.barAngleDeg + 90)),
         detailPenalty: roundMetric(detailPenalty),
         strategy: "lamele",
         role: "stabilizer",
         stabilizer: true,
-        stationMm: roundMetric(chosen.alongPosition),
+        stationMm: roundMetric(actualStation),
+        nominalStationMm: roundMetric(nominal),
+        organicOffsetMm: roundMetric(actualStation - nominal),
+        organicSkewMm: roundMetric(organicGap.organicSkewMm ?? 0),
+        organicVariation,
         targetSpanMm: config.maximumUnsupportedSpanMm,
         redundant: false,
         fallback: false,
@@ -162,6 +202,90 @@ export function suggestSlatStabilizers(mask, config) {
     }
   }
   return bridges;
+}
+
+function skewOrganicGap(gap, mask, sheet, pixel, along, across, stationIndex,
+  slatPitchMm, maximumSpanMm, organicVariation) {
+  if (organicVariation <= 0) return gap;
+  const band = Math.round(projectedMidpoint(gap, across) / Math.max(slatPitchMm, Number.EPSILON));
+  const maximumSkew = Math.min(slatPitchMm * 0.18, maximumSpanMm * 0.06) * organicVariation;
+  const skew = deterministicVariation(stationIndex + 19, band + 7) * maximumSkew;
+  const start = shiftedRetainedPoint(gap.start, skew, along, mask, sheet, pixel);
+  const end = shiftedRetainedPoint(gap.end, -skew, along, mask, sheet, pixel);
+  return {
+    ...gap,
+    start,
+    end,
+    lengthMm: Math.hypot(end.x - start.x, end.y - start.y),
+    organicSkewMm: projectedPoint(end, along) - projectedPoint(start, along),
+  };
+}
+
+function shiftedRetainedPoint(point, shiftMm, along, mask, sheet, pixel) {
+  for (const factor of [1, 0.75, 0.5, 0.25, 0]) {
+    const candidate = {
+      x: point.x + along.x * shiftMm * factor,
+      y: point.y + along.y * shiftMm * factor,
+    };
+    if (candidate.x < 0 || candidate.y < 0 ||
+        candidate.x >= sheet.widthMm || candidate.y >= sheet.heightMm) continue;
+    const x = Math.max(0, Math.min(mask.width - 1, Math.floor(candidate.x / pixel.x)));
+    const y = Math.max(0, Math.min(mask.height - 1, Math.floor(candidate.y / pixel.y)));
+    if (mask.data[y * mask.width + x] === 1) return candidate;
+  }
+  return point;
+}
+
+function projectedPoint(point, axis) {
+  return point.x * axis.x + point.y * axis.y;
+}
+
+function chooseOrganicGap(base, sections, nominal, jitter, stationIndex,
+  slatPitchMm, along, across, detailAt) {
+  if (jitter <= 0 || sections.length <= 1) return base;
+  const baseAcross = projectedMidpoint(base, across);
+  const band = Math.round(baseAcross / Math.max(slatPitchMm, Number.EPSILON));
+  const targetOffset = deterministicVariation(stationIndex, band) * jitter;
+  const alternatives = [];
+  for (const section of sections) {
+    let nearest = null;
+    let acrossDistance = Number.POSITIVE_INFINITY;
+    for (const gap of section.gaps) {
+      const distance = Math.abs(projectedMidpoint(gap, across) - baseAcross);
+      if (distance < acrossDistance) {
+        nearest = gap;
+        acrossDistance = distance;
+      }
+    }
+    if (!nearest || acrossDistance > slatPitchMm * 0.55) continue;
+    const actualOffset = projectedMidpoint(nearest, along) - nominal;
+    const offsetError = Math.abs(actualOffset - targetOffset) / Math.max(jitter, Number.EPSILON);
+    const score = acrossDistance / slatPitchMm * 4
+      + bridgeDetail(nearest, detailAt) * 0.8
+      + offsetError * 1.8;
+    alternatives.push({ gap: nearest, score, offsetError, acrossDistance });
+  }
+  alternatives.sort((first, second) =>
+    first.score - second.score ||
+    first.acrossDistance - second.acrossDistance ||
+    first.offsetError - second.offsetError ||
+    first.gap.start.y - second.gap.start.y ||
+    first.gap.start.x - second.gap.start.x);
+  return alternatives[0]?.gap ?? base;
+}
+
+function projectedMidpoint(gap, axis) {
+  return (gap.start.x + gap.end.x) / 2 * axis.x
+    + (gap.start.y + gap.end.y) / 2 * axis.y;
+}
+
+function deterministicVariation(stationIndex, band) {
+  // Smooth deterministic noise changes gradually between neighbouring slats
+  // and stations. That avoids rigid rows without the dangerous large jumps
+  // produced by independent random offsets.
+  const first = Math.sin((stationIndex + 1) * 0.82 + band * 0.57) * 0.68;
+  const second = Math.sin((stationIndex + 1) * 0.37 - band * 0.23 + 1.7) * 0.32;
+  return Math.max(-1, Math.min(1, first + second));
 }
 
 function orientedMaterialExtent(mask, anchorMask, pixel, along, across) {
@@ -367,6 +491,7 @@ function suggestNearestBridges(mask, config) {
  *     barAngleDeg?:number,
  *     slatPitchMm?:number,
  *     maximumUnsupportedSpanMm?:number,
+ *     organicVariation?:number,
  *   },
  * }} config
  */
