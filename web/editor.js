@@ -590,6 +590,7 @@ function enforceStyleSpacing() {
 let styleToken = 0;
 let styleAbort = null;
 let renderProgressClock = null;
+let toolOptionsKind = null;
 
 function setRenderProgress(phase = null, style = selectedCutStyle()) {
   const progress = el('render-progress');
@@ -737,6 +738,7 @@ function setStyleStatus(text) {
 function reflectModeControls() {
   const style = document.querySelector('input[name="cutStyle"]:checked')?.value || 'line-art';
   const lineArt = style === 'line-art';
+  if (style !== 'icoana' && toolOptionsKind === 'icon') closeToolOptions();
   el('tool-icon-stencil')?.setAttribute('aria-pressed', String(style === 'icoana'));
   el('tool-icon-stencil')?.classList.toggle('is-selected', style === 'icoana');
   el('style-controls')?.removeAttribute('hidden');
@@ -2613,6 +2615,7 @@ function setSidePanel(panel) {
 
 function setTool(tool) {
   if (!['pan', 'keep', 'remove', 'support'].includes(tool)) return;
+  if (tool !== 'pan') closeToolOptions();
   state.tool = tool;
   state.touchupPreview = null;
   state.drawingBridge = tool === 'support';
@@ -2647,8 +2650,45 @@ function activateIconStencil() {
   if (!option) return;
   if (!option.checked) option.click();
   else reflectModeControls();
-  el('style-icon')?.scrollIntoView({ block: 'nearest' });
-  toast('Icon stencil selected. Its halo and detail settings are open.');
+  openIconOptions();
+  toast('Icon stencil selected. Adjust it beside the Tools bar.');
+}
+
+function moveToolOptionNode(id, destination) {
+  const node = el(id);
+  if (node && destination) destination.append(node);
+}
+
+function restoreToolOptionNode(id) {
+  const node = el(id);
+  const home = el(`${id}-home`);
+  if (node && home) home.after(node);
+}
+
+function openIconOptions() {
+  const panel = el('tool-options-panel');
+  const actions = el('tool-options-actions');
+  const content = el('tool-options-content');
+  if (!panel || !actions || !content) return;
+  toolOptionsKind = 'icon';
+  const rerender = el('btn-restyle');
+  if (rerender) actions.prepend(rerender);
+  for (const id of ['style-icon', 'style-photo-common', 'style-status']) {
+    moveToolOptionNode(id, content);
+  }
+  panel.hidden = false;
+  el('tool-icon-stencil')?.setAttribute('aria-expanded', 'true');
+}
+
+function closeToolOptions({ returnFocus = false } = {}) {
+  if (!toolOptionsKind) return;
+  for (const id of ['btn-restyle', 'style-icon', 'style-photo-common', 'style-status']) {
+    restoreToolOptionNode(id);
+  }
+  el('tool-options-panel')?.setAttribute('hidden', '');
+  el('tool-icon-stencil')?.setAttribute('aria-expanded', 'false');
+  toolOptionsKind = null;
+  if (returnFocus) el('tool-icon-stencil')?.focus();
 }
 
 function touchupMode() {
@@ -3026,7 +3066,9 @@ function wire() {
   }
   el('tool-support')?.addEventListener('click', activateSupportTool);
   el('tool-icon-stencil')?.addEventListener('click', activateIconStencil);
+  el('btn-close-tool-options')?.addEventListener('click', () => closeToolOptions({ returnFocus: true }));
   el('tool-problems')?.addEventListener('click', () => {
+    closeToolOptions();
     setStage('validate');
     setSidePanel('issues');
     setView('issues');
@@ -3413,7 +3455,11 @@ function wire() {
       return;
     }
     if (event.altKey || event.target?.matches?.('input, textarea, select') || event.target?.isContentEditable) return;
-    if (event.key === 'Escape') { event.preventDefault(); setTool('pan'); }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (toolOptionsKind) closeToolOptions({ returnFocus: true });
+      else setTool('pan');
+    }
     if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomAt(state.zoom * 1.35); }
     if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomAt(state.zoom / 1.35); }
     if (event.key === '0') { event.preventDefault(); zoomAt(1); }

@@ -242,6 +242,7 @@
             <div class="control-section" id="style-controls">
               <div class="section-title-row">
                 <h2>Cut style</h2>
+                <span id="btn-restyle-home" hidden></span>
                 <button class="text-button" id="btn-restyle" type="button" hidden>Re-render</button>
               </div>
               <p class="section-help">Choose how the uploaded image becomes cuttable geometry. The application selects the appropriate local or private-server processor automatically.</p>
@@ -333,6 +334,7 @@
                 </div>
               </div>
 
+              <span id="style-icon-home" hidden></span>
               <div id="style-icon" hidden>
                 <div class="range-control">
                   <label for="style-icon-balance"><span>Light / dark balance</span><output id="style-icon-balance-value" for="style-icon-balance">56%</output></label>
@@ -487,6 +489,7 @@
                 </label>
               </div>
 
+              <span id="style-photo-common-home" hidden></span>
               <div id="style-photo-common" hidden>
                 <div class="range-control">
                   <label for="style-gain"><span>Detail strength</span><output id="style-gain-value" for="style-gain">2.2</output></label>
@@ -512,6 +515,7 @@
                 </label>
 
               </div>
+              <span id="style-status-home" hidden></span>
               <p class="section-help" id="style-status">Choose an image to render.</p>
             </div>
 
@@ -806,7 +810,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V7a1.5 1.5 0 0 1 3 0v3-5a1.5 1.5 0 0 1 3 0v5-3a1.5 1.5 0 0 1 3 0v4-1a1.5 1.5 0 0 1 3 0v3c0 5-3 8-8 8h-1c-3 0-5-2-7-5l-1-2a1.6 1.6 0 0 1 2.6-1.8L8 14"></path></svg>
             <span>Pan</span>
           </button>
-          <button class="rail-tool rail-tool-style" id="tool-icon-stencil" type="button" aria-pressed="false" aria-keyshortcuts="I" title="Icon stencil and halo settings (I)">
+          <button class="rail-tool rail-tool-style" id="tool-icon-stencil" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="I" title="Icon stencil and halo settings (I)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M5 21c.8-4.3 3.1-6.5 7-6.5s6.2 2.2 7 6.5M12 3V1M7.8 4 6.4 2.6M16.2 4l1.4-1.4"></path></svg>
             <span>Icon</span>
           </button>
@@ -831,6 +835,20 @@
             <span>Fit</span>
           </button>
         </div>
+        <section class="tool-options-panel" id="tool-options-panel" aria-labelledby="tool-options-title" hidden>
+          <header class="tool-options-header">
+            <div>
+              <span>Filter settings</span>
+              <h3 id="tool-options-title">Icon stencil</h3>
+            </div>
+            <div class="tool-options-actions" id="tool-options-actions">
+              <button class="icon-button compact-button" id="btn-close-tool-options" type="button" aria-label="Close Icon stencil settings" title="Close settings">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+              </button>
+            </div>
+          </header>
+          <div class="tool-options-content" id="tool-options-content"></div>
+        </section>
       </aside>
 
       <section class="workspace-pane" id="workspace" aria-labelledby="workspace-title">

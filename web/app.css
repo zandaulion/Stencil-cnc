@@ -850,6 +850,7 @@ svg {
 }
 
 .tools-rail {
+  position: relative;
   z-index: 6;
   display: flex;
   min-width: 0;
@@ -939,6 +940,77 @@ svg {
   margin-bottom: 5px;
   border-bottom-color: var(--line);
   border-radius: 8px 8px 0 0;
+}
+
+.tool-options-panel {
+  position: absolute;
+  z-index: 18;
+  top: 10px;
+  left: calc(100% + 9px);
+  width: min(310px, calc(100vw - 410px));
+  max-height: calc(100% - 20px);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 16px 38px rgb(20 33 41 / 20%);
+  backdrop-filter: blur(14px);
+}
+
+.tool-options-header {
+  display: flex;
+  min-height: 62px;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 11px 10px 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-options-header span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.53rem;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.tool-options-header h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.84rem;
+  letter-spacing: -0.015em;
+}
+
+.tool-options-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tool-options-actions .text-button {
+  min-height: 31px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.tool-options-content {
+  max-height: calc(100dvh - var(--header-height) - var(--workflow-height) - 84px);
+  padding: 15px 16px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c8cfcc transparent;
+}
+
+.tool-options-content > .section-help:last-child {
+  margin-bottom: 8px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
 }
 
 .tool-context-empty {
@@ -3080,6 +3152,26 @@ select:focus {
     margin-bottom: 0;
     border-bottom-color: transparent;
     border-radius: 8px;
+  }
+
+  .tool-options-panel {
+    position: fixed;
+    top: auto;
+    right: 10px;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    left: 10px;
+    width: auto;
+    max-height: min(68dvh, 620px);
+    border-radius: 14px;
+  }
+
+  .tool-options-content {
+    max-height: calc(min(68dvh, 620px) - 63px);
+    padding: 16px 17px 9px;
+  }
+
+  .tool-options-actions .text-button {
+    display: inline-flex;
   }
 
   .controls-pane {
