@@ -127,6 +127,19 @@ def _elipsa_mm(diametru_mm: float, mm_pe_px: float) -> np.ndarray:
     return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (pixeli, pixeli))
 
 
+def punte_inainte_de_kerf(punte_finita_mm: float, kerf_mm: float) -> float:
+    """Return the drawn web required to leave ``punte_finita_mm`` after cut.
+
+    Kerf removes half its width from each side of a retained feature, hence a
+    complete kerf width must be added before rasterising the filter.
+    """
+    if punte_finita_mm <= 0:
+        raise ReglajImposibil("Puntea finită trebuie să fie pozitivă.")
+    if kerf_mm < 0:
+        raise ReglajImposibil("Kerf-ul nu poate fi negativ.")
+    return punte_finita_mm + kerf_mm
+
+
 def aplica_limite_fizice(
     masca: np.ndarray,
     mm_pe_px: float,

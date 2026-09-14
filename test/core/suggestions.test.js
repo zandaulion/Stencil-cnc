@@ -7,8 +7,9 @@ import {
   createMask,
   erodeMaskPhysical,
   suggestBridges,
+  suggestKerfAwareBridges,
 } from "../../web/core/index.js";
-import { maskFromAscii } from "./fixtures.js";
+import { maskFromAscii, narrowBridgeFixture } from "./fixtures.js";
 
 test("automatic suggestions deterministically bridge an island to supported material", () => {
   const mask = maskFromAscii([
@@ -158,6 +159,31 @@ test("a smart bridge retains the requested full web after kerf", () => {
   const afterKerf = erodeMaskPhysical(bridged, 1, sheet);
 
   assert.equal(suggestions[0].width, 5);
+  assert.equal(analyzeConnectivity(afterKerf).componentCount, 1);
+});
+
+test("kerf-aware suggestions repair a neck that is connected only before cutting", () => {
+  const mask = narrowBridgeFixture();
+  const sheet = { widthMm: 15, heightMm: 15 };
+  assert.equal(analyzeConnectivity(mask).componentCount, 1);
+  assert.ok(analyzeConnectivity(erodeMaskPhysical(mask, 0.5, sheet)).componentCount > 1);
+
+  const repair = suggestKerfAwareBridges(mask, {
+    sheet,
+    widthMm: 1,
+    minimumWebMm: 2,
+    kerfMm: 1,
+    requireSingleComponent: true,
+    strategy: { mode: "smart", kind: "generic", level: 2 },
+  });
+  const repaired = applyCapsuleBridges(mask, repair.bridges, sheet);
+  const afterKerf = erodeMaskPhysical(repaired, 0.5, sheet);
+
+  assert.ok(repair.bridges.length > 0);
+  assert.equal(repair.initialComponentCount, 2);
+  assert.equal(repair.finalComponentCount, 1);
+  assert.equal(repair.complete, true);
+  assert.ok(repair.bridges.every((bridge) => bridge.repairPhase === "postKerf"));
   assert.equal(analyzeConnectivity(afterKerf).componentCount, 1);
 });
 

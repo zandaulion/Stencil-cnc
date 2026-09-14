@@ -215,14 +215,14 @@
                 <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-web">
-                <span>Minimum gap between cuts <small>Narrowest retained metal</small></span>
+                <span>Minimum gap between cuts <small>Finished metal remaining after kerf</small></span>
                 <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="3" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-opening">
                 <span>Minimum opening <small>Smallest removable feature</small></span>
                 <span class="number-field compact"><input id="min-opening" name="minOpening" type="number" min="2" max="500" step="0.1" value="2"><span data-unit-label>mm</span></span>
               </label>
-              <p class="section-help">These limits shape every generated filter and are checked again before export.</p>
+              <p class="section-help" id="prekerf-web-note">Filters generate at least 4.2 mm before cutting so 3 mm remains after the 1.2 mm kerf.</p>
             </div>
 
             <fieldset class="control-group segmented-fieldset" id="polarity">
@@ -731,10 +731,20 @@
           </section>
 
           <section class="stage-panel" id="panel-validate" role="tabpanel" aria-labelledby="stage-validate" data-panel="validate" hidden>
-            <label class="toggle-row standalone" for="simulate-kerf">
-              <span>Preview after kerf<small>Show the material that remains after cutting</small></span>
-              <input class="switch" id="simulate-kerf" name="simulateKerf" type="checkbox" checked>
-            </label>
+            <fieldset class="control-group segmented-fieldset kerf-preview" id="kerf-preview">
+              <legend>Geometry preview</legend>
+              <div class="segmented-control">
+                <label>
+                  <input id="preview-pre-kerf" name="kerfPreview" type="radio" value="pre">
+                  <span>Before kerf</span>
+                </label>
+                <label>
+                  <input id="simulate-kerf" name="kerfPreview" type="radio" value="post" checked>
+                  <span>After kerf</span>
+                </label>
+              </div>
+              <p class="section-help">Switch between the drawn geometry and the material that remains after cutting.</p>
+            </fieldset>
 
             <button class="button button-primary button-full" id="btn-validate" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>

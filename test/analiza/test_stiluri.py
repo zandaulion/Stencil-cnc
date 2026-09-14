@@ -31,6 +31,7 @@ from stiluri import (  # noqa: E402
     raze,
     sablon,
     sablon_icoana,
+    punte_inainte_de_kerf,
     silueta,
 )
 
@@ -48,6 +49,17 @@ def secvente_pe_rand(masca, y):
     margini = np.concatenate(([0], schimbari + 1, [rand.size]))
     return [int(margini[i + 1] - margini[i]) for i in range(len(margini) - 1)
             if rand[margini[i]]]
+
+
+class TestCompensareKerf(unittest.TestCase):
+    def test_puntea_desenata_lasa_latimea_finita_dupa_kerf(self):
+        self.assertAlmostEqual(punte_inainte_de_kerf(3.0, 1.2), 4.2)
+
+    def test_refuza_valori_fizice_imposibile(self):
+        with self.assertRaises(ReglajImposibil):
+            punte_inainte_de_kerf(0, 1.2)
+        with self.assertRaises(ReglajImposibil):
+            punte_inainte_de_kerf(3, -0.1)
 
 
 class TestLinieArt(unittest.TestCase):

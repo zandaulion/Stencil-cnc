@@ -35,6 +35,7 @@ from stiluri import (
     linii_negative,
     ornament,
     portret_grafic,
+    punte_inainte_de_kerf,
     raze,
     sablon,
     sablon_icoana,
@@ -205,11 +206,19 @@ async def analizeaza(
     # limite fizice
     punte_min_mm: float = Form(3.0),
     fanta_min_mm: float = Form(2.0),
+    kerf_mm: float = Form(0.0),
     previzualizare: bool = Form(False),
 ) -> JSONResponse:
     date = await foto.read()
     if len(date) > MAX_FOTO:
         raise HTTPException(413, "Fotografie prea mare.")
+    try:
+        # The public value is the finished web the operator requires. Filters
+        # draw a wider pre-cut web so the configured amount remains after the
+        # cutter removes half a kerf from each edge.
+        punte_min_mm = punte_inainte_de_kerf(punte_min_mm, kerf_mm)
+    except ReglajImposibil as e:
+        raise HTTPException(422, str(e)) from e
     lat_geometrie = _latime_lucru(coala_lat_mm, min(punte_min_mm, fanta_min_mm))
 
     if stil == "linie_art":

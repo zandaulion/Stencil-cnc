@@ -23,6 +23,7 @@ import {
   decodeMask,
   deserializeProject,
   encodeMask,
+  erodeMaskPhysical,
   exportDxf,
   exportSvg,
   maskFromImageData,
@@ -31,7 +32,7 @@ import {
   physicalStrokeIndices,
   placeMaskOnSheet,
   serializeProject,
-  suggestBridges,
+  suggestKerfAwareBridges,
   trimMaskToContent,
   validateDesign,
   zoomAroundPoint,
@@ -110,6 +111,7 @@ const state = {
   contentSourceSize: null,
   designMask: null,      // after frame and bridges
   frameMask: null,
+  kerfPreviewMask: null, // live simulation; available before validation
 
   // Touch-ups are kept as intent, not as a modified bitmap, so they survive a
   // change of threshold instead of being silently overwritten by it.
@@ -453,14 +455,11 @@ function styleParams(stil = selectedCutStyle()) {
   form.set('inverseaza', String(
     document.querySelector('input[name="polarity"]:checked')?.value === 'white-retained',
   ));
-  // The cutting limits are the ones already agreed in the validate stage, so a
-  // style can never propose geometry the rest of the app would reject.
-  //
-  // Sent whole. An earlier version divided the minimum web by four to keep the
-  // bars slender, which on a 1200 mm panel at 900 px asked for a 1 mm bar where
-  // a pixel is 1.33 mm -- and produced three thousand single-pixel specks
-  // instead of bars. A limit that the raster cannot draw is not a limit.
+  // Minimum web is the width that must remain in the finished panel. The
+  // analysis service receives kerf separately and widens generated retained
+  // geometry before cutting, keeping the operator's requirement explicit.
   form.set('punte_min_mm', String(toMm(numberField('min-web', 3))));
+  form.set('kerf_mm', String(toMm(numberField('kerf', 1.2))));
   form.set('fanta_min_mm', String(Math.max(
     toMm(numberField('kerf', 1.2)),
     toMm(numberField('min-opening', 2)),
@@ -529,8 +528,9 @@ function styleParams(stil = selectedCutStyle()) {
  */
 function enforceStyleSpacing() {
   const style = document.querySelector('input[name="cutStyle"]:checked')?.value || 'sablon';
-  const web = toMm(numberField('min-web', 3));
-  const slot = Math.max(toMm(numberField('kerf', 1.2)), toMm(numberField('min-opening', 2)));
+  const kerf = toMm(numberField('kerf', 1.2));
+  const web = toMm(numberField('min-web', 3)) + kerf;
+  const slot = Math.max(kerf, toMm(numberField('min-opening', 2)));
   // Merely fitting one minimum web beside one minimum opening leaves no range
   // in which tone can change the geometry. Reserve one additional detail band
   // so the lightest and darkest parts of a photograph cannot become identical.
@@ -821,7 +821,12 @@ function frameConfig() {
 }
 
 function rebuildDesign() {
-  if (!state.sourceMask) { state.designMask = null; state.frameMask = null; return; }
+  if (!state.sourceMask) {
+    state.designMask = null;
+    state.frameMask = null;
+    state.kerfPreviewMask = null;
+    return;
+  }
   const built = buildDesignMask(state.sourceMask, {
     sheet: sheet(),
     frame: frameConfig(),
@@ -829,6 +834,10 @@ function rebuildDesign() {
   });
   state.designMask = built.mask;
   state.frameMask = built.frameMask;
+  const kerfMm = toMm(numberField('kerf', 1.2));
+  state.kerfPreviewMask = kerfMm > 0
+    ? erodeMaskPhysical(state.designMask, kerfMm / 2, sheet())
+    : { ...state.designMask, data: Uint8Array.from(state.designMask.data) };
 }
 
 function invalidateValidation({ clearAnalysis = false } = {}) {
@@ -1140,9 +1149,9 @@ function draw() {
   const source = state.view === 'source' && state.sourceMask ? state.sourceMask : mask;
   // Kerf simulation shows what survives the cutter, which is the honest
   // preview of the finished part rather than the ideal geometry.
-  const kerf = el('simulate-kerf')?.checked && state.validation?.postKerfMask;
+  const kerf = el('simulate-kerf')?.checked && state.kerfPreviewMask;
   const shown = (state.view === 'material' || state.view === 'backlit') && kerf
-    ? state.validation.postKerfMask : source;
+    ? state.kerfPreviewMask : source;
 
   const labels = state.view === 'issues' ? state.analysis?.labels : null;
   const disconnectedIds = new Set((state.analysis?.components ?? [])
@@ -1366,6 +1375,12 @@ function updateReadouts() {
   el('export-size').textContent = exportSize;
   if (el('export-unit-scale')) el('export-unit-scale').textContent = `1 drawing unit = 1 ${exportUnit}`;
   for (const node of all('[data-unit-label]')) node.textContent = state.unit;
+  const webNote = el('prekerf-web-note');
+  if (webNote) {
+    const finished = toMm(numberField('min-web', 3));
+    const kerf = toMm(numberField('kerf', 1.2));
+    webNote.textContent = `Filters generate at least ${roundUnit(fromMm(finished + kerf))} ${state.unit} before cutting so ${roundUnit(fromMm(finished))} ${state.unit} remains after the ${roundUnit(fromMm(kerf))} ${state.unit} kerf.`;
+  }
 }
 
 function reflectPanelOrientation(preferred = null) {
@@ -2253,7 +2268,7 @@ async function autoBridge() {
     const base = buildDesignMask(state.sourceMask, {
       sheet: sheet(), frame: frameConfig(), bridges: manual,
     });
-    const suggested = suggestBridges(base.mask, {
+    const plan = suggestKerfAwareBridges(base.mask, {
       sheet: sheet(),
       widthMm,
       anchorMask: base.frameMask,
@@ -2261,8 +2276,10 @@ async function autoBridge() {
       requireSingleComponent: true,
       minimumWebMm,
       kerfMm,
+      maxPasses: 4,
       strategy: smartBridgeStrategy(),
     });
+    const suggested = plan.bridges;
     state.bridges = [...manual, ...suggested];
     state.automaticSupportsStale = false;
     selectBridge(null);
@@ -2278,7 +2295,7 @@ async function autoBridge() {
       requireAnchored: false,
       requireSingleComponent: true,
     });
-    const survivesKerf = supportSimulation.postKerf.componentCount <= 1;
+    const survivesKerf = supportSimulation.postKerf.componentCount === 1;
     const fallbackCount = suggested.filter((bridge) => bridge.fallback).length;
     const redundantCount = suggested.filter((bridge) => bridge.redundant).length;
     const stabilizerCount = suggested.filter((bridge) => bridge.stabilizer).length;
@@ -2287,9 +2304,14 @@ async function autoBridge() {
       connectorCount ? `${connectorCount} connectivity ${connectorCount === 1 ? 'bridge' : 'bridges'}` : '',
       stabilizerCount ? `${stabilizerCount} staggered slat ${stabilizerCount === 1 ? 'stabilizer' : 'stabilizers'}` : '',
     ].filter(Boolean).join(' and ');
+    const repairSummary = plan.initialComponentCount > 1
+      ? ` Post-kerf pieces: ${plan.initialComponentCount} → ${plan.finalComponentCount} in ${plan.passes} ${plan.passes === 1 ? 'pass' : 'passes'}.`
+      : '';
     toast(suggested.length
-      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${survivesKerf ? ' Kerf simulation stays connected.' : ' Some geometry still separates after kerf; run validation to locate it.'}`
-      : 'Everything is already one connected piece.');
+      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${repairSummary}${survivesKerf ? ' Kerf simulation stays connected.' : ' Some geometry still separates after kerf; run validation to locate it.'}`
+      : survivesKerf
+        ? 'Everything is already one connected piece after kerf.'
+        : 'No safe automatic repair was found; reduce detail or add a manual support.');
   } catch (error) {
     console.error(error);
     toast('Could not work out where to bridge.');
@@ -2726,7 +2748,7 @@ function wire() {
     styleAbort?.abort();
     state.source = null; state.styleMask = null; state.styleMaskFor = null;
     state.styleMaskFresh = false; state.baseMask = null;
-    state.sourceMask = null; state.designMask = null; state.frameMask = null;
+    state.sourceMask = null; state.designMask = null; state.frameMask = null; state.kerfPreviewMask = null;
     state.placement = null; state.contentBounds = null; state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
     state.paintedFor = null; state.bridges = []; state.automaticSupportsStale = false;
@@ -2873,7 +2895,8 @@ function wire() {
     });
     el(id)?.addEventListener('change', pushHistory);
   }
-  for (const id of ['simulate-kerf', 'show-grid']) el(id)?.addEventListener('change', draw);
+  for (const node of all('input[name="kerfPreview"]')) node.addEventListener('change', draw);
+  el('show-grid')?.addEventListener('change', draw);
   el('export-frame')?.addEventListener('change', () => {
     invalidateValidation();
     analyse();

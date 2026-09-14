@@ -55,7 +55,8 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /bridge\.fallback === true/);
   assert.match(editor, /Safe shortest-path fallback/);
   assert.match(editor, /Planning smart supports/);
-  assert.match(editor, /supportSimulation\.postKerf\.componentCount <= 1/);
+  assert.match(editor, /suggestKerfAwareBridges\(base\.mask/);
+  assert.match(editor, /supportSimulation\.postKerf\.componentCount === 1/);
 });
 
 test('slats add a configurable staggered structural stabilization pass', () => {
@@ -105,7 +106,12 @@ test('the plasma profile drives every filter with 2 mm openings and 3 mm webs', 
   assert.match(html, /id="bridge-width"[^>]*min="3"/);
   assert.match(html, /id="selected-bridge-width"[^>]*min="3"/);
   assert.match(editor, /form\.set\('punte_min_mm', String\(toMm\(numberField\('min-web', 3\)\)\)\)/);
+  assert.match(editor, /form\.set\('kerf_mm', String\(toMm\(numberField\('kerf', 1\.2\)\)\)\)/);
   assert.match(editor, /form\.set\('fanta_min_mm', String\(Math\.max\(/);
+  assert.match(html, /id="prekerf-web-note"/);
+  assert.match(html, /id="preview-pre-kerf"[^>]*name="kerfPreview"/);
+  assert.match(html, /id="simulate-kerf"[^>]*name="kerfPreview"[^>]*checked/);
+  assert.match(editor, /state\.kerfPreviewMask = kerfMm > 0/);
 });
 
 test('panel fitting uses visible generated artwork rather than empty source border', () => {

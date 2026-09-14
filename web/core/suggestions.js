@@ -1,6 +1,7 @@
 import { analyzeConnectivity } from "./connectivity.js";
 import { applyCapsuleBridges } from "./bridges.js";
-import { assertMask, assertSameSize, assertSheet, pixelSizeMm, positiveFinite } from "./mask.js";
+import { erodeMaskPhysical } from "./morphology.js";
+import { assertMask, assertSameSize, assertSheet, cloneMask, pixelSizeMm, positiveFinite } from "./mask.js";
 
 /**
  * Suggests straight, finite-width capsule bridges from each unsupported
@@ -49,6 +50,141 @@ export function suggestBridges(mask, config) {
     return [...connectivity, ...stabilizers];
   }
   return suggestNearestBridges(mask, config);
+}
+
+/**
+ * Plans retained-material supports against the geometry that will actually
+ * remain after the cutter has passed. A design can be one component before
+ * kerf and hundreds afterwards; the ordinary planner cannot see those weak
+ * necks because there is no topological break yet.
+ *
+ * Each pass plans on the eroded mask, applies full pre-cut bridge width to the
+ * original mask, then erodes again. The loop stops only when post-kerf
+ * connectivity is satisfied or a pass cannot reduce the component count.
+ * Slat span stabilizers are added once, after connectivity repair, so retries
+ * cannot lay duplicate rows over the portrait.
+ *
+ * @param {import('./mask.js').RasterMask} mask
+ * @param {{
+ *   sheet:{widthMm:number,heightMm:number},
+ *   anchorMask?:import('./mask.js').RasterMask|null,
+ *   anchorBoundary?:boolean,
+ *   widthMm:number,
+ *   requireSingleComponent?:boolean,
+ *   minimumWebMm?:number,
+ *   kerfMm?:number,
+ *   outsideIsRemoved?:boolean,
+ *   maxPasses?:number,
+ *   strategy?:object,
+ * }} config
+ */
+export function suggestKerfAwareBridges(mask, config) {
+  assertMask(mask);
+  if (!config || typeof config !== "object") throw new TypeError("Bridge suggestion configuration is required");
+  assertSheet(config.sheet);
+  positiveFinite(config.widthMm, "widthMm");
+  if (config.anchorMask) assertSameSize(mask, config.anchorMask);
+
+  const kerfMm = nonNegative(config.kerfMm ?? 0, "kerfMm");
+  const minimumWebMm = nonNegative(config.minimumWebMm ?? 0, "minimumWebMm");
+  const maxPasses = config.maxPasses ?? 4;
+  if (!Number.isInteger(maxPasses) || maxPasses < 1 || maxPasses > 12) {
+    throw new RangeError("maxPasses must be an integer between 1 and 12");
+  }
+
+  const erodeForKerf = (candidate) => kerfMm > 0
+    ? erodeMaskPhysical(candidate, kerfMm / 2, config.sheet, {
+      outsideIsRemoved: config.outsideIsRemoved,
+    })
+    : cloneMask(candidate);
+  const planningAnchor = config.anchorMask && kerfMm > 0
+    ? erodeMaskPhysical(config.anchorMask, kerfMm / 2, config.sheet, {
+      outsideIsRemoved: config.outsideIsRemoved,
+    })
+    : config.anchorMask ?? null;
+
+  let working = cloneMask(mask);
+  let postKerfMask = erodeForKerf(working);
+  const initialComponentCount = analyzeConnectivity(postKerfMask, {
+    anchorMask: planningAnchor,
+    anchorBoundary: config.anchorBoundary,
+  }).componentCount;
+  let componentCount = initialComponentCount;
+  let passes = 0;
+  const bridges = [];
+
+  // Connectivity passes intentionally omit slat stabilization. That separate
+  // structural layer is added once below after the topology is known to hold.
+  const repairStrategy = config.strategy
+    ? { ...config.strategy, maximumUnsupportedSpanMm: undefined }
+    : undefined;
+
+  while (componentCount > 1 && passes < maxPasses) {
+    const proposed = suggestBridges(postKerfMask, {
+      ...config,
+      anchorMask: planningAnchor,
+      strategy: repairStrategy,
+    }).filter((bridge) => !bridge.stabilizer);
+    if (!proposed.length) break;
+
+    const numbered = proposed.map((bridge, index) => ({
+      ...bridge,
+      id: `kerf-${passes + 1}-${index + 1}`,
+      repairPhase: "postKerf",
+      repairPass: passes + 1,
+    }));
+    const candidate = applyCapsuleBridges(working, numbered, config.sheet);
+    const candidatePostKerf = erodeForKerf(candidate);
+    const nextCount = analyzeConnectivity(candidatePostKerf, {
+      anchorMask: planningAnchor,
+      anchorBoundary: config.anchorBoundary,
+    }).componentCount;
+    passes += 1;
+
+    // Do not retain a pass that failed to improve the manufactured geometry.
+    // Retrying the same deterministic graph would only draw duplicates.
+    if (nextCount >= componentCount) break;
+    bridges.push(...numbered);
+    working = candidate;
+    postKerfMask = candidatePostKerf;
+    componentCount = nextCount;
+  }
+
+  const maximumSpanMm = config.strategy?.maximumUnsupportedSpanMm;
+  if (config.strategy?.kind === "lamele" && Number.isFinite(maximumSpanMm)) {
+    const stabilizers = suggestSlatStabilizers(postKerfMask, {
+      sheet: config.sheet,
+      anchorMask: planningAnchor,
+      widthMm: Math.max(config.widthMm, minimumWebMm + kerfMm),
+      barAngleDeg: config.strategy.barAngleDeg,
+      slatPitchMm: config.strategy.slatPitchMm,
+      maximumUnsupportedSpanMm: maximumSpanMm,
+      organicVariation: config.strategy.organicVariation,
+      detailAt: config.strategy.detailAt,
+      idOffset: bridges.length,
+    }).map((bridge, index) => ({
+      ...bridge,
+      id: `stabilizer-${index + 1}`,
+    }));
+    if (stabilizers.length) {
+      bridges.push(...stabilizers);
+      working = applyCapsuleBridges(working, stabilizers, config.sheet);
+      postKerfMask = erodeForKerf(working);
+      componentCount = analyzeConnectivity(postKerfMask, {
+        anchorMask: planningAnchor,
+        anchorBoundary: config.anchorBoundary,
+      }).componentCount;
+    }
+  }
+
+  return {
+    bridges,
+    postKerfMask,
+    initialComponentCount,
+    finalComponentCount: componentCount,
+    passes,
+    complete: componentCount === 1,
+  };
 }
 
 /**
