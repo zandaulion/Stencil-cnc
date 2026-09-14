@@ -49,6 +49,21 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /promoteBridgeToManual\(draggingBridge\.bridge\)/);
 });
 
+test('Tools remains available beside the canvas and becomes a mobile bottom bar', () => {
+  const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
+  assert.match(html, /id="tools-rail"[^>]*aria-labelledby="tools-title"/);
+  assert.match(html, /id="tools-title">Tools</);
+  for (const id of ['tool-pan', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  assert.doesNotMatch(html, /class="tool-grid"/);
+  assert.match(editor, /state\.drawingBridge = tool === 'support'/);
+  assert.match(editor, /el\('btn-add-bridge'\)\?\.addEventListener\('click', activateSupportTool\)/);
+  assert.doesNotMatch(editor, /stage !== 'prepare' && state\.tool !== 'pan'/);
+  assert.match(css, /grid-template-columns: 318px 64px minmax\(480px, 1fr\) 296px/);
+  assert.match(css, /\.tools-rail \{[\s\S]*?position: fixed;[\s\S]*?bottom: 0;/);
+});
+
 test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(html, /id="bridge-count"[^>]*value="2"/);
   assert.match(html, /id="bridge-count-value"[^>]*>Aesthetic</);

@@ -2560,7 +2560,6 @@ function exportGeometry(kind) {
 
 function setStage(stage) {
   state.stage = stage;
-  if (stage !== 'prepare' && state.tool !== 'pan') setTool('pan');
   const order = ['prepare', 'panel', 'support', 'validate', 'export'];
   for (const name of order) {
     const tab = el(`stage-${name}`);
@@ -2588,6 +2587,8 @@ function setView(view) {
     button?.setAttribute('aria-pressed', String(name === view));
     button?.classList.toggle('is-selected', name === view);
   }
+  el('tool-problems')?.setAttribute('aria-pressed', String(view === 'issues'));
+  el('tool-problems')?.classList.toggle('is-selected', view === 'issues');
   draw();
 }
 
@@ -2609,20 +2610,33 @@ function setSidePanel(panel) {
 }
 
 function setTool(tool) {
+  if (!['pan', 'keep', 'remove', 'support'].includes(tool)) return;
   state.tool = tool;
   state.touchupPreview = null;
-  state.drawingBridge = false;
+  state.drawingBridge = tool === 'support';
   state.bridgePreview = null;
-  for (const name of ['pan', 'keep', 'remove']) {
+  for (const name of ['pan', 'keep', 'remove', 'support']) {
     const button = el(`tool-${name}`);
     button?.setAttribute('aria-pressed', String(name === tool));
     button?.classList.toggle('is-selected', name === tool);
   }
   const editing = tool === 'keep' || tool === 'remove';
   el('touchup-options')?.toggleAttribute('hidden', !editing);
+  el('touchup-empty')?.toggleAttribute('hidden', editing);
   if (editing) updateTouchupControls();
   el('canvas-viewport').style.cursor = tool === 'pan' ? 'grab' : 'crosshair';
   draw();
+}
+
+function activateSupportTool() {
+  if (!state.designMask) { toast('Import an image first.'); return; }
+  const safeWidth = safeBridgeWidthMm();
+  if (safeWidth > toMm(numberField('bridge-width', 6)) + 1e-9) {
+    el('bridge-width').value = roundUnit(fromMm(safeWidth));
+  }
+  setStage('support');
+  setTool('support');
+  toast('Support tool active. Drag between two pieces; endpoints snap to metal.');
 }
 
 function touchupMode() {
@@ -2991,7 +3005,20 @@ function wire() {
   });
 
   // --- tools and view
-  for (const name of ['pan', 'keep', 'remove']) el(`tool-${name}`)?.addEventListener('click', () => setTool(name));
+  el('tool-pan')?.addEventListener('click', () => setTool('pan'));
+  for (const name of ['keep', 'remove']) {
+    el(`tool-${name}`)?.addEventListener('click', () => {
+      setStage('prepare');
+      setTool(name);
+    });
+  }
+  el('tool-support')?.addEventListener('click', activateSupportTool);
+  el('tool-problems')?.addEventListener('click', () => {
+    setStage('validate');
+    setSidePanel('issues');
+    setView('issues');
+    if (!state.validation) toast('Run all checks to locate manufacturing problems.');
+  });
   for (const node of all('input[name="touchupMode"]')) {
     node.addEventListener('change', () => { updateTouchupControls(); draw(); pushHistory(); });
   }
@@ -3053,17 +3080,7 @@ function wire() {
   });
   el('bridge-width')?.addEventListener('change', supportPlanChanged);
   el('btn-auto-bridge')?.addEventListener('click', autoBridge);
-  el('btn-add-bridge')?.addEventListener('click', () => {
-    if (!state.designMask) { toast('Import an image first.'); return; }
-    const safeWidth = safeBridgeWidthMm();
-    if (safeWidth > toMm(numberField('bridge-width', 6)) + 1e-9) {
-      el('bridge-width').value = roundUnit(fromMm(safeWidth));
-    }
-    toast('Drag between two pieces. Endpoints snap to metal; drag either handle later to refine it.');
-    state.drawingBridge = true;
-    state.bridgePreview = null;
-    el('canvas-viewport').style.cursor = 'crosshair';
-  });
+  el('btn-add-bridge')?.addEventListener('click', activateSupportTool);
   el('btn-clear-auto-bridges')?.addEventListener('click', () => {
     const before = state.bridges.length;
     state.bridges = state.bridges.filter((bridge) => bridge.source !== 'automatic');
@@ -3156,7 +3173,7 @@ function wire() {
       draw();
       return;
     }
-    if (state.tool !== 'pan') {
+    if (state.tool === 'keep' || state.tool === 'remove') {
       if (!inside) return;
       const mode = touchupMode();
       touchupStroke = {
@@ -3262,7 +3279,7 @@ function wire() {
     } else if (panning) {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
       applyTransform();
-    } else if (state.tool !== 'pan') {
+    } else if (state.tool === 'keep' || state.tool === 'remove') {
       state.touchupPreview = inside
         ? { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() }
         : null;
@@ -3300,7 +3317,7 @@ function wire() {
         toast('Support added. Drag either endpoint handle to refine it.');
       }
       drawingFrom = null;
-      state.drawingBridge = false;
+      state.drawingBridge = state.tool === 'support';
       state.bridgePreview = null;
     }
     if (touchupStroke) {
@@ -3340,7 +3357,7 @@ function wire() {
     drawingFrom = null;
     draggingBridge = null;
     panning = null;
-    state.drawingBridge = false;
+    state.drawingBridge = state.tool === 'support';
     state.bridgePreview = null;
     state.touchupPreview = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
@@ -3383,6 +3400,7 @@ function wire() {
       return;
     }
     if (event.altKey || event.target?.matches?.('input, textarea, select') || event.target?.isContentEditable) return;
+    if (event.key === 'Escape') { event.preventDefault(); setTool('pan'); }
     if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomAt(state.zoom * 1.35); }
     if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomAt(state.zoom / 1.35); }
     if (event.key === '0') { event.preventDefault(); zoomAt(1); }

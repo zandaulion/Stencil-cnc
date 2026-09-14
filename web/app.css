@@ -845,8 +845,99 @@ svg {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: 318px minmax(480px, 1fr) 296px;
+  grid-template-columns: 318px 64px minmax(480px, 1fr) 296px;
   overflow: hidden;
+}
+
+.tools-rail {
+  z-index: 6;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  flex-direction: column;
+  padding: 12px 7px;
+  border-right: 1px solid var(--line);
+  background: #f7f9f7;
+  box-shadow: 1px 0 4px rgb(20 33 41 / 5%);
+}
+
+.tools-rail h2 {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tools-list {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rail-tool {
+  display: flex;
+  width: 50px;
+  min-height: 51px;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 6px 3px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.52rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.rail-tool svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rail-tool:hover,
+.rail-tool.is-selected,
+.rail-tool[aria-pressed="true"] {
+  border-color: #9fc6c2;
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.rail-tool:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.rail-tool-secondary {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top-color: var(--line);
+  border-radius: 0 0 8px 8px;
+}
+
+.tool-context-empty {
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 0.63rem;
+  line-height: 1.45;
 }
 
 .controls-pane,
@@ -2709,7 +2800,7 @@ select:focus {
 
 @media (max-width: 1180px) {
   .editor-layout {
-    grid-template-columns: 306px minmax(460px, 1fr) 260px;
+    grid-template-columns: 306px 58px minmax(400px, 1fr) 250px;
   }
 
   .issues-pane {
@@ -2739,7 +2830,7 @@ select:focus {
 
   .editor-layout {
     min-height: calc(100dvh - var(--header-height) - var(--workflow-height));
-    grid-template-columns: 306px minmax(0, 1fr);
+    grid-template-columns: 306px 58px minmax(0, 1fr);
     grid-template-rows: minmax(640px, calc(100dvh - var(--header-height) - var(--workflow-height))) auto;
     overflow: visible;
   }
@@ -2748,6 +2839,12 @@ select:focus {
     height: calc(100dvh - var(--header-height) - var(--workflow-height));
     position: sticky;
     top: 0;
+  }
+
+  .tools-rail {
+    position: sticky;
+    top: 0;
+    height: calc(100dvh - var(--header-height) - var(--workflow-height));
   }
 
   .workspace-pane {
@@ -2917,6 +3014,54 @@ select:focus {
     flex-direction: column;
   }
 
+  .app-shell {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  }
+
+  .tools-rail {
+    position: fixed;
+    z-index: 40;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    height: calc(64px + env(safe-area-inset-bottom));
+    min-height: 0;
+    flex-direction: row;
+    padding: 5px 5px max(5px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line-strong);
+    border-right: 0;
+    background: rgb(250 251 249 / 98%);
+    box-shadow: 0 -5px 18px rgb(20 33 41 / 12%);
+  }
+
+  .tools-rail h2 {
+    display: none;
+  }
+
+  .tools-list {
+    flex: 1;
+    flex-direction: row;
+    gap: 2px;
+    justify-content: space-around;
+  }
+
+  .rail-tool {
+    width: auto;
+    min-width: 0;
+    min-height: 52px;
+    flex: 1;
+    padding: 5px 2px;
+    font-size: 0.48rem;
+  }
+
+  .rail-tool-secondary {
+    margin-top: 0;
+    padding-top: 5px;
+    border-top-color: transparent;
+    border-radius: 8px;
+  }
+
   .controls-pane {
     position: static;
     width: 100%;
@@ -2995,7 +3140,7 @@ select:focus {
   .issues-pane {
     display: block;
     order: 3;
-    padding: 20px 16px 28px;
+    padding: 20px 16px 84px;
     border-left: 0;
   }
 
@@ -3078,6 +3223,7 @@ select:focus {
   .app-header,
   .workflow-nav,
   .controls-pane,
+  .tools-rail,
   .issues-pane,
   .canvas-toolbar,
   .canvas-statusbar,
