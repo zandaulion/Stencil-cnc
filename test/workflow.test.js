@@ -198,6 +198,10 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   assert.match(editor, /form\.set\('gamma', String\(numberField\('style-curve', 1\.4\)\)\)/);
   assert.match(html, /name="cutStyle" value="icoana"/);
   assert.match(html, /id="style-icon-halo"[^>]*type="checkbox" checked/);
+  assert.match(html, /Only adds or removes the halo; it does not disable Icon stencil/);
+  assert.match(editor, /const MANUAL_ONLY_STYLES = new Set\(\['icoana'\]\)/);
+  assert.match(editor, /function resetManualStyleForNewImage\(\)[\s\S]*?value="line-art"[\s\S]*?state\.mode = 'line-art'/);
+  assert.match(editor, /state\.validation = null;\s+resetManualStyleForNewImage\(\);\s+resetHistory\(\)/);
   assert.match(editor, /icoana: Object\.freeze\(\{/);
   assert.match(editor, /form\.set\('prag_icoana'/);
   assert.match(editor, /strategy\.preferredAngleDeg = 0/);

@@ -54,6 +54,7 @@ const PLASMA_MIN_OPENING_MM = 2;
 const PLASMA_MIN_WEB_MM = 3;
 const UNDO_DEPTH = 40;
 const CANDIDATE_LIMIT = 8;
+const MANUAL_ONLY_STYLES = new Set(['icoana']);
 const BASE_STYLE_SETTINGS = Object.freeze({
   'style-gain': '2.2',
   'style-smooth': '0.55',
@@ -1870,6 +1871,19 @@ async function importProjectFile(file) {
   }
 }
 
+function resetManualStyleForNewImage() {
+  const currentStyle = selectedCutStyle();
+  if (!MANUAL_ONLY_STYLES.has(currentStyle)) return false;
+  closeToolOptions();
+  const lineArt = document.querySelector('input[name="cutStyle"][value="line-art"]');
+  if (lineArt) lineArt.checked = true;
+  activateStyleSettings('line-art');
+  state.mode = 'line-art';
+  setTool('pan');
+  reflectModeControls();
+  return true;
+}
+
 async function importFile(file) {
   if (!file) return;
   if (file.name.toLowerCase().endsWith('.stencil.json') || file.type === 'application/json') {
@@ -1896,6 +1910,7 @@ async function importFile(file) {
     state.selectedCandidateId = null;
     state.selectedBridge = null;
     state.validation = null;
+    resetManualStyleForNewImage();
     resetHistory();
     setSourceRecipeAvailability(true);
     updateViewAvailability();
