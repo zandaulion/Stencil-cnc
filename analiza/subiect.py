@@ -61,6 +61,13 @@ class FaraSubiect(Exception):
     """The photograph has no person in it, or too little of one to cut."""
 
 
+def _categorii(bgr: np.ndarray) -> np.ndarray:
+    rezultat = MODEL.seg.segment(
+        mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+    )
+    return np.squeeze(rezultat.category_mask.numpy_view()).copy()
+
+
 def pastreaza_persoanele(masca: np.ndarray, maxim: int = 6) -> np.ndarray:
     """Keep every substantial person-shaped component, not only the largest.
 
@@ -83,20 +90,15 @@ def pastreaza_persoanele(masca: np.ndarray, maxim: int = 6) -> np.ndarray:
     return np.isin(etichete, pastrate)
 
 
-def subiect(bgr: np.ndarray, cu_haine: bool = False, netezire_px: int = 0) -> np.ndarray:
-    """Boolean mask of the person.
-
-    ``cu_haine`` extends the subject to clothing, which suits a full figure and
-    ruins a head-and-shoulders portrait: a patterned jumper generates more
-    structure than the face does, and every bit of it becomes real geometry.
-    """
-    inaltime, latime = bgr.shape[:2]
-    rezultat = MODEL.seg.segment(
-        mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    )
-    categorii = np.squeeze(rezultat.category_mask.numpy_view())
-    clase = [PAR, PIELE_CORP, PIELE_FATA] + ([HAINE] if cu_haine else [])
-    masca = np.isin(categorii, clase).astype(np.uint8)
+def _finalizeaza_subiect(
+    masca: np.ndarray,
+    forma: tuple[int, int],
+    netezire_px: int = 0,
+) -> np.ndarray:
+    inaltime, latime = forma
+    if tuple(masca.shape) != tuple(forma):
+        raise ValueError("Masca subiectului nu are mărimea imaginii.")
+    masca = masca.astype(np.uint8)
 
     if masca.sum() < 0.01 * masca.size:
         raise FaraSubiect(
@@ -114,6 +116,77 @@ def subiect(bgr: np.ndarray, cu_haine: bool = False, netezire_px: int = 0) -> np
         masca = cv2.morphologyEx(masca, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
 
     return masca.astype(bool)
+
+
+def subiect(bgr: np.ndarray, cu_haine: bool = False, netezire_px: int = 0) -> np.ndarray:
+    """Boolean mask of the person.
+
+    ``cu_haine`` extends the subject to clothing, which suits a full figure and
+    ruins a head-and-shoulders portrait: a patterned jumper generates more
+    structure than the face does, and every bit of it becomes real geometry.
+    """
+    categorii = _categorii(bgr)
+    clase = [PAR, PIELE_CORP, PIELE_FATA] + ([HAINE] if cu_haine else [])
+    return _finalizeaza_subiect(
+        np.isin(categorii, clase), bgr.shape[:2], netezire_px=netezire_px,
+    )
+
+
+def rafineaza_subiect_icoana(
+    bgr: np.ndarray,
+    categorii: np.ndarray,
+    cu_haine: bool = True,
+    netezire_px: int = 0,
+) -> np.ndarray:
+    """Remove halo/background colour that the clothing class absorbed.
+
+    Pale icon backgrounds and pale veils are a difficult semantic boundary.
+    The multiclass model sometimes labels a connected patch of the background
+    as clothing; ordinary component filtering then has to keep it because it is
+    attached to the real figure.  GrabCut supplies the missing image evidence:
+    hair and skin are certain foreground seeds, the model's background is a
+    certain background seed, and clothing is allowed to follow whichever colour
+    model it actually resembles.  This preserves a real veil while rejecting a
+    same-colour background lobe before the geometric halo is added.
+    """
+    if bgr.ndim != 3 or bgr.shape[2] != 3 or categorii.shape != bgr.shape[:2]:
+        raise ValueError("Imaginea şi clasele semantice trebuie să aibă aceeaşi mărime.")
+    clase = [PAR, PIELE_CORP, PIELE_FATA] + ([HAINE] if cu_haine else [])
+    probabil = np.isin(categorii, clase)
+    sigur = np.isin(categorii, [PAR, PIELE_CORP, PIELE_FATA])
+    fundal = ~probabil
+
+    # GrabCut needs examples of both classes.  The semantic mask remains the
+    # conservative fallback for a tightly cropped face or an unusual icon with
+    # no visible skin/hair seed.
+    if not sigur.any() or not fundal.any():
+        return _finalizeaza_subiect(probabil, bgr.shape[:2], netezire_px=netezire_px)
+
+    initial = np.full(categorii.shape, cv2.GC_BGD, dtype=np.uint8)
+    initial[probabil] = cv2.GC_PR_FGD
+    initial[sigur] = cv2.GC_FGD
+    model_fundal = np.zeros((1, 65), np.float64)
+    model_prim_plan = np.zeros((1, 65), np.float64)
+    try:
+        cv2.grabCut(
+            bgr, initial, None, model_fundal, model_prim_plan, 5,
+            cv2.GC_INIT_WITH_MASK,
+        )
+        rafinata = np.isin(initial, [cv2.GC_FGD, cv2.GC_PR_FGD])
+    except cv2.error:
+        rafinata = probabil
+    return _finalizeaza_subiect(rafinata, bgr.shape[:2], netezire_px=netezire_px)
+
+
+def subiect_icoana(
+    bgr: np.ndarray,
+    cu_haine: bool = True,
+    netezire_px: int = 0,
+) -> np.ndarray:
+    """Person mask refined for pale icon backgrounds and veils."""
+    return rafineaza_subiect_icoana(
+        bgr, _categorii(bgr), cu_haine=cu_haine, netezire_px=netezire_px,
+    )
 
 
 def aplica(camp: np.ndarray, masca: np.ndarray) -> np.ndarray:

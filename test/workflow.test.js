@@ -125,7 +125,7 @@ test('photograph styles start from the benchmarked creative defaults', () => {
     'style-icon-detail': '65',
     'style-icon-line-width': '3',
     'style-icon-simplify': '3',
-    'style-icon-halo-scale': '115',
+    'style-icon-halo-scale': '135',
     'style-graphic-balance': '50',
     'style-graphic-detail': '70',
     'style-graphic-simplify': '1.5',

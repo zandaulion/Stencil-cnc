@@ -575,7 +575,7 @@ def sablon_icoana(
     latime_linie_mm: float = 3.0,
     simplificare_mm: float = 3.0,
     aureola: bool = True,
-    scala_aureola: float = 1.15,
+    scala_aureola: float = 1.35,
     punte_min_mm: float = 3.0,
     fanta_min_mm: float = 2.0,
 ) -> np.ndarray:

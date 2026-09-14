@@ -480,7 +480,7 @@ function styleParams(stil = selectedCutStyle()) {
     form.set('latime_linie_icoana_mm', String(toMm(numberField('style-icon-line-width', 3))));
     form.set('simplificare_icoana_mm', String(toMm(numberField('style-icon-simplify', 3))));
     form.set('aureola_icoana', String(el('style-icon-halo')?.checked !== false));
-    form.set('scala_aureola_icoana', String(numberField('style-icon-halo-scale', 115) / 100));
+    form.set('scala_aureola_icoana', String(numberField('style-icon-halo-scale', 135) / 100));
   } else if (stil === 'grafic') {
     form.set('prag_grafic', String(numberField('style-graphic-balance', 50) / 100));
     form.set('detaliu_grafic', String(numberField('style-graphic-detail', 70) / 100));
@@ -3353,7 +3353,7 @@ function updateRangeOutputs() {
   set('style-outline-value', `${numberField('style-outline', 60)}%`);
   set('style-icon-balance-value', `${numberField('style-icon-balance', 56)}%`);
   set('style-icon-detail-value', `${numberField('style-icon-detail', 65)}%`);
-  set('style-icon-halo-scale-value', `${numberField('style-icon-halo-scale', 115)}%`);
+  set('style-icon-halo-scale-value', `${numberField('style-icon-halo-scale', 135)}%`);
   set('style-graphic-balance-value', `${numberField('style-graphic-balance', 50)}%`);
   set('style-graphic-detail-value', `${numberField('style-graphic-detail', 70)}%`);
   set('style-line-detail-value', `${numberField('style-line-detail', 40)}%`);

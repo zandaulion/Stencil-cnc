@@ -40,7 +40,7 @@ from stiluri import (
     sablon_icoana,
     silueta,
 )
-from subiect import FaraSubiect, aplica, subiect
+from subiect import FaraSubiect, aplica, subiect, subiect_icoana
 from ton import portret, ton
 
 # The working resolution is chosen per request, from the panel and the limits.
@@ -172,7 +172,7 @@ async def analizeaza(
     latime_linie_icoana_mm: float = Form(3.0),
     simplificare_icoana_mm: float = Form(3.0),
     aureola_icoana: bool = Form(True),
-    scala_aureola_icoana: float = Form(1.15),
+    scala_aureola_icoana: float = Form(1.35),
     # portret grafic
     prag_grafic: float = Form(0.50),
     detaliu_grafic: float = Form(0.70),
@@ -237,7 +237,11 @@ async def analizeaza(
     # subject it would simply remove the entire artwork rectangle.
     if fara_fundal or stil in {"silueta", "grafic", "icoana"}:
         try:
-            masca_subiect = subiect(mic, cu_haine=cu_haine)
+            masca_subiect = (
+                subiect_icoana(mic, cu_haine=cu_haine)
+                if stil == "icoana"
+                else subiect(mic, cu_haine=cu_haine)
+            )
         except FaraSubiect as e:
             raise HTTPException(422, str(e)) from e
     if stil in {"sablon", "icoana", "grafic", "hasura", "linii", "gravura", "contururi", "raze", "ornament", "lamele"}:
