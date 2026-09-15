@@ -2699,7 +2699,7 @@ function projectFromState() {
       selectedCandidateId: state.selectedCandidateId,
       automaticSupportsStale: state.automaticSupportsStale,
       projectSummary: {
-        thumbnail: maskThumbnail(state.designMask),
+        thumbnail: projectMaskThumbnail(state.designMask, sheet()),
         cutStyle: selectedCutStyle(),
         status: !state.designMask
           ? 'draft'
@@ -2845,8 +2845,8 @@ function projectThumbnailKey(record) {
 }
 
 function projectThumbnail(record) {
-  return record.editor?.projectSummary?.thumbnail ??
-    projectThumbnailCache.get(projectThumbnailKey(record)) ?? null;
+  return projectThumbnailCache.get(projectThumbnailKey(record)) ??
+    record.editor?.projectSummary?.thumbnail ?? null;
 }
 
 function renderProjectCardPreview(preview, record, thumbnail = projectThumbnail(record)) {
@@ -2861,17 +2861,22 @@ function renderProjectCardPreview(preview, record, thumbnail = projectThumbnail(
   preview.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 14h14l4 5h16v21H7z"></path><path d="M7 14V9h14l4 5"></path></svg>';
 }
 
-async function hydrateLegacyProjectThumbnails(records, renderToken) {
+async function hydrateProjectThumbnails(records, renderToken) {
   for (const record of records) {
     if (renderToken !== projectThumbnailRender) return;
-    if (projectThumbnail(record)) continue;
-    // Yield between legacy projects so opening the library and scrolling stay
-    // responsive even when many old projects need their first preview.
+    const thumbnailKey = projectThumbnailKey(record);
+    if (projectThumbnailCache.has(thumbnailKey)) continue;
+    // Rebuild saved thumbnails from the sheet mask so old projects also use
+    // their physical panel proportions. Yield between projects to keep the
+    // library responsive when many previews need their first render.
     await new Promise((resolve) => requestAnimationFrame(resolve));
     if (renderToken !== projectThumbnailRender) return;
-    const thumbnail = encodedMaskThumbnail(record.raster?.sourceMask ?? record.raster?.baseMask);
+    const thumbnail = encodedProjectMaskThumbnail(
+      record.raster?.sourceMask ?? record.raster?.baseMask,
+      record.sheet,
+    );
     if (!thumbnail) continue;
-    projectThumbnailCache.set(projectThumbnailKey(record), thumbnail);
+    projectThumbnailCache.set(thumbnailKey, thumbnail);
     const card = all('#project-list [data-project-id]')
       .find((node) => node.dataset.projectId === record.id);
     const preview = card?.querySelector('.project-card-preview');
@@ -2973,7 +2978,7 @@ function renderProjectLibrary() {
       : query ? 'Try another name or status.' : 'Import an image to create your first project.';
   }
   el('project-library-result').textContent = `${rows.length} ${rows.length === 1 ? 'project' : 'projects'}`;
-  void hydrateLegacyProjectThumbnails(rows, renderToken);
+  void hydrateProjectThumbnails(rows, renderToken);
 }
 
 async function refreshProjectLibrary() {
@@ -3500,20 +3505,76 @@ function maskThumbnail(mask) {
   return drawMaskThumbnail(mask.width, mask.height, (index) => mask.data[index] === RETAINED);
 }
 
-function encodedMaskThumbnail(encoded) {
+function drawProjectThumbnail(sourceWidth, sourceHeight, metalAt, panel) {
+  if (!sourceWidth || !sourceHeight) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 260;
+  canvas.height = 150;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+
+  const panelWidth = Number(panel?.widthMm);
+  const panelHeight = Number(panel?.heightMm);
+  const panelAspect = panelWidth > 0 && panelHeight > 0
+    ? panelWidth / panelHeight
+    : sourceWidth / sourceHeight;
+  const availableWidth = canvas.width - 20;
+  const availableHeight = canvas.height - 14;
+  let drawWidth = availableWidth;
+  let drawHeight = Math.round(drawWidth / panelAspect);
+  if (drawHeight > availableHeight) {
+    drawHeight = availableHeight;
+    drawWidth = Math.round(drawHeight * panelAspect);
+  }
+  drawWidth = Math.max(1, drawWidth);
+  drawHeight = Math.max(1, drawHeight);
+  const left = Math.floor((canvas.width - drawWidth) / 2);
+  const top = Math.floor((canvas.height - drawHeight) / 2);
+  const image = context.createImageData(canvas.width, canvas.height);
+
+  for (let y = 0; y < drawHeight; y += 1) {
+    const sourceY = Math.min(sourceHeight - 1, Math.floor(y / drawHeight * sourceHeight));
+    for (let x = 0; x < drawWidth; x += 1) {
+      const sourceX = Math.min(sourceWidth - 1, Math.floor(x / drawWidth * sourceWidth));
+      const offset = ((top + y) * canvas.width + left + x) * 4;
+      const value = metalAt(sourceY * sourceWidth + sourceX) ? 42 : 245;
+      image.data[offset] = value;
+      image.data[offset + 1] = value === 42 ? 46 : 244;
+      image.data[offset + 2] = value === 42 ? 49 : 240;
+      image.data[offset + 3] = 255;
+    }
+  }
+  context.putImageData(image, 0, 0);
+  context.strokeStyle = '#aeb8b5';
+  context.lineWidth = 1;
+  context.strokeRect(left + 0.5, top + 0.5, Math.max(0, drawWidth - 1), Math.max(0, drawHeight - 1));
+  return canvas.toDataURL('image/png');
+}
+
+function projectMaskThumbnail(mask, panel) {
+  if (!mask) return null;
+  return drawProjectThumbnail(
+    mask.width,
+    mask.height,
+    (index) => mask.data[index] === RETAINED,
+    panel,
+  );
+}
+
+function encodedProjectMaskThumbnail(encoded, panel) {
   if (!encoded || encoded.encoding !== 'rle-u1' || !Number.isInteger(encoded.width) ||
       !Number.isInteger(encoded.height) || !Array.isArray(encoded.runs) || !encoded.runs.length) return null;
   let runIndex = 0;
   let runEnd = encoded.runs[0];
   let value = encoded.startsWith;
-  return drawMaskThumbnail(encoded.width, encoded.height, (sourceIndex) => {
+  return drawProjectThumbnail(encoded.width, encoded.height, (sourceIndex) => {
     while (sourceIndex >= runEnd && runIndex + 1 < encoded.runs.length) {
       runIndex += 1;
       runEnd += encoded.runs[runIndex];
       value = value === 1 ? 0 : 1;
     }
     return value === RETAINED;
-  });
+  }, panel);
 }
 
 function candidateName(style) {

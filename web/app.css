@@ -3830,7 +3830,7 @@ select:focus {
 
 .project-card-preview {
   display: grid;
-  height: 132px;
+  aspect-ratio: 16 / 9;
   place-items: center;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
@@ -4262,7 +4262,7 @@ select:focus {
   }
 
   .project-card-preview {
-    height: 160px;
+    aspect-ratio: 16 / 9;
   }
 
   .project-library-footer {
