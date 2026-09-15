@@ -22,7 +22,7 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
 
 test('local project management is searchable, recoverable, and privacy preserving', () => {
   for (const id of [
-    'btn-projects', 'project-library-dialog', 'project-search', 'project-status-filter',
+    'btn-projects', 'btn-projects-mobile', 'project-library-dialog', 'project-search', 'project-status-filter',
     'project-list', 'project-count-active', 'project-count-trash', 'rename-project-dialog',
     'version-dialog', 'version-list', 'save-state-label',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
@@ -44,6 +44,8 @@ test('local project management is searchable, recoverable, and privacy preservin
   assert.match(css, /\.project-library-dialog/);
   assert.match(css, /\.project-grid \{[\s\S]*?grid-auto-rows: max-content/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.project-library-dialog/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.mobile-projects-tool \{[\s\S]*?display: flex/);
+  assert.match(editor, /\['btn-projects', 'btn-projects-mobile'\]/);
 });
 
 test('server snapshots explicitly share complete projects and remain revocable', () => {
@@ -176,7 +178,7 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
   assert.match(html, /id="tools-rail"[^>]*aria-labelledby="tools-title"/);
   assert.match(html, /id="tools-title">Tools</);
-  for (const id of ['tool-pan', 'tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
+  for (const id of ['btn-projects-mobile', 'tool-pan', 'tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /id="btn-fit-toolbar"[^>]*>Fit<\/button>/);

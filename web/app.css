@@ -949,6 +949,10 @@ svg {
   outline-offset: 2px;
 }
 
+.mobile-projects-tool {
+  display: none;
+}
+
 .rail-tool-secondary {
   margin-top: auto;
   padding-top: 10px;
@@ -4541,6 +4545,10 @@ select:focus {
     flex: 1;
     padding: 5px 2px;
     font-size: 0.48rem;
+  }
+
+  .mobile-projects-tool {
+    display: flex;
   }
 
   .rail-tool-secondary {

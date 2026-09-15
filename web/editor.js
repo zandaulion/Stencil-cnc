@@ -5637,7 +5637,9 @@ function wire() {
   el('save-state')?.addEventListener('click', () => {
     if (state.dirty) void flushPendingSave();
   });
-  el('btn-projects')?.addEventListener('click', () => void openProjectLibrary());
+  for (const id of ['btn-projects', 'btn-projects-mobile']) {
+    el(id)?.addEventListener('click', () => void openProjectLibrary());
+  }
   el('btn-close-projects')?.addEventListener('click', closeProjectLibrary);
   el('project-library-dialog')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeProjectLibrary();
