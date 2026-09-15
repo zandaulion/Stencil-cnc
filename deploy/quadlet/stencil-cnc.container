@@ -1,5 +1,5 @@
 [Unit]
-Description=Stencil CNC — topology-aware stencil PWA
+Description=Kerfloom — topology-aware stencil PWA
 After=network-online.target
 Wants=network-online.target
 

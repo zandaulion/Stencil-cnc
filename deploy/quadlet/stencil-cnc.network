@@ -1,5 +1,5 @@
 [Unit]
-Description=Private network between the Stencil CNC web app and its analysis service
+Description=Private network between the Kerfloom web app and its analysis service
 
 [Network]
 NetworkName=stencil-cnc

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">Stencil CNC maskable icon</title>
-  <desc id="desc">A connected stencil cut through a steel panel.</desc>
+  <title id="title">Kerfloom maskable icon</title>
+  <desc id="desc">A bridged K cut through a dark metal panel.</desc>
   <defs>
     <linearGradient id="bg" x1="40" y1="30" x2="472" y2="492" gradientUnits="userSpaceOnUse">
       <stop stop-color="#263c46"/>
@@ -8,8 +8,6 @@
     </linearGradient>
   </defs>
   <rect width="512" height="512" fill="url(#bg)"/>
-  <path fill="#f7f7f3" fill-rule="evenodd" d="M128 129c-15 0-27 12-27 27v200c0 15 12 27 27 27h256c15 0 27-12 27-27V156c0-15-12-27-27-27H128Zm48 58h160v49h-57v40h57v56H176v-51h54v-45h-54v-49Z"/>
-  <path fill="#e45f35" d="M230 211h49v96h-49z"/>
-  <circle cx="378" cy="126" r="15" fill="#207c78"/>
-  <path d="m378 103 5 15.5 15 5-15 5-5 15.5-5-15.5-15-5 15-5 5-15.5Z" fill="#f7f7f3"/>
+  <path fill="#f7f7f3" d="M144 135h74v85l82-85h88L273 251l123 126h-92l-86-91v91h-74V135Z"/>
+  <path fill="#e45f35" d="M196 220h62v66h-62z"/>
 </svg>

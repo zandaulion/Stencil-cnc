@@ -1,6 +1,6 @@
 # Deployment and access boundary
 
-Stencil CNC runs as two rootless containers on a private Podman network.
+Kerfloom runs as two rootless containers on a private Podman network.
 Express serves the PWA and invite API from container port 3000 and proxies
 photograph conversion to the unexposed analysis container. The web Quadlet is
 published only on `127.0.0.1:8101`. Caddy is the sole origin, and cloudflared
@@ -49,10 +49,10 @@ The shared console needs this entry in `pwa-invite-console/apps.json`:
 ```json
 {
   "id": "stencil-cnc",
-  "name": "Stencil CNC",
+  "name": "Kerfloom",
   "api": "/stencil-cnc",
   "push": false,
-  "message": "Salut! Îți trimit acces la Stencil CNC — transformă fotografii și desene în șabloane conectate, gata de verificat și exportat pentru CNC.\\n\\nDeschide linkul:\\n{link}\\n\\nCodul este valabil {days} zile și înregistrează un singur dispozitiv."
+  "message": "Salut! Îți trimit acces la Kerfloom — transformă fotografii și desene în șabloane conectate, gata de verificat și exportat pentru CNC.\\n\\nDeschide linkul:\\n{link}\\n\\nCodul este valabil {days} zile și înregistrează un singur dispozitiv."
 }
 ```
 

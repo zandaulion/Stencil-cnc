@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and restart the rootless Stencil CNC service. Caddy and cloudflared are
+# Build and restart the rootless Kerfloom service. Caddy and cloudflared are
 # intentionally configured separately: changing either affects other apps.
 set -euo pipefail
 
@@ -87,7 +87,7 @@ for attempt in $(seq 1 30); do
     if podman exec stencil-cnc-analiza \
          python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status==200 else 1)" \
          >/dev/null 2>&1; then
-      echo 'Deployed Stencil CNC; both services answered.'
+      echo 'Deployed Kerfloom; both services answered.'
       exit 0
     fi
   fi

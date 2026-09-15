@@ -3701,10 +3701,10 @@ async function importProjectFile(file) {
     await loadProjectState(project, { imported: true });
     pushHistory();
     markDirty();
-    toast('Editable Stencil project opened as a new local copy.');
+    toast('Editable Kerfloom project opened as a new local copy.');
   } catch (error) {
     console.error(error);
-    toast('That Stencil project could not be read.');
+    toast('That Kerfloom project could not be read.');
   }
 }
 

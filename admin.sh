@@ -36,7 +36,7 @@ request() {
 
 usage() {
   command cat <<'USAGE'
-Stencil CNC administration
+Kerfloom administration
 
 usage: ./admin.sh <command>
 

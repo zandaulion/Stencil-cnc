@@ -40,7 +40,7 @@ function parseBundle(buffer) {
     throw new ShareError(400, 'Unsupported shared project package.', 'bad_bundle');
   }
   if (!bundle.project || bundle.project.schema !== 'stencil-cnc.project') {
-    throw new ShareError(400, 'The package does not contain an editable Stencil project.', 'bad_bundle');
+    throw new ShareError(400, 'The package does not contain an editable Kerfloom project.', 'bad_bundle');
   }
   if (bundle.source != null && (
     typeof bundle.source !== 'object' ||

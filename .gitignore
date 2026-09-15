@@ -27,6 +27,7 @@ output/
 *.png
 *.webp
 *.heic
+!web/icons/*.png
 
 # Material de referinta adunat de pe Pinterest: lucrari ale unor terti,
 # tinute local ca sa ne inspire filtrele. Nu sunt ale noastre, deci nu

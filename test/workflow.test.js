@@ -8,6 +8,16 @@ const html = fs.readFileSync(path.join(projectRoot, 'web/index.html'), 'utf8');
 const editor = fs.readFileSync(path.join(projectRoot, 'web/editor.js'), 'utf8');
 const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
 const storage = fs.readFileSync(path.join(projectRoot, 'web/storage.js'), 'utf8');
+const manifest = fs.readFileSync(path.join(projectRoot, 'web/manifest.webmanifest'), 'utf8');
+
+test('Kerfloom is the public brand while project compatibility remains stable', () => {
+  assert.match(html, /<title>Kerfloom — Art that holds together<\/title>/);
+  assert.match(html, /Kerfloom by Zandaulion/);
+  assert.match(html, /<strong>Kerfloom<\/strong>/);
+  assert.match(manifest, /"name": "Kerfloom"/);
+  assert.match(editor, /const SHARE_BUNDLE_SCHEMA = 'stencil-cnc\.share-bundle'/);
+  assert.match(storage, /const DB_NAME = 'stencil-cnc'/);
+});
 
 test('the creative workflow exposes every preview and a candidate workspace', () => {
   for (const id of [

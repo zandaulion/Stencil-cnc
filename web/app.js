@@ -133,5 +133,5 @@ function wireGate() {
 }
 
 wireGate();
-installUpdates({ appName: 'Stencil CNC', isBusy });
+installUpdates({ appName: 'Kerfloom', isBusy });
 checkAccess();

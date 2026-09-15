@@ -73,7 +73,7 @@ PIXELI_PE_LIMITA = 3.0
 LATIME_ANALIZA = int(os.environ.get("LATIME_ANALIZA", "900"))
 MAX_FOTO = int(os.environ.get("MAX_FOTO", str(30 * 1024 * 1024)))
 
-app = FastAPI(title="stencil-cnc analiză")
+app = FastAPI(title="Kerfloom analysis")
 
 
 @app.get("/api/health")

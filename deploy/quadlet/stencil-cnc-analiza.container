@@ -1,5 +1,5 @@
 [Unit]
-Description=Stencil CNC — photograph analysis
+Description=Kerfloom — photograph analysis
 After=network-online.target
 Wants=network-online.target
 

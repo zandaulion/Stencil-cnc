@@ -25,7 +25,7 @@ test("DXF export emits a closed true-scale LWPOLYLINE in millimetres", () => {
   assert.match(first, /\n9\n\$INSUNITS\n70\n4\n/);
   assert.match(first, /\n0\nLWPOLYLINE\n/);
   assert.match(first, /\n90\n4\n70\n1\n/);
-  assert.match(first, /Stencil CNC: Taiere A/);
+  assert.match(first, /Kerfloom: Taiere A/);
   assert.deepEqual(valuesAfterGroup(first, 10).slice(-4), ["0", "20", "20", "0"]);
   assert.deepEqual(valuesAfterGroup(first, 20).slice(-4), ["10", "10", "0", "0"]);
   assert.match(first, /\n0\nEOF\n$/);

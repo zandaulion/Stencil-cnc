@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Stencil CNC",
-  "short_name": "Stencil CNC",
-  "description": "Create connected, CNC-ready stencil geometry from line art and photographs.",
+  "name": "Kerfloom",
+  "short_name": "Kerfloom",
+  "description": "Art that holds together: connected, CNC-ready stencil geometry from line art and photographs.",
   "lang": "en",
   "dir": "ltr",
   "start_url": "/",

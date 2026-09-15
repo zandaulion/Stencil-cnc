@@ -4,17 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#142129">
-  <meta name="description" content="Turn line art and photographs into connected, CNC-ready stencil geometry.">
+  <meta name="description" content="Kerfloom turns line art and photographs into connected, CNC-ready stencil geometry.">
   <meta name="color-scheme" content="light">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Stencil CNC">
+  <meta name="apple-mobile-web-app-title" content="Kerfloom">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/app.css">
-  <title>Stencil CNC</title>
+  <title>Kerfloom — Art that holds together</title>
 </head>
 <body>
   <a class="skip-link" href="#workspace">Skip to editor</a>
@@ -24,13 +24,13 @@
       <div class="gate-brand" aria-hidden="true">
         <svg viewBox="0 0 64 64">
           <rect x="3" y="3" width="58" height="58" rx="17"></rect>
-          <path d="M16 18h32v9H35v8h13v12H16V36h12v-9H16z"></path>
-          <path class="brand-bridge" d="M28 23h7v19h-7z"></path>
+          <path d="M17 14h10v12l12-12h12L36 31l16 16H40L27 35v12H17z"></path>
+          <path class="brand-bridge" d="M24 26h10v10H24z"></path>
         </svg>
       </div>
-      <p class="gate-eyebrow">Private workshop tool</p>
-      <h1 id="gate-title">Make every cut<br>hold together.</h1>
-      <p class="gate-intro">Turn photographs and line art into connected, CNC-ready stencil geometry.</p>
+      <p class="gate-eyebrow">Kerfloom by Zandaulion</p>
+      <h1 id="gate-title">Art that<br>holds together.</h1>
+      <p class="gate-intro">Kerfloom turns photographs and line art into connected, cut-ready panels.</p>
 
       <form class="gate-form" id="gate-form" novalidate>
         <label for="invite-code-input">Invite code</label>
@@ -48,7 +48,7 @@
 
         <p class="gate-error" id="gate-error" role="alert" hidden></p>
         <button class="button button-primary gate-submit" id="gate-submit" type="submit">
-          <span>Open Stencil CNC</span>
+          <span>Open Kerfloom</span>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
         </button>
       </form>
@@ -91,15 +91,15 @@
   <div id="app-main" hidden>
   <div class="app-shell" id="app">
     <header class="app-header">
-      <a class="brand" href="/" aria-label="Stencil CNC home">
+      <a class="brand" href="/" aria-label="Kerfloom home">
         <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
           <rect x="3" y="3" width="42" height="42" rx="12"></rect>
-          <path d="M12 13h24v7H26v6h10v9H12v-8h9v-7h-9z"></path>
-          <path class="brand-bridge" d="M21 17h5v14h-5z"></path>
+          <path d="M13 11h8v9l9-9h10L28 24l13 13H30l-9-10v10h-8z"></path>
+          <path class="brand-bridge" d="M19 20h8v8h-8z"></path>
         </svg>
         <span class="brand-copy">
-          <strong>Stencil CNC</strong>
-          <span>Connected by design</span>
+          <strong>Kerfloom</strong>
+          <span>Connected stencil design</span>
         </span>
       </a>
 
@@ -190,7 +190,7 @@
                 <span class="upload-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24"><path d="M12 16V5m0 0L8 9m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"></path></svg>
                 </span>
-                <span><strong>Drop an image here</strong><small>or open PNG, JPG, WebP, HEIC, or a Stencil project</small></span>
+                <span><strong>Drop an image here</strong><small>or open PNG, JPG, WebP, HEIC, or a Kerfloom project</small></span>
               </label>
               <div class="source-file" id="source-file" hidden>
                 <img id="source-preview" alt="Imported source preview">
@@ -1315,7 +1315,7 @@
   <dialog class="app-dialog version-dialog" id="version-dialog" aria-labelledby="version-dialog-title">
     <form method="dialog">
       <h2 id="version-dialog-title">Recovery points</h2>
-      <p>Stencil CNC keeps up to ten checkpoints created after validation, repair, support generation, and export.</p>
+      <p>Kerfloom keeps up to ten checkpoints created after validation, repair, support generation, and export.</p>
       <ol class="version-list" id="version-list"></ol>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Close</button>

@@ -1,6 +1,8 @@
-# Stencil CNC
+# Kerfloom
 
-Stencil CNC turns photographs and prepared artwork into connected, manufacturing-aware geometry for CNC plasma cutting. It combines creative image treatments with panel layout, support design, physical validation, manual touch-ups, and export in one installable web application.
+**Art that holds together.**
+
+Kerfloom turns photographs and prepared artwork into connected, manufacturing-aware geometry for CNC plasma cutting. It combines creative image treatments with panel layout, support design, physical validation, manual touch-ups, and export in one installable web application.
 
 The central rule is simple: dark geometry represents retained metal and light geometry represents material to remove. The editor keeps the source treatment, structural frame, supports, manual edits, and automatic manufacturing repairs as separate inputs so the final panel can be rebuilt and checked consistently.
 
@@ -26,7 +28,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 2. **Panel** — set stock dimensions, orientation, frame edges, artwork fitting, and plasma constraints.
 3. **Support** — inspect connectivity, generate smart bridges, or draw and refine supports manually.
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.
-5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Stencil project.
+5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Kerfloom project.
 
 Related manufacturing exports share the validation timestamp and use descriptive,
 portable names: `project_297x420mm_slats_frame_cut_2026-09-15-162005.dxf`.
@@ -37,9 +39,9 @@ The default panel is 1250 × 2500 mm. The default plasma profile requires a 2 mm
 
 ## Project library
 
-Select **Projects** in the editor header to browse every panel stored in the current browser. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is still available on the device. Projects can be opened, renamed, duplicated, downloaded, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
+Select **Projects** in the desktop header or the permanent mobile Tools bar to browse every panel stored in the current browser. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is still available on the device. Projects can be opened, renamed, duplicated, downloaded, shared, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
 
-Autosave reports `Saving…`, the local save time, or a retry action if storage fails. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate local save. Stencil CNC retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
+Autosave reports `Saving…`, the local save time, or a retry action if storage fails. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate local save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
 
 Recovery points and portable `.stencil.json` downloads contain the editable processed geometry and settings, but never the browser-local source photograph. A restored recovery point reuses the photograph only when that source is still available in the same browser project.
 
@@ -47,7 +49,7 @@ Recovery points and portable `.stencil.json` downloads contain the editable proc
 
 Select **Share** on a project card to create a server-hosted snapshot. The share package contains the editable project, original source image when it remains available, creative candidates, manual edits, supports, repairs, up to ten recovery points, and export artefacts retained by the current browser. SVG, DXF, and PNG exports are retained locally from this release onward; files downloaded by older versions cannot be recovered from the browser's Downloads folder automatically.
 
-Share packages are encrypted at rest and protected by a random secret that appears only in the link and the creating browser. A recipient must open that link on an invited Stencil CNC device. The first recipient device claims the snapshot and can import an independent editable local copy. Shares expire after 7, 30, or 90 days and the owner can revoke them from the same project's Share dialog. Revocation prevents another download but cannot erase a copy the recipient already imported.
+Share packages are encrypted at rest and protected by a random secret that appears only in the link and the creating browser. A recipient must open that link on an invited Kerfloom device. The first recipient device claims the snapshot and can import an independent editable local copy. Shares expire after 7, 30, or 90 days and the owner can revoke them from the same project's Share dialog. Revocation prevents another download but cannot erase a copy the recipient already imported.
 
 Sharing does not turn on cloud autosave or synchronization. Normal work remains device-only, and neither copy changes when the other person edits theirs.
 
