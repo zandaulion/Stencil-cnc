@@ -1719,6 +1719,14 @@ select:focus {
   align-items: end;
 }
 
+.panel-size-preset {
+  margin-bottom: 8px;
+}
+
+.panel-size-preset select {
+  width: min(185px, 58%);
+}
+
 .dimension-grid > label {
   display: flex;
   gap: 7px;

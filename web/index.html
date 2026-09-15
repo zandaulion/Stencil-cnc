@@ -635,6 +635,23 @@
                   </select>
                 </label>
               </div>
+              <label class="field-row panel-size-preset" for="panel-size-preset">
+                <span>Panel size <small>Choose a standard size or enter custom dimensions</small></span>
+                <select id="panel-size-preset" name="panelSizePreset">
+                  <optgroup label="ISO A series">
+                    <option value="a0">A0 · 841 × 1189 mm</option>
+                    <option value="a1">A1 · 594 × 841 mm</option>
+                    <option value="a2">A2 · 420 × 594 mm</option>
+                    <option value="a3">A3 · 297 × 420 mm</option>
+                    <option value="a4">A4 · 210 × 297 mm</option>
+                  </optgroup>
+                  <optgroup label="Sheet sizes">
+                    <option value="sheet-1250-2050">1250 × 2050 mm</option>
+                    <option value="sheet-1250-2500" selected>1250 × 2500 mm</option>
+                  </optgroup>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
               <div class="dimension-grid">
                 <label for="panel-width">Width
                   <span class="number-field"><input id="panel-width" name="panelWidth" type="number" min="10" max="10000" step="1" value="1250"><span data-unit-label>mm</span></span>

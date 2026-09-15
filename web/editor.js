@@ -61,6 +61,15 @@ const PLASMA_MIN_WEB_MM = 3;
 const UNDO_DEPTH = 40;
 const CANDIDATE_LIMIT = 8;
 const MANUAL_ONLY_STYLES = new Set(['icoana']);
+const PANEL_SIZE_PRESETS = Object.freeze({
+  a0: Object.freeze({ widthMm: 841, heightMm: 1189 }),
+  a1: Object.freeze({ widthMm: 594, heightMm: 841 }),
+  a2: Object.freeze({ widthMm: 420, heightMm: 594 }),
+  a3: Object.freeze({ widthMm: 297, heightMm: 420 }),
+  a4: Object.freeze({ widthMm: 210, heightMm: 297 }),
+  'sheet-1250-2050': Object.freeze({ widthMm: 1250, heightMm: 2050 }),
+  'sheet-1250-2500': Object.freeze({ widthMm: 1250, heightMm: 2500 }),
+});
 const BASE_STYLE_SETTINGS = Object.freeze({
   'style-gain': '2.2',
   'style-smooth': '0.55',
@@ -2245,6 +2254,39 @@ function reflectPanelOrientation(preferred = null) {
   if (node) node.checked = true;
 }
 
+function selectedPanelOrientation() {
+  return document.querySelector('input[name="panelOrientation"]:checked')?.value || 'portrait';
+}
+
+function syncPanelSizePreset({ preserveCustom = false } = {}) {
+  const selector = el('panel-size-preset');
+  if (!selector) return;
+  if (preserveCustom) {
+    selector.value = 'custom';
+    return;
+  }
+  const current = sheet();
+  const toleranceMm = 0.05;
+  const match = Object.entries(PANEL_SIZE_PRESETS).find(([, preset]) => (
+    Math.abs(current.widthMm - preset.widthMm) <= toleranceMm &&
+      Math.abs(current.heightMm - preset.heightMm) <= toleranceMm
+  ) || (
+    Math.abs(current.widthMm - preset.heightMm) <= toleranceMm &&
+      Math.abs(current.heightMm - preset.widthMm) <= toleranceMm
+  ));
+  selector.value = match?.[0] ?? 'custom';
+}
+
+function applyPanelSizePreset(value) {
+  const preset = PANEL_SIZE_PRESETS[value];
+  if (!preset) return false;
+  const oriented = orientSheet(preset, selectedPanelOrientation());
+  el('panel-width').value = roundUnit(fromMm(oriented.widthMm));
+  el('panel-height').value = roundUnit(fromMm(oriented.heightMm));
+  reflectPanelOrientation(selectedPanelOrientation());
+  return true;
+}
+
 function updateExportReadiness() {
   const card = el('export-readiness');
   const ready = state.validated && state.validatedRevision === state.revision && state.designMask;
@@ -2373,6 +2415,7 @@ function applyControls(controls = {}) {
   }
   state.unit = el('measurement-unit')?.value === 'in' ? 'in' : 'mm';
   reflectPanelOrientation();
+  syncPanelSizePreset({ preserveCustom: controls['panel-size-preset'] === 'custom' });
   enforcePlasmaLimits();
   state.mode = document.querySelector('input[name="cutStyle"]:checked')?.value === 'line-art'
     ? 'line-art' : 'photo';
@@ -2560,6 +2603,7 @@ function applyCanonicalProjectControls(project) {
   el('panel-width').value = project.sheet.widthMm;
   el('panel-height').value = project.sheet.heightMm;
   reflectPanelOrientation();
+  syncPanelSizePreset();
   const frameWidth = typeof project.frame.thicknessMm === 'number'
     ? project.frame.thicknessMm
     : project.frame.thicknessMm.top;
@@ -2765,6 +2809,7 @@ async function importFile(file) {
       // stretched before anyone has said anything about size.
       const widthMm = toMm(numberField('panel-width', 1250));
       el('panel-height').value = roundUnit(fromMm(widthMm * (state.source.originalHeight / state.source.originalWidth)));
+      syncPanelSizePreset({ preserveCustom: true });
     }
 
     if (state.mode === 'photo') {
@@ -3951,13 +3996,27 @@ function wire() {
   for (const id of layout) {
     el(id)?.addEventListener('input', () => {
       syncLinkedPanelDimension(id);
-      if (id === 'panel-width' || id === 'panel-height') reflectPanelOrientation();
+      if (id === 'panel-width' || id === 'panel-height') {
+        reflectPanelOrientation();
+        syncPanelSizePreset({ preserveCustom: true });
+      }
       updateRangeOutputs();
       restyle();
       refresh();
     });
     el(id)?.addEventListener('change', pushHistory);
   }
+  el('panel-size-preset')?.addEventListener('change', (event) => {
+    if (!applyPanelSizePreset(event.target.value)) {
+      markDirty();
+      pushHistory();
+      return;
+    }
+    updateRangeOutputs();
+    restyle();
+    refresh({ immediate: true });
+    pushHistory();
+  });
   for (const node of all('input[name="panelOrientation"]')) {
     node.addEventListener('change', () => {
       const oriented = orientSheet(sheet(), node.value);
@@ -4086,6 +4145,7 @@ function wire() {
     button.classList.toggle('is-linked', linked);
     if (linked) {
       syncLinkedPanelDimension('panel-width');
+      syncPanelSizePreset({ preserveCustom: true });
       restyle();
       refresh({ immediate: true });
       pushHistory();

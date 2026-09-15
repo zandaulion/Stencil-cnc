@@ -193,6 +193,26 @@ test('a new editor opens on an unlinked 1250 by 2500 mm panel', () => {
   assert.match(editor, /orientSheet\(sheet\(\), node\.value\)/);
 });
 
+test('panel presets provide standard sizes and remain orientation-aware', () => {
+  assert.match(html, /id="panel-size-preset"/);
+  for (const [value, dimensions] of [
+    ['a0', '841 × 1189'],
+    ['a1', '594 × 841'],
+    ['a2', '420 × 594'],
+    ['a3', '297 × 420'],
+    ['a4', '210 × 297'],
+    ['sheet-1250-2050', '1250 × 2050'],
+    ['sheet-1250-2500', '1250 × 2500'],
+  ]) {
+    assert.match(html, new RegExp(`value="${value}"[^>]*>[^<]*${dimensions}`), value);
+  }
+  assert.match(html, /value="custom">Custom/);
+  assert.match(editor, /const PANEL_SIZE_PRESETS = Object\.freeze/);
+  assert.match(editor, /orientSheet\(preset, selectedPanelOrientation\(\)\)/);
+  assert.match(editor, /syncPanelSizePreset\(\{ preserveCustom: true \}\)/);
+  assert.match(editor, /el\('panel-size-preset'\)\?\.addEventListener\('change'/);
+});
+
 test('the plasma profile drives every filter with 2 mm openings and 3 mm webs', () => {
   assert.match(html, /value="plasma" selected>Plasma · 2 mm holes · 3 mm gaps/);
   assert.match(html, /id="min-web"[^>]*value="3"/);
