@@ -63,6 +63,7 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
   assert.match(editor, /maximumBridges: 192/);
   assert.match(editor, /plan\.outcome\.safeToApply/);
   assert.match(editor, /state\.repairPlan\.outcome\?\.safeToApply !== true/);
+  assert.match(editor, /state\.repairItemIndex = Math\.min\(state\.repairItemIndex, plan\.items\.length - 1\)/);
   assert.match(editor, /manufacturingRepairs: \{/);
   assert.match(editor, /state\.repairPreviewBaseMask/);
   assert.match(editor, /setSmallOpeningRepairAction\(state\.repairPlan/);

@@ -1468,7 +1468,7 @@ async function buildRepairPreview({ focus = true } = {}) {
     state.repairPreviewKerfMask = previewKerfMm > 0
       ? erodeMaskPhysical(candidate, previewKerfMm / 2, sheet())
       : { ...candidate, data: Uint8Array.from(candidate.data) };
-    state.repairItemIndex = Math.min(state.repairItemIndex, items.length - 1);
+    state.repairItemIndex = Math.min(state.repairItemIndex, plan.items.length - 1);
     state.repairResult = null;
     renderRepairPanel();
     if (focus) focusRepairItem(state.repairItemIndex);
