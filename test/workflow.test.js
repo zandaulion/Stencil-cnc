@@ -161,7 +161,11 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(html, /id="bridge-count-value"[^>]*>Aesthetic</);
   assert.match(html, /id="protect-faces"[^>]*type="checkbox" checked/);
   assert.doesNotMatch(html, /id="protect-faces"[^>]*disabled/);
+  assert.match(html, /id="support-follow-features"[^>]*type="checkbox" checked/);
   assert.match(editor, /function smartBridgeStrategy\(\)/);
+  assert.match(editor, /function bridgeImageSamplers\(\)/);
+  assert.match(editor, /featureAt: imageSamplers\.featureAt/);
+  assert.match(editor, /el\('support-follow-features'\)\?\.addEventListener\('change', supportPlanChanged\)/);
   assert.match(editor, /strategy\.preferredAngleDeg = barAngleDeg \+ 90/);
   assert.match(editor, /strategy: smartBridgeStrategy\(\)/);
   assert.match(editor, /minimumWebMm,\s*kerfMm,/);

@@ -2411,6 +2411,9 @@ function applyControls(controls = {}) {
   // been trimmed. Migrate only that legacy value; other user-selected margins
   // remain untouched. The hidden version marker makes this a one-time change.
   const migratedControls = { ...controls };
+  if (!Object.hasOwn(controls, 'support-follow-features')) {
+    migratedControls['support-follow-features'] = true;
+  }
   if (!Object.hasOwn(controls, 'placement-fit-version') &&
       Number(controls['panel-margin']) === 35) {
     migratedControls['panel-margin'] = '0';
@@ -3228,53 +3231,105 @@ function placedStyleScale() {
 }
 
 /**
- * Samples source-image salience without uploading or persisting another map.
- * High-contrast details receive the strongest protection; the central portrait
- * oval gets a gentler cost so a flat cheek is not mistaken for empty space.
+ * Builds two local-only views of the source photograph for bridge planning.
+ * `detailAt` protects important portrait detail. `featureAt` does the inverse
+ * aesthetic job: it tells the planner where added metal will disappear into a
+ * dark eyebrow, hair mass, fold, or shadow, and which way that feature runs.
  */
-function bridgeDetailSampler() {
-  if (el('protect-faces')?.checked !== true || !state.source?.imageData || !state.placement) return null;
+function bridgeImageSamplers() {
+  const protectDetail = el('protect-faces')?.checked === true;
+  const followFeatures = el('support-follow-features')?.checked === true;
+  if ((!protectDetail && !followFeatures) || !state.source?.imageData || !state.placement) {
+    return { detailAt: null, featureAt: null };
+  }
   const { width, height, data } = state.source.imageData;
+  // Relative percentiles make "dark" mean dark within this photograph, while
+  // ignoring a few clipped black or white pixels that would distort the range.
+  const histogram = new Uint32Array(256);
+  const stride = Math.max(1, Math.floor(width * height / 250_000));
   const luminance = new Float32Array(width * height);
+  let sampleCount = 0;
   for (let index = 0; index < luminance.length; index += 1) {
     const offset = index * 4;
-    luminance[index] = 0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2];
-  }
-  const detail = new Float32Array(width * height);
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
-      const gx = luminance[y * width + x + 1] - luminance[y * width + x - 1];
-      const gy = luminance[(y + 1) * width + x] - luminance[(y - 1) * width + x];
-      detail[y * width + x] = Math.min(1, Math.hypot(gx, gy) / 150);
+    const alpha = data[offset + 3] / 255;
+    luminance[index] = (0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2]) * alpha
+      + 255 * (1 - alpha);
+    if (index % stride === 0) {
+      histogram[Math.round(luminance[index])] += 1;
+      sampleCount += 1;
     }
   }
+  const sourceLuminance = (x, y) => luminance[
+    Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))
+  ];
+  const percentile = (ratio) => {
+    const target = sampleCount * ratio;
+    let total = 0;
+    for (let value = 0; value < histogram.length; value += 1) {
+      total += histogram[value];
+      if (total >= target) return value;
+    }
+    return 255;
+  };
+  const darkPoint = percentile(0.05);
+  const lightPoint = Math.max(darkPoint + 24, percentile(0.95));
+  const toneRange = lightPoint - darkPoint;
   const placement = { ...state.placement };
   const bounds = state.contentBounds ? { ...state.contentBounds } : null;
   const sourceSize = state.contentSourceSize ? { ...state.contentSourceSize } : null;
-  return ({ x, y }) => {
+
+  const sampleSource = ({ x, y }) => {
     if (!bounds || !sourceSize || x < placement.xMm || y < placement.yMm ||
-        x > placement.xMm + placement.widthMm || y > placement.yMm + placement.heightMm) return 0;
+        x > placement.xMm + placement.widthMm || y > placement.yMm + placement.heightMm) return null;
     const localX = (x - placement.xMm) / Math.max(placement.widthMm, Number.EPSILON);
     const localY = (y - placement.yMm) / Math.max(placement.heightMm, Number.EPSILON);
     const fullX = (bounds.x + localX * bounds.width) / Math.max(1, sourceSize.width);
     const fullY = (bounds.y + localY * bounds.height) / Math.max(1, sourceSize.height);
     const imageX = Math.max(0, Math.min(width - 1, Math.round(fullX * (width - 1))));
     const imageY = Math.max(0, Math.min(height - 1, Math.round(fullY * (height - 1))));
+    const center = sourceLuminance(imageX, imageY);
+    const gx = sourceLuminance(imageX + 1, imageY) - sourceLuminance(imageX - 1, imageY);
+    const gy = sourceLuminance(imageX, imageY + 1) - sourceLuminance(imageX, imageY - 1);
+    const lightness = Math.max(0, Math.min(1, (center - darkPoint) / toneRange));
+    const strength = Math.max(0, Math.min(1, Math.hypot(gx, gy) / Math.max(32, toneRange * 0.55)));
     const dx = (fullX - 0.5) / 0.42;
     const dy = (fullY - 0.43) / 0.48;
     const portraitFocus = Math.max(0, 1 - Math.hypot(dx, dy));
-    return Math.min(1, Math.max(detail[imageY * width + imageX], portraitFocus * 0.55));
+    return {
+      lightness,
+      strength,
+      tangentAngleDeg: Math.atan2(gy, gx) * 180 / Math.PI + 90,
+      portraitFocus,
+    };
+  };
+
+  return {
+    detailAt: protectDetail && !followFeatures ? (point) => {
+      const sample = sampleSource(point);
+      return sample ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0;
+    } : null,
+    featureAt: followFeatures ? (point) => {
+      const sample = sampleSource(point);
+      // Outside the visible source there is no image feature to hide in.
+      if (!sample) return { lightness: 1, strength: 0, tangentAngleDeg: 0, detail: 0 };
+      return {
+        ...sample,
+        detail: protectDetail ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0,
+      };
+    } : null,
   };
 }
 
 function smartBridgeStrategy() {
   const style = selectedCutStyle();
   const level = Math.max(1, Math.min(3, Number(el('bridge-count')?.value || 2)));
+  const imageSamplers = bridgeImageSamplers();
   const strategy = {
     mode: 'smart',
     kind: style,
     level,
-    detailAt: bridgeDetailSampler(),
+    detailAt: imageSamplers.detailAt,
+    featureAt: imageSamplers.featureAt,
   };
   // A tie across parallel retained bars is their normal. It reads as one of
   // the pattern's own rungs, like the supplied diagonal-slat reference.
@@ -3309,7 +3364,9 @@ async function autoBridge() {
   button?.setAttribute('aria-busy', 'true');
   if (button) button.disabled = true;
   if (action) action.textContent = 'Planning smart supports…';
-  toast('Planning the smallest style-aware support network…');
+  toast(el('support-follow-features')?.checked
+    ? 'Planning supports in dark, feature-aligned areas where structure allows…'
+    : 'Planning the smallest style-aware support network…');
   // Let the pending state paint before the component graph occupies the main
   // thread. The planner remains entirely local to the browser.
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -3417,10 +3474,10 @@ function syncSelectedBridgeControls() {
     const length = ` · ${roundUnit(fromMm(metrics.lengthMm))} ${state.unit} long`;
     const styleName = CUT_STYLE_NAMES[bridge.strategy] || 'Artwork';
     if (bridge.source !== 'automatic') metadata.textContent = `Manual support${length}`;
-    else if (bridge.stabilizer) metadata.textContent = `Slat stabilizer · ${roundUnit(fromMm(bridge.targetSpanMm || toMm(numberField('max-cantilever', 250))))} ${state.unit} target span${length}`;
+    else if (bridge.stabilizer) metadata.textContent = `${bridge.followsFeatures ? 'Feature-following slat stabilizer' : 'Slat stabilizer'} · ${roundUnit(fromMm(bridge.targetSpanMm || toMm(numberField('max-cantilever', 250))))} ${state.unit} target span${length}`;
     else if (bridge.fallback) metadata.textContent = `Safe shortest-path fallback${length} · review its placement`;
     else if (bridge.redundant) metadata.textContent = `${styleName}-aware secure redundancy${length}`;
-    else metadata.textContent = `${styleName}-aware smart support${length}`;
+    else metadata.textContent = `${bridge.followsFeatures ? 'Feature-following' : `${styleName}-aware`} smart support${length}`;
   }
 }
 
@@ -4362,6 +4419,7 @@ function wire() {
   const supportPlanChanged = () => { markAutomaticSupportsStale(); pushHistory(); };
   el('bridge-count')?.addEventListener('change', supportPlanChanged);
   el('protect-faces')?.addEventListener('change', supportPlanChanged);
+  el('support-follow-features')?.addEventListener('change', supportPlanChanged);
   el('support-snap')?.addEventListener('change', pushHistory);
   el('support-follow-style')?.addEventListener('change', pushHistory);
   el('stabilize-slats')?.addEventListener('change', () => {

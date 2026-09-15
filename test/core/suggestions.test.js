@@ -126,6 +126,68 @@ test("the aesthetic strategy moves an equal-length tie away from protected detai
   assert.equal(suggestions[0].detailPenalty, 0);
 });
 
+test("follow-features planning moves an equal bridge out of bright image areas", () => {
+  const mask = createMask(7, 11);
+  for (let y = 0; y < mask.height; y += 1) {
+    mask.data[y * mask.width] = 1;
+    mask.data[y * mask.width + 6] = 1;
+  }
+  const anchorMask = createMask(mask.width, mask.height);
+  anchorMask.data[0] = 1;
+  const suggestions = suggestBridges(mask, {
+    sheet: { widthMm: 7, heightMm: 11 },
+    anchorMask,
+    widthMm: 1,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      featureAt: ({ y }) => ({
+        lightness: y < 6 ? 1 : 0,
+        strength: 0,
+        tangentAngleDeg: 0,
+      }),
+    },
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.ok(suggestions[0].start.y >= 6, "the bridge should hide in the dark half");
+  assert.equal(suggestions[0].visibilityPenalty, 0);
+  assert.equal(suggestions[0].followsFeatures, true);
+});
+
+test("follow-features planning aligns ties with a strong local feature when possible", () => {
+  const mask = createMask(9, 9);
+  for (let y = 0; y < mask.height; y += 1) {
+    mask.data[y * mask.width] = 1;
+    mask.data[y * mask.width + 8] = 1;
+  }
+  const anchorMask = createMask(mask.width, mask.height);
+  anchorMask.data[0] = 1;
+  const suggestions = suggestBridges(mask, {
+    sheet: { widthMm: 9, heightMm: 9 },
+    anchorMask,
+    widthMm: 1,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "generic",
+      level: 2,
+      featureAt: ({ y }) => ({
+        lightness: 0.2,
+        strength: y < 4 ? 1 : 0,
+        tangentAngleDeg: y < 4 ? 90 : 0,
+      }),
+    },
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.ok(suggestions[0].start.y >= 4, "the bridge should avoid crossing the misaligned feature");
+  assert.equal(suggestions[0].featureAlignmentPenalty, 0);
+});
+
 test("smart bridge width includes material lost to kerf", () => {
   const mask = maskFromAscii(["#...#"]);
   const suggestions = suggestBridges(mask, {
@@ -298,6 +360,45 @@ test("connected slats receive staggered stabilizers at the requested span", () =
         `slat at ${slatCenter} must be braced at station ${station}`);
     }
   }
+});
+
+test("slat stabilizers also move into dark feature bands", () => {
+  const mask = createMask(21, 21);
+  const anchorMask = createMask(21, 21);
+  for (const x of [1, 5, 9, 13, 17]) {
+    for (let y = 0; y < mask.height; y += 1) mask.data[y * mask.width + x] = 1;
+  }
+  for (let x = 0; x < mask.width; x += 1) {
+    mask.data[x] = 1;
+    mask.data[(mask.height - 1) * mask.width + x] = 1;
+    anchorMask.data[x] = 1;
+    anchorMask.data[(mask.height - 1) * mask.width + x] = 1;
+  }
+  const suggestions = suggestBridges(mask, {
+    sheet: { widthMm: 21, heightMm: 21 },
+    anchorMask,
+    widthMm: 2,
+    minimumWebMm: 1,
+    kerfMm: 0,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      barAngleDeg: 90,
+      slatPitchMm: 4,
+      maximumUnsupportedSpanMm: 8,
+      organicVariation: 1,
+      featureAt: ({ y }) => ({ lightness: y < 7 ? 1 : 0, strength: 0, tangentAngleDeg: 0 }),
+    },
+  });
+
+  assert.ok(suggestions.length > 0);
+  assert.ok(suggestions.every((bridge) => bridge.stabilizer && bridge.followsFeatures));
+  assert.ok(suggestions.every((bridge) => bridge.visibilityPenalty === 0),
+    "every feasible stabilizer should avoid the bright band");
+  assert.ok(suggestions.every((bridge) => bridge.stationMm >= 7));
 });
 
 test("organic slat stabilizers vary independently without exceeding the span target", () => {

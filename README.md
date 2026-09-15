@@ -10,7 +10,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Provides 13 cut styles: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
 - Models a configurable panel frame and preserves unused letterbox areas as metal.
-- Adds manual or filter-aware automatic supports, including organic slat stabilizers.
+- Adds manual or filter-aware automatic supports, including dark-feature placement and organic slat stabilizers.
 - Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and minimum-web strength.
 - Builds reversible manufacturing-repair previews before changing the artwork.

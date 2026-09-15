@@ -45,6 +45,7 @@ export function suggestBridges(mask, config) {
       maximumUnsupportedSpanMm: maximumSpanMm,
       organicVariation: config.strategy.organicVariation,
       detailAt: config.strategy.detailAt,
+      featureAt: config.strategy.featureAt,
       idOffset: connectivity.length,
     });
     return [...connectivity, ...stabilizers];
@@ -177,6 +178,7 @@ export function suggestKerfAwareBridges(mask, config) {
       maximumUnsupportedSpanMm: maximumSpanMm,
       organicVariation: config.strategy.organicVariation,
       detailAt: config.strategy.detailAt,
+      featureAt: config.strategy.featureAt,
       idOffset: bridges.length,
     }).slice(0, remaining).map((bridge, index) => ({
       ...bridge,
@@ -232,6 +234,9 @@ export function suggestSlatStabilizers(mask, config) {
   if (config.detailAt !== undefined && typeof config.detailAt !== "function") {
     throw new TypeError("detailAt must be a function");
   }
+  if (config.featureAt !== undefined && typeof config.featureAt !== "function") {
+    throw new TypeError("featureAt must be a function");
+  }
 
   const radians = config.barAngleDeg * Math.PI / 180;
   const along = { x: Math.cos(radians), y: Math.sin(radians) };
@@ -282,15 +287,18 @@ export function suggestSlatStabilizers(mask, config) {
       );
       let selected = staggeredGaps(gaps, stationIndex % 2);
       if (!selected.length && gaps.length) {
-        selected = [gaps.reduce((best, gap) => bridgeDetail(gap, config.detailAt) < bridgeDetail(best, config.detailAt) ? gap : best)];
+        selected = [gaps.reduce((best, gap) =>
+          bridgeVisualPenalty(gap, config.detailAt, config.featureAt) <
+          bridgeVisualPenalty(best, config.detailAt, config.featureAt) ? gap : best)];
       }
-      const detail = selected.reduce((sum, gap) => sum + bridgeDetail(gap, config.detailAt), 0);
-      return { alongPosition, offset, gaps, selected, detail };
+      const visualPenalty = selected.reduce((sum, gap) =>
+        sum + bridgeVisualPenalty(gap, config.detailAt, config.featureAt), 0);
+      return { alongPosition, offset, gaps, selected, visualPenalty };
     }).filter((candidate) => candidate.selected.length > 0);
 
     candidates.sort((first, second) =>
       second.selected.length - first.selected.length ||
-      first.detail / first.selected.length - second.detail / second.selected.length ||
+      first.visualPenalty / first.selected.length - second.visualPenalty / second.selected.length ||
       Math.abs(first.alongPosition - nominal) - Math.abs(second.alongPosition - nominal));
     const chosen = candidates[0];
     if (!chosen) continue;
@@ -305,6 +313,7 @@ export function suggestSlatStabilizers(mask, config) {
         along,
         across,
         config.detailAt,
+        config.featureAt,
       );
       const organicGap = skewOrganicGap(
         positionedGap,
@@ -317,8 +326,10 @@ export function suggestSlatStabilizers(mask, config) {
         config.slatPitchMm,
         config.maximumUnsupportedSpanMm,
         organicVariation,
+        config.detailAt,
+        config.featureAt,
       );
-      const detailPenalty = bridgeDetail(organicGap, config.detailAt);
+      const visualMetrics = bridgeVisualMetrics(organicGap, config.detailAt, config.featureAt);
       const actualStation = projectedMidpoint(organicGap, along);
       const actualAngle = Math.atan2(
         organicGap.end.y - organicGap.start.y,
@@ -335,9 +346,11 @@ export function suggestSlatStabilizers(mask, config) {
         width: config.widthMm,
         lengthMm: roundMetric(organicGap.lengthMm),
         addedAreaMm2: roundMetric(organicGap.lengthMm * config.widthMm),
-        aestheticScore: roundMetric(organicGap.lengthMm * config.widthMm * (1 + detailPenalty * 3.5)),
+        aestheticScore: roundMetric(organicGap.lengthMm * config.widthMm * (1 + visualMetrics.scorePenalty)),
         angleErrorDeg: roundMetric(angleDistance180(actualAngle, config.barAngleDeg + 90)),
-        detailPenalty: roundMetric(detailPenalty),
+        detailPenalty: roundMetric(visualMetrics.detailPenalty),
+        visibilityPenalty: roundMetric(visualMetrics.visibilityPenalty),
+        featureAlignmentPenalty: roundMetric(visualMetrics.featureAlignmentPenalty),
         strategy: "lamele",
         role: "stabilizer",
         stabilizer: true,
@@ -346,6 +359,7 @@ export function suggestSlatStabilizers(mask, config) {
         organicOffsetMm: roundMetric(actualStation - nominal),
         organicSkewMm: roundMetric(organicGap.organicSkewMm ?? 0),
         organicVariation,
+        followsFeatures: Boolean(config.featureAt),
         targetSpanMm: config.maximumUnsupportedSpanMm,
         redundant: false,
         fallback: false,
@@ -358,20 +372,33 @@ export function suggestSlatStabilizers(mask, config) {
 }
 
 function skewOrganicGap(gap, mask, sheet, pixel, along, across, stationIndex,
-  slatPitchMm, maximumSpanMm, organicVariation) {
+  slatPitchMm, maximumSpanMm, organicVariation, detailAt, featureAt) {
   if (organicVariation <= 0) return gap;
   const band = Math.round(projectedMidpoint(gap, across) / Math.max(slatPitchMm, Number.EPSILON));
   const maximumSkew = Math.min(slatPitchMm * 0.18, maximumSpanMm * 0.06) * organicVariation;
-  const skew = deterministicVariation(stationIndex + 19, band + 7) * maximumSkew;
-  const start = shiftedRetainedPoint(gap.start, skew, along, mask, sheet, pixel);
-  const end = shiftedRetainedPoint(gap.end, -skew, along, mask, sheet, pixel);
-  return {
-    ...gap,
-    start,
-    end,
-    lengthMm: Math.hypot(end.x - start.x, end.y - start.y),
-    organicSkewMm: projectedPoint(end, along) - projectedPoint(start, along),
-  };
+  const preferredSkew = deterministicVariation(stationIndex + 19, band + 7) * maximumSkew;
+  const skews = featureAt
+    ? [preferredSkew, 0, -maximumSkew, -maximumSkew / 2, maximumSkew / 2, maximumSkew]
+    : [preferredSkew];
+  const candidates = skews.map((skew) => {
+    const start = shiftedRetainedPoint(gap.start, skew, along, mask, sheet, pixel);
+    const end = shiftedRetainedPoint(gap.end, -skew, along, mask, sheet, pixel);
+    const candidate = {
+      ...gap,
+      start,
+      end,
+      lengthMm: Math.hypot(end.x - start.x, end.y - start.y),
+      organicSkewMm: projectedPoint(end, along) - projectedPoint(start, along),
+    };
+    const preferenceCost = Math.abs(skew - preferredSkew) / Math.max(maximumSkew, Number.EPSILON) * 0.35;
+    return {
+      candidate,
+      score: bridgeVisualPenalty(candidate, detailAt, featureAt) + preferenceCost,
+    };
+  });
+  candidates.sort((first, second) => first.score - second.score ||
+    Math.abs(first.candidate.organicSkewMm) - Math.abs(second.candidate.organicSkewMm));
+  return candidates[0]?.candidate ?? gap;
 }
 
 function shiftedRetainedPoint(point, shiftMm, along, mask, sheet, pixel) {
@@ -394,7 +421,7 @@ function projectedPoint(point, axis) {
 }
 
 function chooseOrganicGap(base, sections, nominal, jitter, stationIndex,
-  slatPitchMm, along, across, detailAt) {
+  slatPitchMm, along, across, detailAt, featureAt) {
   if (jitter <= 0 || sections.length <= 1) return base;
   const baseAcross = projectedMidpoint(base, across);
   const band = Math.round(baseAcross / Math.max(slatPitchMm, Number.EPSILON));
@@ -414,7 +441,7 @@ function chooseOrganicGap(base, sections, nominal, jitter, stationIndex,
     const actualOffset = projectedMidpoint(nearest, along) - nominal;
     const offsetError = Math.abs(actualOffset - targetOffset) / Math.max(jitter, Number.EPSILON);
     const score = acrossDistance / slatPitchMm * 4
-      + bridgeDetail(nearest, detailAt) * 0.8
+      + bridgeVisualPenalty(nearest, detailAt, featureAt) * 0.25
       + offsetError * 1.8;
     alternatives.push({ gap: nearest, score, offsetError, acrossDistance });
   }
@@ -523,6 +550,28 @@ function staggeredGaps(gaps, parity) {
 function bridgeDetail(bridge, detailAt) {
   if (!detailAt) return 0;
   return sampleBridgeDetail(bridge, detailAt);
+}
+
+function bridgeVisualMetrics(bridge, detailAt, featureAt) {
+  const angleDeg = Math.atan2(
+    bridge.end.y - bridge.start.y,
+    bridge.end.x - bridge.start.x,
+  ) * 180 / Math.PI;
+  const featureMetrics = featureAt
+    ? sampleBridgeFeatures(bridge, angleDeg, featureAt)
+    : { visibilityPenalty: 0, featureAlignmentPenalty: 0, detailPenalty: 0 };
+  const detailPenalty = detailAt ? bridgeDetail(bridge, detailAt) : featureMetrics.detailPenalty;
+  return {
+    ...featureMetrics,
+    detailPenalty,
+    scorePenalty: detailPenalty * 3.5
+      + featureMetrics.visibilityPenalty * 9
+      + featureMetrics.featureAlignmentPenalty * 2.5,
+  };
+}
+
+function bridgeVisualPenalty(bridge, detailAt, featureAt) {
+  return bridgeVisualMetrics(bridge, detailAt, featureAt).scorePenalty;
 }
 
 /**
@@ -641,6 +690,7 @@ function suggestNearestBridges(mask, config) {
  *     preferredAngleDeg?:number,
  *     radialCenter?:{x:number,y:number},
  *     detailAt?:(point:{x:number,y:number})=>number,
+ *     featureAt?:(point:{x:number,y:number})=>{lightness:number,strength?:number,tangentAngleDeg?:number,detail?:number},
  *     barAngleDeg?:number,
  *     slatPitchMm?:number,
  *     maximumUnsupportedSpanMm?:number,
@@ -699,7 +749,7 @@ function suggestSmartBridges(mask, config) {
     minimal = addSeparatedRedundancy(minimal, candidates, componentIds.length, widthMm);
   }
   return minimal.map((candidate, index) => bridgeFromSmartCandidate(
-    candidate, index, widthMm, strategy.kind, roots,
+    candidate, index, widthMm, strategy, roots,
   ));
 }
 
@@ -717,12 +767,16 @@ function normalizeStrategy(strategy) {
   if (strategy?.detailAt !== undefined && typeof strategy.detailAt !== "function") {
     throw new TypeError("strategy.detailAt must be a function");
   }
+  if (strategy?.featureAt !== undefined && typeof strategy.featureAt !== "function") {
+    throw new TypeError("strategy.featureAt must be a function");
+  }
   return {
     kind: typeof strategy?.kind === "string" ? strategy.kind : "generic",
     level,
     preferredAngleDeg,
     radialCenter,
     detailAt: strategy?.detailAt ?? null,
+    featureAt: strategy?.featureAt ?? null,
   };
 }
 
@@ -849,14 +903,29 @@ function scoreVisualCandidate(candidate, widthMm, strategy) {
   ) * 180 / Math.PI;
   const angleErrorDeg = Number.isFinite(preferred) ? angleDistance180(actual, preferred) : 0;
   const alignmentPenalty = Math.sin(angleErrorDeg * Math.PI / 180) ** 2;
-  const detailPenalty = strategy.detailAt ? sampleBridgeDetail(candidate, strategy.detailAt) : 0;
+  const featureMetrics = strategy.featureAt
+    ? sampleBridgeFeatures(candidate, actual, strategy.featureAt)
+    : { visibilityPenalty: 0, featureAlignmentPenalty: 0, detailPenalty: 0 };
+  const detailPenalty = strategy.detailAt
+    ? sampleBridgeDetail(candidate, strategy.detailAt)
+    : featureMetrics.detailPenalty;
   const alignmentWeight = strategy.level === 1 ? 0.8 : strategy.level === 2 ? 4.5 : 2.5;
   const detailWeight = strategy.level === 1 ? 0.8 : strategy.level === 2 ? 3.5 : 2.0;
+  // A retained tie over a bright cut-out is immediately visible. This cost is
+  // intentionally stronger than the generic detail cost: when structurally
+  // equivalent choices exist, dark hair, brows, folds and shadows should win.
+  const visibilityWeight = strategy.level === 1 ? 4.5 : strategy.level === 2 ? 9 : 7;
+  const featureAlignmentWeight = strategy.level === 1 ? 1 : strategy.level === 2 ? 2.5 : 2;
   const addedAreaMm2 = candidate.lengthMm * widthMm;
   return {
-    score: addedAreaMm2 * (1 + alignmentWeight * alignmentPenalty + detailWeight * detailPenalty),
+    score: addedAreaMm2 * (1
+      + alignmentWeight * alignmentPenalty
+      + detailWeight * detailPenalty
+      + visibilityWeight * featureMetrics.visibilityPenalty
+      + featureAlignmentWeight * featureMetrics.featureAlignmentPenalty),
     addedAreaMm2,
     angleErrorDeg,
+    ...featureMetrics,
     detailPenalty,
   };
 }
@@ -877,6 +946,44 @@ function sampleBridgeDetail(candidate, detailAt) {
   // One eye or mouth crossed by a bridge matters even when the rest of the
   // segment lies over quiet tone, hence the maximum shares the average.
   return (total / samples + maximum) / 2;
+}
+
+function sampleBridgeFeatures(candidate, bridgeAngleDeg, featureAt) {
+  let totalLightness = 0;
+  let maximumLightness = 0;
+  let featureAlignmentPenalty = 0;
+  let totalDetail = 0;
+  let maximumDetail = 0;
+  const samples = 11;
+  for (let index = 0; index < samples; index += 1) {
+    const t = (index + 0.5) / samples;
+    const sample = featureAt({
+      x: candidate.start.x + (candidate.end.x - candidate.start.x) * t,
+      y: candidate.start.y + (candidate.end.y - candidate.start.y) * t,
+    }) ?? {};
+    const rawLightness = Number(sample.lightness);
+    const lightness = Number.isFinite(rawLightness) ? clamp01(rawLightness) : 1;
+    const rawStrength = Number(sample.strength);
+    const strength = Number.isFinite(rawStrength) ? clamp01(rawStrength) : 0;
+    const tangentAngleDeg = Number(sample.tangentAngleDeg);
+    const rawDetail = Number(sample.detail);
+    const detail = Number.isFinite(rawDetail) ? clamp01(rawDetail) : 0;
+    const localAlignment = Number.isFinite(tangentAngleDeg)
+      ? Math.sin(angleDistance180(bridgeAngleDeg, tangentAngleDeg) * Math.PI / 180) ** 2
+      : 0;
+    totalLightness += lightness;
+    maximumLightness = Math.max(maximumLightness, lightness);
+    featureAlignmentPenalty += localAlignment * strength;
+    totalDetail += detail;
+    maximumDetail = Math.max(maximumDetail, detail);
+  }
+  return {
+    // Sharing the maximum with the average rejects a bridge that is mostly in
+    // shadow but crosses one conspicuous highlight, eye white, or bright cheek.
+    visibilityPenalty: (totalLightness / samples + maximumLightness) / 2,
+    featureAlignmentPenalty: featureAlignmentPenalty / samples,
+    detailPenalty: (totalDetail / samples + maximumDetail) / 2,
+  };
 }
 
 function connectorTree(candidates, componentIds, roots, mask, labels, sheet, widthMm) {
@@ -966,7 +1073,7 @@ function addSeparatedRedundancy(chosen, candidates, componentCount, widthMm) {
   return result;
 }
 
-function bridgeFromSmartCandidate(candidate, index, widthMm, kind, roots) {
+function bridgeFromSmartCandidate(candidate, index, widthMm, strategy, roots) {
   const componentIds = candidate.componentIds ?? [candidate.firstId, candidate.secondId];
   const rootSet = new Set(roots);
   const islandComponentId = componentIds.find((id) => !rootSet.has(id)) ?? candidate.firstId;
@@ -986,7 +1093,10 @@ function bridgeFromSmartCandidate(candidate, index, widthMm, kind, roots) {
     aestheticScore: roundMetric(candidate.score),
     angleErrorDeg: roundMetric(candidate.angleErrorDeg),
     detailPenalty: roundMetric(candidate.detailPenalty),
-    strategy: kind,
+    visibilityPenalty: roundMetric(candidate.visibilityPenalty ?? 0),
+    featureAlignmentPenalty: roundMetric(candidate.featureAlignmentPenalty ?? 0),
+    strategy: strategy.kind,
+    followsFeatures: Boolean(strategy.featureAt),
     redundant: candidate.redundant === true,
     fallback: false,
     rank: index + 1,
