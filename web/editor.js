@@ -2787,6 +2787,8 @@ let projectLibraryRows = [];
 let renameProjectId = null;
 let versionProjectId = null;
 let versionRows = [];
+let projectThumbnailRender = 0;
+const projectThumbnailCache = new Map();
 
 function projectStatus(record) {
   return record.editor?.projectSummary?.status ??
@@ -2838,6 +2840,45 @@ function projectAction(label, action, { primary = false } = {}) {
   return button;
 }
 
+function projectThumbnailKey(record) {
+  return `${record.id}:${record.updatedAt ?? ''}`;
+}
+
+function projectThumbnail(record) {
+  return record.editor?.projectSummary?.thumbnail ??
+    projectThumbnailCache.get(projectThumbnailKey(record)) ?? null;
+}
+
+function renderProjectCardPreview(preview, record, thumbnail = projectThumbnail(record)) {
+  preview.replaceChildren();
+  if (thumbnail) {
+    const image = document.createElement('img');
+    image.src = thumbnail;
+    image.alt = `${record.name} artwork preview`;
+    preview.append(image);
+    return;
+  }
+  preview.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 14h14l4 5h16v21H7z"></path><path d="M7 14V9h14l4 5"></path></svg>';
+}
+
+async function hydrateLegacyProjectThumbnails(records, renderToken) {
+  for (const record of records) {
+    if (renderToken !== projectThumbnailRender) return;
+    if (projectThumbnail(record)) continue;
+    // Yield between legacy projects so opening the library and scrolling stay
+    // responsive even when many old projects need their first preview.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (renderToken !== projectThumbnailRender) return;
+    const thumbnail = encodedMaskThumbnail(record.raster?.sourceMask ?? record.raster?.baseMask);
+    if (!thumbnail) continue;
+    projectThumbnailCache.set(projectThumbnailKey(record), thumbnail);
+    const card = all('#project-list [data-project-id]')
+      .find((node) => node.dataset.projectId === record.id);
+    const preview = card?.querySelector('.project-card-preview');
+    if (preview) renderProjectCardPreview(preview, record, thumbnail);
+  }
+}
+
 function buildProjectCard(record) {
   const article = document.createElement('article');
   article.className = 'project-card';
@@ -2847,15 +2888,7 @@ function buildProjectCard(record) {
 
   const preview = document.createElement('div');
   preview.className = 'project-card-preview';
-  const thumbnail = record.editor?.projectSummary?.thumbnail;
-  if (thumbnail) {
-    const image = document.createElement('img');
-    image.src = thumbnail;
-    image.alt = '';
-    preview.append(image);
-  } else {
-    preview.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 14h14l4 5h16v21H7z"></path><path d="M7 14V9h14l4 5"></path></svg>';
-  }
+  renderProjectCardPreview(preview, record);
 
   const body = document.createElement('div');
   body.className = 'project-card-body';
@@ -2917,6 +2950,7 @@ function buildProjectCard(record) {
 }
 
 function renderProjectLibrary() {
+  const renderToken = ++projectThumbnailRender;
   const query = el('project-search')?.value.trim().toLocaleLowerCase() ?? '';
   const statusFilter = projectLibraryView === 'trash'
     ? 'all'
@@ -2939,6 +2973,7 @@ function renderProjectLibrary() {
       : query ? 'Try another name or status.' : 'Import an image to create your first project.';
   }
   el('project-library-result').textContent = `${rows.length} ${rows.length === 1 ? 'project' : 'projects'}`;
+  void hydrateLegacyProjectThumbnails(rows, renderToken);
 }
 
 async function refreshProjectLibrary() {
@@ -3430,23 +3465,24 @@ function cloneBridges(bridges = state.bridges) {
   }));
 }
 
-function maskThumbnail(mask) {
-  if (!mask) return null;
+function drawMaskThumbnail(sourceWidth, sourceHeight, metalAt) {
+  if (!sourceWidth || !sourceHeight) return null;
   const maximumWidth = 260;
   const maximumHeight = 150;
-  const scale = Math.min(maximumWidth / mask.width, maximumHeight / mask.height, 1);
-  const width = Math.max(1, Math.round(mask.width * scale));
-  const height = Math.max(1, Math.round(mask.height * scale));
+  const scale = Math.min(maximumWidth / sourceWidth, maximumHeight / sourceHeight, 1);
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext('2d');
+  if (!context) return null;
   const image = context.createImageData(width, height);
   for (let y = 0; y < height; y += 1) {
-    const sourceY = Math.min(mask.height - 1, Math.floor(y / height * mask.height));
+    const sourceY = Math.min(sourceHeight - 1, Math.floor(y / height * sourceHeight));
     for (let x = 0; x < width; x += 1) {
-      const sourceX = Math.min(mask.width - 1, Math.floor(x / width * mask.width));
-      const metal = mask.data[sourceY * mask.width + sourceX] === RETAINED;
+      const sourceX = Math.min(sourceWidth - 1, Math.floor(x / width * sourceWidth));
+      const metal = metalAt(sourceY * sourceWidth + sourceX);
       const offset = (y * width + x) * 4;
       const value = metal ? 42 : 245;
       image.data[offset] = value;
@@ -3457,6 +3493,27 @@ function maskThumbnail(mask) {
   }
   context.putImageData(image, 0, 0);
   return canvas.toDataURL('image/png');
+}
+
+function maskThumbnail(mask) {
+  if (!mask) return null;
+  return drawMaskThumbnail(mask.width, mask.height, (index) => mask.data[index] === RETAINED);
+}
+
+function encodedMaskThumbnail(encoded) {
+  if (!encoded || encoded.encoding !== 'rle-u1' || !Number.isInteger(encoded.width) ||
+      !Number.isInteger(encoded.height) || !Array.isArray(encoded.runs) || !encoded.runs.length) return null;
+  let runIndex = 0;
+  let runEnd = encoded.runs[0];
+  let value = encoded.startsWith;
+  return drawMaskThumbnail(encoded.width, encoded.height, (sourceIndex) => {
+    while (sourceIndex >= runEnd && runIndex + 1 < encoded.runs.length) {
+      runIndex += 1;
+      runEnd += encoded.runs[runIndex];
+      value = value === 1 ? 0 : 1;
+    }
+    return value === RETAINED;
+  });
 }
 
 function candidateName(style) {

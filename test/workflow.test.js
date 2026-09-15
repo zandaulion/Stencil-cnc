@@ -34,6 +34,8 @@ test('local project management is searchable, recoverable, and privacy preservin
   assert.match(editor, /await flushPendingSave\(\)/);
   assert.match(editor, /serializeProject\(record, \{ pretty: true \}\)/);
   assert.match(editor, /saveCheckpoint\(project, label\)/);
+  assert.match(editor, /function encodedMaskThumbnail\(encoded\)/);
+  assert.match(editor, /hydrateLegacyProjectThumbnails\(rows, renderToken\)/);
   assert.match(storage, /const CHECKPOINT_LIMIT = 10/);
   assert.match(storage, /const \{ localSource: _localSource, \.\.\.portableProject \} = project/);
   assert.match(storage, /export async function trashProject/);
