@@ -160,6 +160,7 @@ const state = {
   bridgePreview: null,
   automaticSupportsStale: false,
   selectedBridge: null,
+  hoveredBridge: null,
   candidates: [],
   selectedCandidateId: null,
   analysis: null,
@@ -2057,10 +2058,25 @@ function drawOverlay(overlay, mask) {
 
   for (const bridge of state.bridges) {
     const selected = bridge === state.selectedBridge;
+    const hovered = bridge === state.hoveredBridge;
     const staleAutomatic = state.automaticSupportsStale && bridge.source === 'automatic';
     const fallbackAutomatic = bridge.source === 'automatic' && bridge.fallback === true;
     const stabilizer = bridge.stabilizer === true;
     const needsReview = staleAutomatic || fallbackAutomatic;
+    const startX = bridge.start.x * pxPerMm;
+    const startY = bridge.start.y * (mask.height / heightMm);
+    const endX = bridge.end.x * pxPerMm;
+    const endY = bridge.end.y * (mask.height / heightMm);
+    if (hovered && !selected) {
+      context.strokeStyle = 'rgba(31, 122, 90, .28)';
+      context.lineWidth = Math.max(4, bridge.width * pxPerMm + 6 / Math.max(state.zoom, 0.1));
+      context.lineCap = 'round';
+      context.setLineDash([]);
+      context.beginPath();
+      context.moveTo(startX, startY);
+      context.lineTo(endX, endY);
+      context.stroke();
+    }
     context.strokeStyle = selected
       ? '#1f7a5a'
       : needsReview
@@ -2070,8 +2086,8 @@ function drawOverlay(overlay, mask) {
     context.lineCap = 'round';
     context.setLineDash(needsReview ? [Math.max(4, 8 / state.zoom), Math.max(3, 5 / state.zoom)] : []);
     context.beginPath();
-    context.moveTo(bridge.start.x * pxPerMm, bridge.start.y * (mask.height / heightMm));
-    context.lineTo(bridge.end.x * pxPerMm, bridge.end.y * (mask.height / heightMm));
+    context.moveTo(startX, startY);
+    context.lineTo(endX, endY);
     context.stroke();
     context.setLineDash([]);
   }
@@ -2089,6 +2105,28 @@ function drawOverlay(overlay, mask) {
   }
 
   if (state.selectedBridge) {
+    const selectedStart = {
+      x: state.selectedBridge.start.x * pxPerMm,
+      y: state.selectedBridge.start.y * (mask.height / heightMm),
+    };
+    const selectedEnd = {
+      x: state.selectedBridge.end.x * pxPerMm,
+      y: state.selectedBridge.end.y * (mask.height / heightMm),
+    };
+    context.lineCap = 'round';
+    context.setLineDash([]);
+    context.strokeStyle = 'rgba(255, 255, 255, .92)';
+    context.lineWidth = Math.max(4, state.selectedBridge.width * pxPerMm + 8 / Math.max(state.zoom, 0.1));
+    context.beginPath();
+    context.moveTo(selectedStart.x, selectedStart.y);
+    context.lineTo(selectedEnd.x, selectedEnd.y);
+    context.stroke();
+    context.strokeStyle = '#1f7a5a';
+    context.lineWidth = Math.max(2, state.selectedBridge.width * pxPerMm);
+    context.beginPath();
+    context.moveTo(selectedStart.x, selectedStart.y);
+    context.lineTo(selectedEnd.x, selectedEnd.y);
+    context.stroke();
     const radius = Math.max(3, 6 / Math.max(state.zoom, 0.1));
     context.fillStyle = '#f5f4f0';
     context.strokeStyle = '#1f7a5a';
@@ -2099,6 +2137,23 @@ function drawOverlay(overlay, mask) {
       context.fill();
       context.stroke();
     }
+    const midpoint = {
+      x: (state.selectedBridge.start.x + state.selectedBridge.end.x) / 2 * pxPerMm,
+      y: (state.selectedBridge.start.y + state.selectedBridge.end.y) / 2 * (mask.height / heightMm),
+    };
+    const moveRadius = Math.max(3, 5 / Math.max(state.zoom, 0.1));
+    context.fillStyle = '#1f7a5a';
+    context.beginPath();
+    context.arc(midpoint.x, midpoint.y, moveRadius, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#f5f4f0';
+    context.lineWidth = Math.max(1, 1.5 / Math.max(state.zoom, 0.1));
+    context.beginPath();
+    context.moveTo(midpoint.x - moveRadius * 0.45, midpoint.y);
+    context.lineTo(midpoint.x + moveRadius * 0.45, midpoint.y);
+    context.moveTo(midpoint.x, midpoint.y - moveRadius * 0.45);
+    context.lineTo(midpoint.x, midpoint.y + moveRadius * 0.45);
+    context.stroke();
   }
 
   if (state.touchupPreview && (state.tool === 'keep' || state.tool === 'remove')) {
@@ -2336,7 +2391,7 @@ function readControls() {
   }
   for (const node of nodes) {
     if (node.closest('#candidate-side-panel')) continue;
-    if (node.id === 'project-name' || node.id === 'selected-bridge-width') continue;
+    if (node.id === 'project-name' || node.id.startsWith('selected-bridge-')) continue;
     if (node.type === 'file' || node.type === 'button' || node.type === 'submit') continue;
     if (!node.id && !node.name) continue;
     if (node.type === 'radio') {
@@ -3331,22 +3386,100 @@ function selectBridge(bridge) {
   el('bridge-selection').hidden = !bridge;
   el('bridge-selection-empty').hidden = Boolean(bridge);
   if (bridge) {
-    el('selected-bridge-width').value = roundUnit(fromMm(bridge.width));
-    const metadata = el('bridge-selection-meta');
-    if (metadata) {
-      const length = Number.isFinite(bridge.lengthMm)
-        ? ` · ${roundUnit(fromMm(bridge.lengthMm))} ${state.unit} long`
-        : '';
-      const styleName = CUT_STYLE_NAMES[bridge.strategy] || 'Artwork';
-      if (bridge.source !== 'automatic') metadata.textContent = 'Manual support';
-      else if (bridge.stabilizer) metadata.textContent = `Slat stabilizer · ${roundUnit(fromMm(bridge.targetSpanMm || toMm(numberField('max-cantilever', 250))))} ${state.unit} target span${length}`;
-      else if (bridge.fallback) metadata.textContent = `Safe shortest-path fallback${length} · review its placement`;
-      else if (bridge.redundant) metadata.textContent = `${styleName}-aware secure redundancy${length}`;
-      else metadata.textContent = `${styleName}-aware smart support${length}`;
-    }
+    syncSelectedBridgeControls();
   }
   updateAutomaticSupportState();
   draw();
+}
+
+function bridgeMetrics(bridge) {
+  const dx = bridge.end.x - bridge.start.x;
+  const dy = bridge.end.y - bridge.start.y;
+  let angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+  if (angleDeg > 180) angleDeg -= 360;
+  if (angleDeg <= -180) angleDeg += 360;
+  return { lengthMm: Math.hypot(dx, dy), angleDeg };
+}
+
+function syncSelectedBridgeControls() {
+  const bridge = state.selectedBridge;
+  if (!bridge) return;
+  const metrics = bridgeMetrics(bridge);
+  bridge.lengthMm = metrics.lengthMm;
+  if (el('selected-bridge-width')) el('selected-bridge-width').value = roundUnit(fromMm(bridge.width));
+  if (el('selected-bridge-length')) {
+    el('selected-bridge-length').min = roundUnit(fromMm(1));
+    el('selected-bridge-length').value = roundUnit(fromMm(metrics.lengthMm));
+  }
+  if (el('selected-bridge-angle')) el('selected-bridge-angle').value = Math.round(metrics.angleDeg * 10) / 10;
+  const metadata = el('bridge-selection-meta');
+  if (metadata) {
+    const length = ` · ${roundUnit(fromMm(metrics.lengthMm))} ${state.unit} long`;
+    const styleName = CUT_STYLE_NAMES[bridge.strategy] || 'Artwork';
+    if (bridge.source !== 'automatic') metadata.textContent = `Manual support${length}`;
+    else if (bridge.stabilizer) metadata.textContent = `Slat stabilizer · ${roundUnit(fromMm(bridge.targetSpanMm || toMm(numberField('max-cantilever', 250))))} ${state.unit} target span${length}`;
+    else if (bridge.fallback) metadata.textContent = `Safe shortest-path fallback${length} · review its placement`;
+    else if (bridge.redundant) metadata.textContent = `${styleName}-aware secure redundancy${length}`;
+    else metadata.textContent = `${styleName}-aware smart support${length}`;
+  }
+}
+
+function setBridgeGeometry(bridge, { lengthMm, angleDeg }) {
+  if (!bridge) return;
+  const current = bridgeMetrics(bridge);
+  const requestedLength = Number.isFinite(lengthMm) ? Math.max(1, lengthMm) : current.lengthMm;
+  const requestedAngle = Number.isFinite(angleDeg) ? angleDeg : current.angleDeg;
+  const radians = requestedAngle * Math.PI / 180;
+  const direction = { x: Math.cos(radians), y: Math.sin(radians) };
+  const currentSheet = sheet();
+  const maximumLength = Math.min(
+    Math.abs(direction.x) > 1e-9 ? currentSheet.widthMm / Math.abs(direction.x) : Infinity,
+    Math.abs(direction.y) > 1e-9 ? currentSheet.heightMm / Math.abs(direction.y) : Infinity,
+  );
+  const fittedLength = Math.min(requestedLength, maximumLength);
+  const center = {
+    x: (bridge.start.x + bridge.end.x) / 2,
+    y: (bridge.start.y + bridge.end.y) / 2,
+  };
+  const half = fittedLength / 2;
+  let start = { x: center.x - direction.x * half, y: center.y - direction.y * half };
+  let end = { x: center.x + direction.x * half, y: center.y + direction.y * half };
+  const minimumX = Math.min(start.x, end.x);
+  const maximumX = Math.max(start.x, end.x);
+  const minimumY = Math.min(start.y, end.y);
+  const maximumY = Math.max(start.y, end.y);
+  const shiftX = minimumX < 0 ? -minimumX : maximumX > currentSheet.widthMm ? currentSheet.widthMm - maximumX : 0;
+  const shiftY = minimumY < 0 ? -minimumY : maximumY > currentSheet.heightMm ? currentSheet.heightMm - maximumY : 0;
+  start = { x: start.x + shiftX, y: start.y + shiftY };
+  end = { x: end.x + shiftX, y: end.y + shiftY };
+  bridge.start = start;
+  bridge.end = end;
+  bridge.lengthMm = fittedLength;
+}
+
+function translateBridge(bridge, requestedDx, requestedDy) {
+  if (!bridge) return;
+  const currentSheet = sheet();
+  const dx = Math.max(-Math.min(bridge.start.x, bridge.end.x), Math.min(
+    currentSheet.widthMm - Math.max(bridge.start.x, bridge.end.x), requestedDx,
+  ));
+  const dy = Math.max(-Math.min(bridge.start.y, bridge.end.y), Math.min(
+    currentSheet.heightMm - Math.max(bridge.start.y, bridge.end.y), requestedDy,
+  ));
+  bridge.start = { x: bridge.start.x + dx, y: bridge.start.y + dy };
+  bridge.end = { x: bridge.end.x + dx, y: bridge.end.y + dy };
+}
+
+function deleteSelectedBridge() {
+  const bridge = state.selectedBridge;
+  if (!bridge) return false;
+  state.bridges = state.bridges.filter((candidate) => candidate !== bridge);
+  if (state.hoveredBridge === bridge) state.hoveredBridge = null;
+  selectBridge(null);
+  refresh({ immediate: true, rebuildSourceMask: false });
+  pushHistory();
+  toast('Support deleted.');
+  return true;
 }
 
 function distanceToSegment(point, start, end) {
@@ -3468,15 +3601,21 @@ function bridgeAtPointer(event) {
   const point = pointerToMm(event);
   if (!point.inside) return null;
   const canvasWidth = Math.max(1, el('editor-canvas').getBoundingClientRect().width);
-  const screenToleranceMm = sheet().widthMm / canvasWidth * 8;
+  const screenToleranceMm = sheet().widthMm / canvasWidth * (event.pointerType === 'touch' ? 24 : 14);
+  let nearest = null;
+  let nearestDistance = Infinity;
   for (let index = state.bridges.length - 1; index >= 0; index -= 1) {
     const bridge = state.bridges[index];
     const distance = distanceToSegment(
       { x: point.mmX, y: point.mmY }, bridge.start, bridge.end,
     );
-    if (distance <= Math.max(bridge.width / 2, screenToleranceMm)) return bridge;
+    const tolerance = Math.max(bridge.width / 2, screenToleranceMm);
+    if (distance <= tolerance && distance < nearestDistance) {
+      nearest = bridge;
+      nearestDistance = distance;
+    }
   }
-  return null;
+  return nearest;
 }
 
 function bridgeHandleAtPointer(event) {
@@ -3485,10 +3624,15 @@ function bridgeHandleAtPointer(event) {
   const point = pointerToMm(event);
   if (!point.inside) return null;
   const canvasWidth = Math.max(1, el('editor-canvas').getBoundingClientRect().width);
-  const toleranceMm = sheet().widthMm / canvasWidth * 12;
+  const toleranceMm = sheet().widthMm / canvasWidth * (event.pointerType === 'touch' ? 26 : 15);
   const cursor = { x: point.mmX, y: point.mmY };
   if (Math.hypot(cursor.x - bridge.start.x, cursor.y - bridge.start.y) <= toleranceMm) return 'start';
   if (Math.hypot(cursor.x - bridge.end.x, cursor.y - bridge.end.y) <= toleranceMm) return 'end';
+  const midpoint = {
+    x: (bridge.start.x + bridge.end.x) / 2,
+    y: (bridge.start.y + bridge.end.y) / 2,
+  };
+  if (Math.hypot(cursor.x - midpoint.x, cursor.y - midpoint.y) <= toleranceMm) return 'move';
   return null;
 }
 
@@ -3598,6 +3742,7 @@ function setTool(tool) {
   state.touchupPreview = null;
   state.drawingBridge = tool === 'support';
   state.bridgePreview = null;
+  state.hoveredBridge = null;
   syncToolRailState();
   const editing = tool === 'keep' || tool === 'remove';
   el('touchup-options')?.toggleAttribute('hidden', !editing);
@@ -4120,7 +4265,8 @@ function wire() {
     // The numbers on screen are re-expressed, not re-interpreted: switching
     // units must not silently resize the panel.
     for (const id of ['panel-width', 'panel-height', 'panel-margin', 'frame-width',
-      'bridge-width', 'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
+      'bridge-width', 'selected-bridge-width', 'selected-bridge-length',
+      'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
@@ -4132,6 +4278,7 @@ function wire() {
       node.value = state.unit === 'in' ? Math.round(mm / MM_PER_INCH * 1000) / 1000 : Math.round(mm * 10) / 10;
     }
     enforcePlasmaLimits();
+    syncSelectedBridgeControls();
     updateTouchupControls();
     updateSlatStabilizerControls();
     updateReadouts(); restyle(); refresh({ immediate: true });
@@ -4243,17 +4390,28 @@ function wire() {
     pushHistory();
     toast('Automatic supports removed. You can keep editing the artwork.');
   });
-  el('btn-delete-bridge')?.addEventListener('click', () => {
-    state.bridges = state.bridges.filter((bridge) => bridge !== state.selectedBridge);
-    selectBridge(null);
-    refresh({ immediate: true, rebuildSourceMask: false });
-    pushHistory();
-  });
+  el('btn-delete-bridge')?.addEventListener('click', deleteSelectedBridge);
   el('selected-bridge-width')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
     promoteBridgeToManual(state.selectedBridge);
     state.selectedBridge.width = safeBridgeWidthMm(toMm(Number(event.target.value)));
     event.target.value = roundUnit(fromMm(state.selectedBridge.width));
+    refresh({ immediate: true, rebuildSourceMask: false });
+    pushHistory();
+  });
+  el('selected-bridge-length')?.addEventListener('change', (event) => {
+    if (!state.selectedBridge) return;
+    promoteBridgeToManual(state.selectedBridge);
+    setBridgeGeometry(state.selectedBridge, { lengthMm: toMm(Number(event.target.value)) });
+    syncSelectedBridgeControls();
+    refresh({ immediate: true, rebuildSourceMask: false });
+    pushHistory();
+  });
+  el('selected-bridge-angle')?.addEventListener('change', (event) => {
+    if (!state.selectedBridge) return;
+    promoteBridgeToManual(state.selectedBridge);
+    setBridgeGeometry(state.selectedBridge, { angleDeg: Number(event.target.value) });
+    syncSelectedBridgeControls();
     refresh({ immediate: true, rebuildSourceMask: false });
     pushHistory();
   });
@@ -4356,9 +4514,30 @@ function wire() {
     touchupDrawFrame = null;
   };
 
+  const beginBridgeDrag = (event, bridge, mode) => {
+    const point = pointerToMm(event);
+    selectBridge(bridge);
+    state.hoveredBridge = bridge;
+    draggingBridge = {
+      mode,
+      bridge,
+      origin: { x: point.mmX, y: point.mmY },
+      start: { ...bridge.start },
+      end: { ...bridge.end },
+    };
+    viewport.setPointerCapture(event.pointerId);
+    viewport.style.cursor = mode === 'move' ? 'move' : 'crosshair';
+  };
+
   viewport?.addEventListener('pointerdown', (event) => {
     const { x, y, inside } = pointerToMask(event);
     if (state.drawingBridge && inside) {
+      const handle = bridgeHandleAtPointer(event);
+      const hit = handle && state.selectedBridge ? state.selectedBridge : bridgeAtPointer(event);
+      if (hit) {
+        beginBridgeDrag(event, hit, handle || 'move');
+        return;
+      }
       const point = pointerToMm(event);
       drawingFrom = manualSupportPoint({ x: point.mmX, y: point.mmY });
       state.bridgePreview = { start: drawingFrom, end: drawingFrom, width: safeBridgeWidthMm() };
@@ -4393,33 +4572,15 @@ function wire() {
     }
     const handle = bridgeHandleAtPointer(event);
     if (handle && state.selectedBridge) {
-      const point = pointerToMm(event);
-      draggingBridge = {
-        mode: handle,
-        bridge: state.selectedBridge,
-        origin: { x: point.mmX, y: point.mmY },
-        start: { ...state.selectedBridge.start },
-        end: { ...state.selectedBridge.end },
-      };
-      viewport.setPointerCapture(event.pointerId);
-      viewport.style.cursor = 'crosshair';
+      beginBridgeDrag(event, state.selectedBridge, handle);
       return;
     }
     const hit = bridgeAtPointer(event);
     if (hit) {
-      const point = pointerToMm(event);
-      selectBridge(hit);
-      draggingBridge = {
-        mode: 'move',
-        bridge: hit,
-        origin: { x: point.mmX, y: point.mmY },
-        start: { ...hit.start },
-        end: { ...hit.end },
-      };
-      viewport.setPointerCapture(event.pointerId);
-      viewport.style.cursor = 'move';
+      beginBridgeDrag(event, hit, 'move');
       return;
     }
+    state.hoveredBridge = null;
     selectBridge(null);
     panning = { x: event.clientX - state.pan.x, y: event.clientY - state.pan.y };
     viewport.setPointerCapture(event.pointerId);
@@ -4461,22 +4622,19 @@ function wire() {
         const endpoint = manualSupportPoint({ x: mmX, y: mmY }, other);
         draggingBridge.bridge[draggingBridge.mode] = endpoint;
       } else {
-        const currentSheet = sheet();
-        let dx = mmX - draggingBridge.origin.x;
-        let dy = mmY - draggingBridge.origin.y;
-        dx = Math.max(-Math.min(draggingBridge.start.x, draggingBridge.end.x), Math.min(
-          currentSheet.widthMm - Math.max(draggingBridge.start.x, draggingBridge.end.x), dx,
-        ));
-        dy = Math.max(-Math.min(draggingBridge.start.y, draggingBridge.end.y), Math.min(
-          currentSheet.heightMm - Math.max(draggingBridge.start.y, draggingBridge.end.y), dy,
-        ));
-        draggingBridge.bridge.start = { x: draggingBridge.start.x + dx, y: draggingBridge.start.y + dy };
-        draggingBridge.bridge.end = { x: draggingBridge.end.x + dx, y: draggingBridge.end.y + dy };
+        draggingBridge.bridge.start = { ...draggingBridge.start };
+        draggingBridge.bridge.end = { ...draggingBridge.end };
+        translateBridge(
+          draggingBridge.bridge,
+          mmX - draggingBridge.origin.x,
+          mmY - draggingBridge.origin.y,
+        );
       }
       draggingBridge.bridge.lengthMm = Math.hypot(
         draggingBridge.bridge.end.x - draggingBridge.bridge.start.x,
         draggingBridge.bridge.end.y - draggingBridge.bridge.start.y,
       );
+      syncSelectedBridgeControls();
       refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false });
     } else if (panning) {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
@@ -4487,6 +4645,15 @@ function wire() {
       // instead of freezing the cursor at the drawing boundary.
       state.touchupPreview = { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
       draw();
+    } else {
+      const handle = bridgeHandleAtPointer(event);
+      const hovered = handle && state.selectedBridge ? state.selectedBridge : bridgeAtPointer(event);
+      const changed = hovered !== state.hoveredBridge;
+      state.hoveredBridge = hovered;
+      viewport.style.cursor = handle ? (handle === 'move' ? 'move' : 'crosshair')
+        : hovered ? 'move'
+          : state.tool === 'pan' ? 'grab' : 'crosshair';
+      if (changed) draw();
     }
   });
 
@@ -4554,6 +4721,7 @@ function wire() {
   viewport?.addEventListener('pointerleave', () => {
     if (touchupStroke || drawingFrom || draggingBridge) return;
     state.touchupPreview = null;
+    state.hoveredBridge = null;
     draw();
   });
 
@@ -4569,6 +4737,7 @@ function wire() {
     state.drawingBridge = state.tool === 'support';
     state.bridgePreview = null;
     state.touchupPreview = null;
+    state.hoveredBridge = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
     if (painted) {
       refresh({ immediate: true });
@@ -4609,9 +4778,31 @@ function wire() {
       return;
     }
     if (event.altKey || event.target?.matches?.('input, textarea, select') || event.target?.isContentEditable) return;
+    if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedBridge) {
+      event.preventDefault();
+      deleteSelectedBridge();
+      return;
+    }
+    if (state.selectedBridge && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const distanceMm = event.shiftKey ? 10 : 1;
+      const movement = {
+        ArrowLeft: [-distanceMm, 0],
+        ArrowRight: [distanceMm, 0],
+        ArrowUp: [0, -distanceMm],
+        ArrowDown: [0, distanceMm],
+      }[event.key];
+      promoteBridgeToManual(state.selectedBridge);
+      translateBridge(state.selectedBridge, movement[0], movement[1]);
+      syncSelectedBridgeControls();
+      refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false });
+      pushHistory();
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       if (toolOptionsKind) closeToolOptions({ returnFocus: true });
+      else if (state.selectedBridge) selectBridge(null);
       else setTool('pan');
     }
     if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomAt(state.zoom * 1.35); }

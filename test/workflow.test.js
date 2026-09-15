@@ -97,6 +97,23 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /promoteBridgeToManual\(draggingBridge\.bridge\)/);
 });
 
+test('supports are easy to select, move, resize, rotate, and delete', () => {
+  for (const id of [
+    'bridge-selection', 'selected-bridge-width', 'selected-bridge-length',
+    'selected-bridge-angle', 'btn-delete-bridge',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(html, /Drag the support[\s\S]*round endpoint/);
+  assert.match(html, /Arrow keys move 1 mm[\s\S]*Delete removes/);
+  assert.match(editor, /hoveredBridge: null/);
+  assert.match(editor, /event\.pointerType === 'touch' \? 24 : 14/);
+  assert.match(editor, /function setBridgeGeometry\(/);
+  assert.match(editor, /function translateBridge\(/);
+  assert.match(editor, /return 'move'/);
+  assert.match(editor, /\(event\.key === 'Delete' \|\| event\.key === 'Backspace'\)/);
+  assert.match(editor, /\['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'\]/);
+  assert.match(editor, /beginBridgeDrag\(event, hit, handle \|\| 'move'\)/);
+});
+
 test('freehand material tools paint continuously but commit as one gesture', () => {
   assert.match(editor, /state\.touchupLive = mode === 'freehand'/);
   assert.match(editor, /scheduleLiveTouchupDraw\(\)/);

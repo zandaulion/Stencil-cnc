@@ -2272,6 +2272,28 @@ select:focus {
   line-height: 1.45;
 }
 
+.bridge-edit-hint {
+  margin: 0 0 12px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, transparent);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+
+.bridge-edit-hint strong {
+  color: var(--ink);
+}
+
+.bridge-keyboard-hint {
+  margin: 5px 0 11px;
+  color: var(--muted);
+  font-size: 0.56rem;
+  line-height: 1.45;
+}
+
 .profile-card {
   align-items: flex-end;
 }
