@@ -231,10 +231,10 @@ export function suggestSlatStabilizers(mask, config) {
   if (!Number.isFinite(organicVariation) || organicVariation < 0 || organicVariation > 1) {
     throw new RangeError("organicVariation must be between 0 and 1");
   }
-  if (config.detailAt !== undefined && typeof config.detailAt !== "function") {
+  if (config.detailAt != null && typeof config.detailAt !== "function") {
     throw new TypeError("detailAt must be a function");
   }
-  if (config.featureAt !== undefined && typeof config.featureAt !== "function") {
+  if (config.featureAt != null && typeof config.featureAt !== "function") {
     throw new TypeError("featureAt must be a function");
   }
 
@@ -764,10 +764,10 @@ function normalizeStrategy(strategy) {
   if (radialCenter && (!Number.isFinite(radialCenter.x) || !Number.isFinite(radialCenter.y))) {
     throw new RangeError("strategy.radialCenter must contain finite coordinates");
   }
-  if (strategy?.detailAt !== undefined && typeof strategy.detailAt !== "function") {
+  if (strategy?.detailAt != null && typeof strategy.detailAt !== "function") {
     throw new TypeError("strategy.detailAt must be a function");
   }
-  if (strategy?.featureAt !== undefined && typeof strategy.featureAt !== "function") {
+  if (strategy?.featureAt != null && typeof strategy.featureAt !== "function") {
     throw new TypeError("strategy.featureAt must be a function");
   }
   return {

@@ -3494,7 +3494,10 @@ async function autoBridge() {
     toast(`${resultMessage}${fallbackNotice}`);
   } catch (error) {
     console.error(error);
-    toast('Could not work out where to bridge.');
+    const reason = error instanceof Error && error.message
+      ? ` ${error.message}`
+      : '';
+    toast(`Support planning failed before changing the geometry.${reason}`);
   } finally {
     button?.removeAttribute('aria-busy');
     if (button) button.disabled = false;

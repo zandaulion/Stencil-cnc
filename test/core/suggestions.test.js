@@ -144,6 +144,7 @@ test("follow-features planning moves an equal bridge out of bright image areas",
       kind: "lamele",
       level: 2,
       preferredAngleDeg: 0,
+      detailAt: null,
       featureAt: ({ y }) => ({
         lightness: y < 6 ? 1 : 0,
         strength: 0,
@@ -215,7 +216,14 @@ test("a smart bridge retains the requested full web after kerf", () => {
     minimumWebMm: 3,
     kerfMm: 2,
     requireSingleComponent: true,
-    strategy: { mode: "smart", kind: "lamele", level: 2, preferredAngleDeg: 0 },
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      detailAt: null,
+      featureAt: null,
+    },
   });
   const bridged = applyCapsuleBridges(mask, suggestions, sheet);
   const afterKerf = erodeMaskPhysical(bridged, 1, sheet);
@@ -336,6 +344,8 @@ test("connected slats receive staggered stabilizers at the requested span", () =
       slatPitchMm: 4,
       maximumUnsupportedSpanMm: 6,
       organicVariation: 0,
+      detailAt: null,
+      featureAt: null,
     },
   };
   const first = suggestBridges(mask, config);

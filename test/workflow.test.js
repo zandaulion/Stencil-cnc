@@ -179,6 +179,7 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /Feature-following support scoring failed; retrying without it/);
   assert.match(editor, /smartBridgeStrategy\(\{ sampleImage: false \}\)/);
   assert.match(editor, /Image guidance was unavailable, so structural placement was used/);
+  assert.match(editor, /Support planning failed before changing the geometry/);
   assert.match(editor, /supportSimulation\.postKerf\.componentCount === 1/);
   assert.match(html, /id="connectivity-detail"/);
   assert.match(editor, /Everything stays connected after kerf/);
