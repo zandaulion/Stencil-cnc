@@ -28,6 +28,20 @@ reaches a separate loopback-only Caddy listener for
 If the user service must survive logout, enable lingering for the deployment
 account once (`loginctl enable-linger <deployment-user>`).
 
+## Project-share storage
+
+Private project links store encrypted bundle files in the web container's
+existing `/data` volume. Set `SHARE_ENCRYPTION_KEY` to a stable value generated
+with `openssl rand -hex 32` when sharing should survive an `ADMIN_TOKEN`
+rotation. When it is blank or omitted, a domain-separated key is derived from
+`ADMIN_TOKEN`; changing that token then makes earlier bundles unreadable.
+
+`SHARE_MAX_BYTES` limits one complete package, while
+`SHARE_OWNER_MAX_BYTES` and `SHARE_OWNER_MAX_ACTIVE` bound storage per sharing
+device. Expired package files are removed during later share operations and
+revoked packages are removed immediately. Include the named Podman volume in
+normal encrypted backups if active project links must survive host loss.
+
 ## Invite console
 
 The shared console needs this entry in `pwa-invite-console/apps.json`:

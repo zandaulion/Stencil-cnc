@@ -46,13 +46,29 @@ test('local project management is searchable, recoverable, and privacy preservin
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.project-library-dialog/);
 });
 
+test('server snapshots explicitly share complete projects and remain revocable', () => {
+  for (const id of [
+    'share-project-dialog', 'share-expiry', 'btn-create-share', 'share-link',
+    'share-history', 'received-share-dialog', 'btn-import-shared-project',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(editor, /schema: SHARE_BUNDLE_SCHEMA[\s\S]*project: JSON\.parse\(serializeProject\(record\)\)[\s\S]*source,[\s\S]*checkpoints:[\s\S]*artifacts:/);
+  assert.match(editor, /application\/vnd\.stencil-cnc\.share\+json/);
+  assert.match(editor, /\/api\/shares\?expiresDays=/);
+  assert.match(editor, /X-Share-Token/);
+  assert.match(editor, /importReceivedShare/);
+  assert.match(storage, /const ARTIFACT_STORE = 'artifacts'/);
+  assert.match(storage, /export async function saveArtifact/);
+  assert.match(storage, /export async function importCheckpoint/);
+  assert.match(css, /\.share-project-dialog/);
+});
+
 test('validated final geometry can be exported as a shareable PNG', () => {
   assert.match(html, /id="btn-export-png"[^>]*disabled/);
   assert.match(html, /Full-resolution black-and-white preview/);
   assert.match(html, /File names include the project, panel size, cut style, frame choice, purpose, and validation timestamp/);
   assert.match(editor, /\['btn-export-svg', 'btn-export-dxf', 'btn-export-png'\]/);
   assert.match(editor, /const mask = geometryForExport\(\)/);
-  assert.match(editor, /downloadBlob\(exportFilename\('png'\), await pngBlob\(mask\)\)/);
+  assert.match(editor, /filename = exportFilename\('png'\)[\s\S]*blob = await pngBlob\(mask\)[\s\S]*downloadBlob\(filename, blob\)/);
   assert.match(editor, /state\.exportTimestamp = state\.validation\.valid \? new Date\(\) : null/);
   assert.match(editor, /el\('btn-export-png'\)\?\.addEventListener\('click', \(\) => exportGeometry\('png'\)\)/);
 });

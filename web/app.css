@@ -3991,6 +3991,190 @@ select:focus {
   width: min(560px, calc(100vw - 32px));
 }
 
+.share-project-dialog,
+.received-share-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.share-project-dialog form,
+.received-share-dialog form {
+  max-height: min(760px, calc(100dvh - 40px));
+  overflow-y: auto;
+}
+
+.share-project-dialog h2,
+.received-share-dialog h2 {
+  margin-bottom: 6px;
+}
+
+.share-project-dialog select {
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+}
+
+.share-contents {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-contents li {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.share-contents strong,
+.share-history strong,
+.share-result > strong {
+  font-size: 0.68rem;
+}
+
+.share-contents span,
+.share-history span,
+.share-result > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1.4;
+}
+
+.app-dialog .share-privacy,
+.app-dialog .share-progress,
+.app-dialog .share-result {
+  padding: 10px 11px;
+  border-radius: 8px;
+  font-size: 0.63rem;
+  line-height: 1.45;
+}
+
+.share-privacy {
+  color: #5e4a18;
+  background: #fff5dd;
+}
+
+.share-progress,
+.share-result {
+  color: #12615c;
+  background: #e7f6f3;
+}
+
+.share-result {
+  display: flex;
+  flex-direction: column;
+  margin: 12px 0;
+}
+
+.share-result[hidden],
+.share-progress[hidden] {
+  display: none;
+}
+
+.share-result > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.share-result input[type="text"] {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #add8d2;
+  border-radius: 6px;
+  font-size: 0.62rem;
+}
+
+@media (max-width: 520px) {
+  .share-contents {
+    grid-template-columns: 1fr;
+  }
+
+  .share-result > div {
+    grid-template-columns: 1fr;
+  }
+}
+
+.share-result button,
+.share-history button {
+  padding: 7px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--teal);
+  background: white;
+  font: inherit;
+  font-size: 0.6rem;
+  font-weight: 750;
+}
+
+.share-history-section {
+  margin: 16px 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.share-history-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+}
+
+.share-history-section > p {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.share-history {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-history li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.share-history li > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.share-history li > div:last-child {
+  display: flex;
+  gap: 5px;
+}
+
+.received-share-preview {
+  width: 100%;
+  max-height: 280px;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  object-fit: contain;
+  background: var(--surface-2);
+}
+
 .version-list {
   display: grid;
   max-height: 360px;

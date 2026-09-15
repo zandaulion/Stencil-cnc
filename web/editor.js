@@ -49,15 +49,22 @@ import {
 import {
   clearLastProject,
   deleteProject,
+  deleteShareSecret,
   downloadBlob,
   downloadText,
+  importArtifact,
+  importCheckpoint,
+  listArtifacts,
   listCheckpoints,
   listProjects,
   loadLastProject,
   loadProject,
+  loadShareSecret,
   restoreProject,
+  saveArtifact,
   saveCheckpoint,
   saveProject,
+  saveShareSecret,
   setLastProject,
   trashProject,
   updateProject,
@@ -76,6 +83,8 @@ const PLASMA_MIN_OPENING_MM = 2;
 const PLASMA_MIN_WEB_MM = 3;
 const UNDO_DEPTH = 40;
 const CANDIDATE_LIMIT = 8;
+const SHARE_BUNDLE_SCHEMA = 'stencil-cnc.share-bundle';
+const SHARE_BUNDLE_VERSION = 1;
 const MANUAL_ONLY_STYLES = new Set(['icoana']);
 const PANEL_SIZE_PRESETS = Object.freeze({
   a0: Object.freeze({ widthMm: 841, heightMm: 1189 }),
@@ -144,6 +153,7 @@ const state = {
   styleMaskFor: null,    // cut style that produced styleMask
   styleMaskFresh: false, // false while controls have changed or a refinement is pending
   styleBusy: false,
+  shareBusy: false,
   baseMask: null,        // threshold/style result in the source's own aspect
   sourceMask: null,      // base mask placed on the physical sheet, plus touch-ups
   placement: null,
@@ -2787,6 +2797,8 @@ let projectLibraryRows = [];
 let renameProjectId = null;
 let versionProjectId = null;
 let versionRows = [];
+let sharingProject = null;
+let receivedShare = null;
 let projectThumbnailRender = 0;
 const projectThumbnailCache = new Map();
 
@@ -2944,6 +2956,7 @@ function buildProjectCard(record) {
       projectAction(record.id === state.projectId ? 'Continue' : 'Open', 'open', { primary: true }),
       projectAction('Rename', 'rename'),
       projectAction('Duplicate', 'duplicate'),
+      projectAction('Share', 'share'),
       projectAction('Download', 'download'),
       projectAction(`Versions${record.checkpointCount ? ` · ${record.checkpointCount}` : ''}`, 'versions'),
       projectAction('Trash', 'trash'),
@@ -3140,6 +3153,10 @@ async function handleProjectAction(action, record) {
     toast('Portable project downloaded without the source photograph.');
     return;
   }
+  if (action === 'share') {
+    await openShareProject(record);
+    return;
+  }
   if (action === 'versions') {
     await showProjectVersions(record);
     return;
@@ -3184,6 +3201,337 @@ async function handleProjectAction(action, record) {
     await deleteProject(record.id);
     await openProjectLibrary({ flush: false });
     toast(`Deleted “${record.name}”.`);
+  }
+}
+
+/* --------------------------------------------------------- project sharing */
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Could not read a local artefact'));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+    throw new TypeError('Invalid shared artefact');
+  }
+  const separator = dataUrl.indexOf(',');
+  if (separator < 0 || !dataUrl.slice(0, separator).includes(';base64')) {
+    throw new TypeError('Unsupported shared artefact encoding');
+  }
+  const mimeType = dataUrl.slice(5, separator).split(';')[0] || 'application/octet-stream';
+  const decoded = atob(dataUrl.slice(separator + 1));
+  const bytes = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function requestShareJson(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `Sharing request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function buildShareBundle(record) {
+  const [checkpoints, artifacts] = await Promise.all([
+    listCheckpoints(record.id),
+    listArtifacts(record.id),
+  ]);
+  const sourceBlob = record.localSource instanceof Blob && record.localSource.size
+    ? record.localSource
+    : null;
+  const sourceType = sourceBlob?.type || record.source?.mimeType || 'image/jpeg';
+  const typedSource = sourceBlob && sourceBlob.type
+    ? sourceBlob
+    : sourceBlob ? new Blob([sourceBlob], { type: sourceType }) : null;
+  const source = typedSource ? {
+    name: record.source?.name || 'source-image',
+    mimeType: sourceType,
+    size: typedSource.size,
+    dataUrl: await blobToDataUrl(typedSource),
+  } : null;
+  const encodedArtifacts = await Promise.all(artifacts.map(async (artifact) => ({
+    filename: artifact.filename,
+    kind: artifact.kind,
+    mimeType: artifact.mimeType,
+    createdAt: artifact.createdAt,
+    dataUrl: await blobToDataUrl(artifact.blob),
+  })));
+  return {
+    schema: SHARE_BUNDLE_SCHEMA,
+    version: SHARE_BUNDLE_VERSION,
+    createdAt: new Date().toISOString(),
+    clientProjectId: record.id,
+    project: JSON.parse(serializeProject(record)),
+    source,
+    checkpoints: checkpoints.map((checkpoint) => ({
+      label: checkpoint.label,
+      createdAt: checkpoint.createdAt,
+      project: checkpoint.project,
+    })),
+    artifacts: encodedArtifacts,
+  };
+}
+
+function shareLink(id, token) {
+  const url = new URL(`/share/${encodeURIComponent(id)}`, location.origin);
+  url.hash = `share-key=${encodeURIComponent(token)}`;
+  return url.toString();
+}
+
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const input = document.createElement('textarea');
+    input.value = value;
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.append(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  }
+}
+
+async function renderShareHistory() {
+  const list = el('share-history');
+  const empty = el('share-history-empty');
+  if (!list || !empty || !sharingProject) return;
+  try {
+    const result = await requestShareJson('/api/shares');
+    const rows = (result.shares || []).filter((share) => (
+      share.direction === 'sent' && share.clientProjectId === sharingProject.id
+    ));
+    list.replaceChildren();
+    empty.hidden = rows.length > 0;
+    for (const share of rows) {
+      const item = document.createElement('li');
+      const copy = document.createElement('div');
+      const heading = document.createElement('strong');
+      heading.textContent = share.status === 'active'
+        ? share.claimed ? 'Claimed share' : 'Active share'
+        : `${share.status[0].toUpperCase()}${share.status.slice(1)} share`;
+      const detail = document.createElement('span');
+      detail.textContent = `${formatStorage(share.sizeBytes)} · expires ${formatProjectDate(share.expiresAt)}`;
+      copy.append(heading, detail);
+      const actions = document.createElement('div');
+      if (share.status === 'active') {
+        const token = await loadShareSecret(share.id);
+        if (token) {
+          const copyButton = document.createElement('button');
+          copyButton.type = 'button';
+          copyButton.dataset.shareAction = 'copy';
+          copyButton.dataset.shareId = share.id;
+          copyButton.dataset.shareToken = token;
+          copyButton.textContent = 'Copy link';
+          actions.append(copyButton);
+        }
+        const revoke = document.createElement('button');
+        revoke.type = 'button';
+        revoke.dataset.shareAction = 'revoke';
+        revoke.dataset.shareId = share.id;
+        revoke.textContent = 'Revoke';
+        actions.append(revoke);
+      }
+      item.append(copy, actions);
+      list.append(item);
+    }
+  } catch (error) {
+    console.error(error);
+    list.replaceChildren();
+    empty.hidden = false;
+    empty.textContent = 'Existing server shares could not be loaded.';
+  }
+}
+
+async function openShareProject(record) {
+  if (state.offline) {
+    toast('Connect to the server before sharing a project.');
+    return;
+  }
+  sharingProject = record;
+  closeProjectLibrary();
+  el('share-project-title').textContent = `Share “${record.name}”`;
+  el('share-source-summary').textContent = record.localSource instanceof Blob
+    ? `Original source · ${formatStorage(record.localSource.size)}`
+    : 'No original source is stored for this project';
+  const [checkpoints, artifacts] = await Promise.all([
+    listCheckpoints(record.id),
+    listArtifacts(record.id),
+  ]);
+  el('share-checkpoint-summary').textContent = `${checkpoints.length} recovery ${checkpoints.length === 1 ? 'point' : 'points'}`;
+  el('share-artifact-summary').textContent = `${artifacts.length} retained export ${artifacts.length === 1 ? 'artefact' : 'artefacts'}`;
+  el('share-result').hidden = true;
+  el('share-progress').hidden = true;
+  el('btn-create-share').disabled = false;
+  const dialog = el('share-project-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+  await renderShareHistory();
+}
+
+async function createServerShare() {
+  if (!sharingProject) return;
+  state.shareBusy = true;
+  const button = el('btn-create-share');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  el('share-progress').hidden = false;
+  el('share-progress').textContent = 'Packaging the editable project and every stored artefact…';
+  try {
+    const bundle = await buildShareBundle(sharingProject);
+    const payload = new Blob([JSON.stringify(bundle)], {
+      type: 'application/vnd.stencil-cnc.share+json',
+    });
+    el('share-progress').textContent = `Uploading ${formatStorage(payload.size)} as an encrypted snapshot…`;
+    const expiresDays = Number(el('share-expiry')?.value || 30);
+    const share = await requestShareJson(`/api/shares?expiresDays=${expiresDays}`, {
+      method: 'POST',
+      body: payload,
+    });
+    await saveShareSecret(share.id, share.token);
+    const link = shareLink(share.id, share.token);
+    el('share-link').value = link;
+    el('share-result-detail').textContent = `Expires ${formatProjectDate(share.expiresAt)} · one invited recipient device`;
+    el('share-result').hidden = false;
+    el('share-progress').hidden = true;
+    await renderShareHistory();
+    toast('Private project link created.');
+  } catch (error) {
+    console.error(error);
+    el('share-progress').textContent = error.message || 'The project could not be shared.';
+    toast(error.message || 'The project could not be shared.');
+  } finally {
+    state.shareBusy = false;
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
+}
+
+function sharedLocation() {
+  const match = location.pathname.match(
+    /^\/share\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/?$/i,
+  );
+  if (!match) return null;
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const token = fragment.get('share-key');
+  return token ? { id: match[1], token } : null;
+}
+
+async function offerSharedProject() {
+  const locationShare = sharedLocation();
+  if (!locationShare) return;
+  if (state.offline) {
+    toast('Reconnect to open this server-hosted project share.');
+    return;
+  }
+  try {
+    const metadata = await requestShareJson(`/api/shares/${encodeURIComponent(locationShare.id)}/claim`, {
+      method: 'POST',
+      headers: { 'X-Share-Token': locationShare.token },
+    });
+    receivedShare = { ...locationShare, metadata };
+    el('received-share-title').textContent = metadata.name;
+    el('received-share-meta').textContent = [
+      metadata.ownerLabel ? `Shared by ${metadata.ownerLabel}` : null,
+      metadata.sheet ? `${metadata.sheet.widthMm} × ${metadata.sheet.heightMm} mm` : null,
+      metadata.cutStyle ? CUT_STYLE_NAMES[metadata.cutStyle] || metadata.cutStyle : null,
+      formatStorage(metadata.sizeBytes),
+      metadata.hasSource ? 'original included' : 'processed geometry only',
+      `${metadata.checkpointCount || 0} recovery points`,
+      `${metadata.artifactCount || 0} exports`,
+      `expires ${formatProjectDate(metadata.expiresAt)}`,
+    ].filter(Boolean).join(' · ');
+    const preview = el('received-share-preview');
+    preview.hidden = !metadata.thumbnail;
+    if (metadata.thumbnail) preview.src = metadata.thumbnail;
+    el('received-share-dialog').showModal();
+  } catch (error) {
+    console.error(error);
+    toast(error.message || 'This project share could not be opened.');
+  }
+}
+
+async function importReceivedShare() {
+  if (!receivedShare) return;
+  state.shareBusy = true;
+  const button = el('btn-import-shared-project');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  let saved = null;
+  try {
+    const response = await fetch(`/api/shares/${encodeURIComponent(receivedShare.id)}/bundle`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'X-Share-Token': receivedShare.token },
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'The shared project package could not be downloaded.');
+    }
+    const bundle = await response.json();
+    if (bundle.schema !== SHARE_BUNDLE_SCHEMA || bundle.version !== SHARE_BUNDLE_VERSION) {
+      throw new Error('This shared project uses an unsupported package format.');
+    }
+    const project = deserializeProject(JSON.stringify(bundle.project));
+    const localSource = bundle.source?.dataUrl ? dataUrlToBlob(bundle.source.dataUrl) : null;
+    saved = await saveProject({
+      ...project,
+      id: null,
+      createdAt: null,
+      updatedAt: null,
+      localSource,
+      sharedFrom: {
+        shareId: receivedShare.id,
+        ownerLabel: receivedShare.metadata.ownerLabel,
+        importedAt: new Date().toISOString(),
+      },
+    });
+    for (const checkpoint of (bundle.checkpoints || []).slice(0, 10)) {
+      await importCheckpoint(saved.id, checkpoint);
+    }
+    for (const artifact of (bundle.artifacts || []).slice(0, 30)) {
+      await importArtifact(saved.id, {
+        ...artifact,
+        blob: dataUrlToBlob(artifact.dataUrl),
+      });
+    }
+    styleAbort?.abort();
+    await loadProjectState(saved);
+    await setLastProject(saved.id);
+    state.dirty = false;
+    setSaveState('saved', savedAtLabel(new Date(saved.updatedAt)));
+    el('received-share-dialog').close('imported');
+    receivedShare = null;
+    history.replaceState({}, document.title, '/');
+    pushHistory();
+    toast('Shared project imported as a complete editable local copy.');
+  } catch (error) {
+    console.error(error);
+    if (saved?.id) await deleteProject(saved.id).catch(() => {});
+    toast(error.message || 'The shared project could not be imported.');
+  } finally {
+    state.shareBusy = false;
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
   }
 }
 
@@ -4432,18 +4780,36 @@ async function exportGeometry(kind) {
   const mask = geometryForExport();
   try {
     const units = el('export-units')?.value === 'in' ? 'in' : 'mm';
+    let blob;
+    let filename;
     if (kind === 'svg') {
-      downloadText(exportFilename('svg'), exportSvg(mask, sheet(), { title: state.name, units }), 'image/svg+xml');
+      filename = exportFilename('svg');
+      blob = new Blob([exportSvg(mask, sheet(), { title: state.name, units })], { type: 'image/svg+xml' });
     } else if (kind === 'dxf') {
-      downloadText(exportFilename('dxf'), exportDxf(mask, sheet(), { units }), 'application/dxf');
+      filename = exportFilename('dxf');
+      blob = new Blob([exportDxf(mask, sheet(), { units })], { type: 'application/dxf' });
     } else if (kind === 'png') {
-      downloadBlob(exportFilename('png'), await pngBlob(mask));
+      filename = exportFilename('png');
+      blob = await pngBlob(mask);
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
+    downloadBlob(filename, blob);
     state.lastExportedAt = new Date().toISOString();
     markDirty();
     await createRecoveryPoint(`${kind.toUpperCase()} exported`);
+    if (state.projectId) {
+      try {
+        await saveArtifact(state.projectId, {
+          filename,
+          kind,
+          mimeType: blob.type,
+          blob,
+        });
+      } catch (artifactError) {
+        console.warn('The downloaded export could not be retained with the local project:', artifactError);
+      }
+    }
     toast(`${kind.toUpperCase()} written.`);
   } catch (error) {
     console.error(error);
@@ -5303,6 +5669,52 @@ function wire() {
       await openProjectLibrary({ flush: false });
     }
   });
+  el('btn-create-share')?.addEventListener('click', () => void createServerShare());
+  el('btn-copy-share-link')?.addEventListener('click', async () => {
+    const value = el('share-link')?.value;
+    if (!value) return;
+    await copyText(value);
+    toast('Private project link copied.');
+  });
+  el('share-history')?.addEventListener('click', async (event) => {
+    const button = event.target.closest?.('[data-share-action]');
+    if (!button) return;
+    if (button.dataset.shareAction === 'copy') {
+      await copyText(shareLink(button.dataset.shareId, button.dataset.shareToken));
+      toast('Private project link copied.');
+      return;
+    }
+    if (button.dataset.shareAction === 'revoke') {
+      button.disabled = true;
+      try {
+        await requestShareJson(`/api/shares/${encodeURIComponent(button.dataset.shareId)}`, {
+          method: 'DELETE',
+        });
+        await deleteShareSecret(button.dataset.shareId);
+        await renderShareHistory();
+        toast('Project share revoked. Imported copies are unaffected.');
+      } catch (error) {
+        console.error(error);
+        toast(error.message || 'The project share could not be revoked.');
+        button.disabled = false;
+      }
+    }
+  });
+  el('share-project-dialog')?.addEventListener('close', () => {
+    if (!sharingProject) return;
+    sharingProject = null;
+    void openProjectLibrary({ flush: false });
+  });
+  el('share-project-dialog')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
+  el('btn-import-shared-project')?.addEventListener('click', () => void importReceivedShare());
+  el('received-share-dialog')?.addEventListener('close', (event) => {
+    if (event.currentTarget.returnValue !== 'imported') {
+      receivedShare = null;
+      history.replaceState({}, document.title, '/');
+    }
+  });
   el('rename-project-dialog')?.addEventListener('close', async (event) => {
     const id = renameProjectId;
     renameProjectId = null;
@@ -5780,9 +6192,11 @@ export async function startEditor({ device, offline = false } = {}) {
     setSaveState('error', 'Could not open local project');
   }
 
+  await offerSharedProject();
+
   pushHistory();
   window.stencilCncIsBusy = () => Boolean(
-    state.dirty || state.styleBusy || rebuildTimer || saveTimer || styleTimer,
+    state.dirty || state.styleBusy || state.shareBusy || rebuildTimer || saveTimer || styleTimer,
   );
   window.addEventListener('resize', () => fitToView());
 }

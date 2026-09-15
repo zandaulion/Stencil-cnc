@@ -16,6 +16,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and minimum-web strength.
 - Builds reversible manufacturing-repair previews before changing the artwork.
 - Saves projects and creative candidates locally in the browser, with a searchable project library, recoverable Trash, and recent recovery points.
+- Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
 - Exports validated geometry as SVG, DXF, or a shareable PNG.
 - Runs as an installable, offline-capable PWA after an authorised device has loaded it.
 
@@ -42,6 +43,14 @@ Autosave reports `Saving…`, the local save time, or a retry action if storage 
 
 Recovery points and portable `.stencil.json` downloads contain the editable processed geometry and settings, but never the browser-local source photograph. A restored recovery point reuses the photograph only when that source is still available in the same browser project.
 
+### Private project sharing
+
+Select **Share** on a project card to create a server-hosted snapshot. The share package contains the editable project, original source image when it remains available, creative candidates, manual edits, supports, repairs, up to ten recovery points, and export artefacts retained by the current browser. SVG, DXF, and PNG exports are retained locally from this release onward; files downloaded by older versions cannot be recovered from the browser's Downloads folder automatically.
+
+Share packages are encrypted at rest and protected by a random secret that appears only in the link and the creating browser. A recipient must open that link on an invited Stencil CNC device. The first recipient device claims the snapshot and can import an independent editable local copy. Shares expire after 7, 30, or 90 days and the owner can revoke them from the same project's Share dialog. Revocation prevents another download but cannot erase a copy the recipient already imported.
+
+Sharing does not turn on cloud autosave or synchronization. Normal work remains device-only, and neither copy changes when the other person edits theirs.
+
 ## Architecture
 
 ```text
@@ -53,6 +62,7 @@ Browser PWA
           ▼
 Node / Express service
 ├── invite-based device access
+├── encrypted, expiring project-share packages
 ├── static PWA and protected editor modules
 └── private proxy to the analysis service
           │
@@ -138,6 +148,8 @@ See [deploy/README.md](deploy/README.md) for the complete Caddy, tunnel, invite-
 
 - Original photographs and generated previews are ignored by Git by default.
 - Browser projects stay in local IndexedDB; portable project files omit the private source photograph.
+- Server upload happens only when the user explicitly creates a private project link.
+- Share secrets are stored as hashes on the server; encrypted bundle files live under the private data volume and are removed after revocation or expiry cleanup.
 - Invite redemption stores a random device credential only in a secure, host-only, HttpOnly cookie.
 - Server-side device records contain token hashes rather than plaintext credentials.
 - The Python analysis service is not exposed publicly.

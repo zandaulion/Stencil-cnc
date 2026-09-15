@@ -13,6 +13,7 @@ import {
   tokenFromCookieHeader
 } from './auth.js';
 import { versionedWeb } from './serve-sw.js';
+import { ShareError, ShareService } from './shares.js';
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_DIR = path.join(moduleDirectory, '../web');
@@ -72,6 +73,14 @@ export function createApp(options = {}) {
   const database = options.db || openDatabase();
   const webDirectory = options.webDir || DEFAULT_WEB_DIR;
   const auth = options.auth || new AuthService(database, options.authOptions);
+  const configuredShareKey = String(
+    options.shareEncryptionKey ?? process.env.SHARE_ENCRYPTION_KEY ?? '',
+  ).trim();
+  const shares = options.shares || new ShareService(database, {
+    directory: options.shareDirectory,
+    encryptionSecret: configuredShareKey || auth.adminToken,
+    maximumBytes: options.shareMaximumBytes,
+  });
   const limiter = options.limiter || new RedemptionLimiter({
     maxPerKey: envInteger('REDEEM_MAX_FAILURES_PER_MINUTE', 8),
     maxGlobal: envInteger('REDEEM_MAX_FAILURES_GLOBAL_PER_MINUTE', 120)
@@ -164,6 +173,75 @@ export function createApp(options = {}) {
   app.get('/api/auth/me', requireDevice, (req, res) => {
     setPrivateNoStore(res);
     res.json({ ok: true, device: req.device });
+  });
+
+  const shareFailure = (res, error) => {
+    if (error instanceof ShareError) {
+      return errorResponse(res, error.status, error.message, error.code);
+    }
+    throw error;
+  };
+
+  app.get('/api/shares', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      return res.json({ shares: shares.list(req.device.id) });
+    } catch (error) {
+      return shareFailure(res, error);
+    }
+  });
+
+  app.post(
+    '/api/shares',
+    requireDevice,
+    express.raw({
+      type: ['application/vnd.stencil-cnc.share+json', 'application/octet-stream'],
+      limit: shares.maximumBytes,
+    }),
+    (req, res) => {
+      setPrivateNoStore(res);
+      try {
+        const share = shares.create(req.device.id, req.body, {
+          expiresDays: req.query.expiresDays,
+        });
+        return res.status(201).json({
+          ...share,
+          path: `/share/${share.id}`,
+        });
+      } catch (error) {
+        return shareFailure(res, error);
+      }
+    },
+  );
+
+  app.post('/api/shares/:id/claim', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      return res.json(shares.claim(req.params.id, req.get('x-share-token'), req.device.id));
+    } catch (error) {
+      return shareFailure(res, error);
+    }
+  });
+
+  app.get('/api/shares/:id/bundle', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      const result = shares.bundle(req.params.id, req.get('x-share-token'), req.device.id);
+      res.type('application/vnd.stencil-cnc.share+json');
+      res.setHeader('Content-Disposition', `attachment; filename="stencil-share-${result.row.id}.json"`);
+      return res.send(result.buffer);
+    } catch (error) {
+      return shareFailure(res, error);
+    }
+  });
+
+  app.delete('/api/shares/:id', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      return res.json(shares.revoke(req.params.id, req.device.id));
+    } catch (error) {
+      return shareFailure(res, error);
+    }
   });
 
   // The analysis service turns a photograph into a source mask. It holds no
@@ -324,6 +402,9 @@ export function createApp(options = {}) {
 
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
+    if (error?.type === 'entity.too.large') {
+      return errorResponse(res, 413, 'The complete project package is too large to share.', 'bundle_too_large');
+    }
     if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
       return errorResponse(res, 400, 'Malformed JSON body', 'bad_json');
     }
@@ -332,6 +413,7 @@ export function createApp(options = {}) {
   });
 
   app.locals.auth = auth;
+  app.locals.shares = shares;
   app.locals.db = database;
   app.locals.webVersion = versioned.version;
   return app;

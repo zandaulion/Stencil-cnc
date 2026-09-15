@@ -44,6 +44,11 @@ function showGate(prefilledCode = '') {
   input?.focus();
 }
 
+function clearInviteFromUrl() {
+  const shareHash = location.pathname.startsWith('/share/') ? location.hash : '';
+  history.replaceState({}, document.title, `${location.pathname}${shareHash}`);
+}
+
 async function openEditor(device, { offline = false } = {}) {
   state.device = device || null;
   document.getElementById('gate-screen')?.setAttribute('hidden', '');
@@ -73,7 +78,7 @@ async function checkAccess() {
     const result = await requestJson('/api/auth/me', { cache: 'no-store' });
     localStorage.setItem(AUTH_MARKER, '1');
     await openEditor(result.device);
-    if (location.search) history.replaceState({}, document.title, location.pathname);
+    if (location.search) clearInviteFromUrl();
   } catch (error) {
     if (error.status === 401) {
       localStorage.removeItem(AUTH_MARKER);
@@ -114,7 +119,7 @@ function wireGate() {
         body: JSON.stringify({ code, label })
       });
       localStorage.setItem(AUTH_MARKER, '1');
-      history.replaceState({}, document.title, location.pathname);
+      clearInviteFromUrl();
       await openEditor(result.device);
     } catch (error) {
       if (errorNode) {

@@ -1,9 +1,11 @@
 const DB_NAME = 'stencil-cnc';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const PROJECT_STORE = 'projects';
 const META_STORE = 'meta';
 const CHECKPOINT_STORE = 'checkpoints';
+const ARTIFACT_STORE = 'artifacts';
 const CHECKPOINT_LIMIT = 10;
+const ARTIFACT_LIMIT = 30;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -22,6 +24,11 @@ function openDatabase() {
         const checkpoints = db.createObjectStore(CHECKPOINT_STORE, { keyPath: 'id' });
         checkpoints.createIndex('projectId', 'projectId');
         checkpoints.createIndex('createdAt', 'createdAt');
+      }
+      if (!db.objectStoreNames.contains(ARTIFACT_STORE)) {
+        const artifacts = db.createObjectStore(ARTIFACT_STORE, { keyPath: 'id' });
+        artifacts.createIndex('projectId', 'projectId');
+        artifacts.createIndex('createdAt', 'createdAt');
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -100,6 +107,10 @@ export async function deleteProject(id) {
   for (const checkpoint of checkpoints) {
     await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.delete(checkpoint.id)));
   }
+  const artifacts = await listArtifacts(id);
+  for (const artifact of artifacts) {
+    await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.delete(artifact.id)));
+  }
   const meta = await transaction(META_STORE, 'readonly', (store) => requestResult(store.get('lastProjectId')));
   if (meta?.value === id) await clearLastProject();
 }
@@ -147,6 +158,92 @@ export async function listCheckpoints(projectId) {
     requestResult(store.index('projectId').getAll(projectId))
   ));
   return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+export async function importCheckpoint(projectId, checkpoint) {
+  const value = {
+    id: crypto.randomUUID(),
+    projectId,
+    label: String(checkpoint?.label || 'Imported recovery point').slice(0, 120),
+    createdAt: typeof checkpoint?.createdAt === 'string'
+      ? checkpoint.createdAt
+      : new Date().toISOString(),
+    project: checkpoint?.project,
+  };
+  if (!value.project || typeof value.project !== 'object') {
+    throw new TypeError('An editable checkpoint project is required');
+  }
+  await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  return value;
+}
+
+export async function saveArtifact(projectId, artifact) {
+  if (!projectId || !(artifact?.blob instanceof Blob)) {
+    throw new TypeError('A saved project and Blob artefact are required');
+  }
+  const value = {
+    id: crypto.randomUUID(),
+    projectId,
+    filename: String(artifact.filename || 'project-artefact').slice(0, 240),
+    kind: String(artifact.kind || 'file').slice(0, 30),
+    mimeType: String(artifact.mimeType || artifact.blob.type || 'application/octet-stream').slice(0, 120),
+    createdAt: new Date().toISOString(),
+    blob: artifact.blob,
+  };
+  await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  const artifacts = await listArtifacts(projectId);
+  for (const stale of artifacts.slice(ARTIFACT_LIMIT)) {
+    await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.delete(stale.id)));
+  }
+  return value;
+}
+
+export async function importArtifact(projectId, artifact) {
+  if (!projectId || !(artifact?.blob instanceof Blob)) {
+    throw new TypeError('A saved project and Blob artefact are required');
+  }
+  const value = {
+    id: crypto.randomUUID(),
+    projectId,
+    filename: String(artifact.filename || 'shared-artefact').slice(0, 240),
+    kind: String(artifact.kind || 'file').slice(0, 30),
+    mimeType: String(artifact.mimeType || artifact.blob.type || 'application/octet-stream').slice(0, 120),
+    createdAt: typeof artifact.createdAt === 'string'
+      ? artifact.createdAt
+      : new Date().toISOString(),
+    blob: artifact.blob,
+  };
+  await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  return value;
+}
+
+export async function listArtifacts(projectId) {
+  if (!projectId) return [];
+  const rows = await transaction(ARTIFACT_STORE, 'readonly', (store) => (
+    requestResult(store.index('projectId').getAll(projectId))
+  ));
+  return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+export async function saveShareSecret(id, token) {
+  if (!id || !token) return;
+  await transaction(META_STORE, 'readwrite', (store) => requestResult(store.put({
+    key: `shareSecret:${id}`,
+    value: String(token),
+  })));
+}
+
+export async function loadShareSecret(id) {
+  if (!id) return null;
+  const row = await transaction(META_STORE, 'readonly', (store) => (
+    requestResult(store.get(`shareSecret:${id}`))
+  ));
+  return typeof row?.value === 'string' ? row.value : null;
+}
+
+export async function deleteShareSecret(id) {
+  if (!id) return;
+  await transaction(META_STORE, 'readwrite', (store) => requestResult(store.delete(`shareSecret:${id}`)));
 }
 
 export function downloadBlob(filename, blob) {

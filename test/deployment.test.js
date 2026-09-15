@@ -27,7 +27,8 @@ const auth = new AuthService(db, {
   adminToken: 'test-admin-token-that-is-not-secret',
   publicBaseUrl: 'https://stencil-cnc.zandaulion.com'
 });
-const app = createApp({ db, auth, webDir: webDirectory });
+const shareDirectory = path.join(temporaryRoot, 'shares');
+const app = createApp({ db, auth, webDir: webDirectory, shareDirectory });
 const server = app.listen(0, '127.0.0.1');
 await new Promise((resolve) => server.once('listening', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -117,6 +118,97 @@ test('revoking through the console immediately blocks online protected assets', 
   });
   assert.equal(revoked.status, 200);
   assert.equal((await request('/editor.js', { headers: { Cookie: session.cookie } })).status, 401);
+});
+
+test('encrypted project snapshots are claimable by one invited recipient and revocable by the owner', async () => {
+  const owner = await register('Project owner');
+  const recipient = await register('Project recipient');
+  const stranger = await register('Other workshop');
+  const bundle = {
+    schema: 'stencil-cnc.share-bundle',
+    version: 1,
+    clientProjectId: 'local-project-1',
+    project: {
+      schema: 'stencil-cnc.project',
+      version: 1,
+      name: 'Private portrait',
+      sheet: { widthMm: 297, heightMm: 420 },
+      editor: {
+        projectSummary: {
+          cutStyle: 'lamele',
+          thumbnail: 'data:image/png;base64,cHJldmlldw==',
+        },
+      },
+    },
+    source: {
+      name: 'private.jpg',
+      mimeType: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,cHJpdmF0ZS1waG90bw==',
+    },
+    checkpoints: [{ label: 'Validated', project: { schema: 'stencil-cnc.project' } }],
+    artifacts: [],
+  };
+  const created = await request('/api/shares?expiresDays=30', {
+    method: 'POST',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/vnd.stencil-cnc.share+json',
+    },
+    body: JSON.stringify(bundle),
+  });
+  assert.equal(created.status, 201);
+  const share = await created.json();
+  assert.match(share.token, /^[A-Za-z0-9_-]{40,}$/);
+  assert.equal(share.path, `/share/${share.id}`);
+  assert.equal(share.hasSource, true);
+  assert.equal(share.checkpointCount, 1);
+
+  const encryptedFile = fs.readFileSync(path.join(shareDirectory, `${share.id}.share`));
+  assert.equal(encryptedFile.includes(Buffer.from('Private portrait')), false);
+  assert.equal(encryptedFile.includes(Buffer.from('private-photo')), false);
+  assert.equal(encryptedFile.includes(Buffer.from('cHJldmlldw==')), false);
+
+  assert.equal((await request(`/api/shares/${share.id}/claim`, {
+    method: 'POST',
+    headers: { Cookie: recipient.cookie, 'X-Share-Token': 'wrong' },
+  })).status, 404);
+  const claimed = await request(`/api/shares/${share.id}/claim`, {
+    method: 'POST',
+    headers: { Cookie: recipient.cookie, 'X-Share-Token': share.token },
+  });
+  assert.equal(claimed.status, 200);
+  const claimedMetadata = await claimed.json();
+  assert.equal(claimedMetadata.direction, 'received');
+  assert.equal(claimedMetadata.thumbnail, bundle.project.editor.projectSummary.thumbnail);
+
+  assert.equal((await request(`/api/shares/${share.id}/claim`, {
+    method: 'POST',
+    headers: { Cookie: stranger.cookie, 'X-Share-Token': share.token },
+  })).status, 403);
+
+  const downloaded = await request(`/api/shares/${share.id}/bundle`, {
+    headers: { Cookie: recipient.cookie, 'X-Share-Token': share.token },
+  });
+  assert.equal(downloaded.status, 200);
+  assert.deepEqual(await downloaded.json(), bundle);
+
+  const ownerShares = await request('/api/shares', { headers: { Cookie: owner.cookie } });
+  assert.equal((await ownerShares.json()).shares[0].direction, 'sent');
+  const recipientShares = await request('/api/shares', { headers: { Cookie: recipient.cookie } });
+  assert.equal((await recipientShares.json()).shares[0].direction, 'received');
+
+  assert.equal((await request(`/api/shares/${share.id}`, {
+    method: 'DELETE',
+    headers: { Cookie: recipient.cookie },
+  })).status, 404);
+  assert.equal((await request(`/api/shares/${share.id}`, {
+    method: 'DELETE',
+    headers: { Cookie: owner.cookie },
+  })).status, 200);
+  assert.equal(fs.existsSync(path.join(shareDirectory, `${share.id}.share`)), false);
+  assert.equal((await request(`/api/shares/${share.id}/bundle`, {
+    headers: { Cookie: recipient.cookie, 'X-Share-Token': share.token },
+  })).status, 404);
 });
 
 test('pwa-kit worker is content-stamped and the escape hatch has hard headers', async () => {

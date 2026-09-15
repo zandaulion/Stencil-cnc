@@ -6,8 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 export const nowIso = () => new Date().toISOString();
 
 /**
- * Create the small server-side store used only for invites and device access.
- * Projects and source photographs remain in the browser's IndexedDB.
+ * Create the server-side metadata store. Editable projects remain in the
+ * browser's IndexedDB unless a user explicitly publishes an encrypted share.
  */
 export function initDatabase(db) {
   db.exec('PRAGMA foreign_keys = ON;');
@@ -43,6 +43,34 @@ export function initDatabase(db) {
       ON devices(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_invites_created_at
       ON invites(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS project_shares (
+      id                  TEXT PRIMARY KEY,
+      owner_device_id     TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      recipient_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+      client_project_id   TEXT,
+      token_hash          TEXT NOT NULL,
+      name                TEXT NOT NULL,
+      panel_width_mm      REAL,
+      panel_height_mm     REAL,
+      cut_style           TEXT,
+      has_source          INTEGER NOT NULL DEFAULT 0,
+      checkpoint_count    INTEGER NOT NULL DEFAULT 0,
+      artifact_count      INTEGER NOT NULL DEFAULT 0,
+      created_at          TEXT NOT NULL,
+      expires_at          TEXT NOT NULL,
+      revoked_at          TEXT,
+      size_bytes          INTEGER NOT NULL,
+      bundle_sha256       TEXT NOT NULL,
+      file_name           TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_project_shares_owner
+      ON project_shares(owner_device_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_project_shares_recipient
+      ON project_shares(recipient_device_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_project_shares_expiry
+      ON project_shares(expires_at);
   `);
 
   return db;
