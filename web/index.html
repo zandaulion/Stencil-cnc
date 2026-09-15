@@ -1068,14 +1068,6 @@
             </div>
           </div>
 
-          <fieldset class="repair-fieldset repair-categories">
-            <legend>Repair categories</legend>
-            <label><input id="repair-category-slivers" type="checkbox" checked><span><strong>Clean raster slivers</strong><small>Remove detached specks and close uncuttable holes.</small></span></label>
-            <label><input id="repair-category-gaps" type="checkbox" checked><span><strong>Repair close cuts</strong><small>Widen the web, merge cuts, or close minor cuts.</small></span></label>
-            <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect detached material</strong><small>Add bounded, filter-aware ties to pieces that separate before or after kerf.</small></span></label>
-            <label><input id="repair-category-warnings" type="checkbox"><span><strong>Reduce structural warnings</strong><small>Optionally thicken weak material after every blocking error is resolved. This may visibly simplify fine detail.</small></span></label>
-          </fieldset>
-
           <fieldset class="repair-fieldset">
             <legend>Strategy</legend>
             <div class="repair-strategies">
@@ -1094,7 +1086,28 @@
             </select>
           </label>
 
-          <button class="button button-primary button-full" id="btn-preview-repairs" type="button">Preview repairs</button>
+          <section class="repair-stage" id="repair-error-step" data-state="ready" aria-labelledby="repair-error-step-title">
+            <div class="repair-stage-heading">
+              <span class="repair-stage-number" aria-hidden="true">1</span>
+              <div><strong id="repair-error-step-title">Fix blocking errors</strong><small id="repair-error-readiness">Choose which error categories to repair.</small></div>
+            </div>
+            <fieldset class="repair-fieldset repair-categories">
+              <legend>Error repair categories</legend>
+              <label><input id="repair-category-slivers" type="checkbox" checked><span><strong>Clean raster slivers</strong><small>Remove detached specks and close uncuttable holes.</small></span></label>
+              <label><input id="repair-category-gaps" type="checkbox" checked><span><strong>Repair close cuts</strong><small>Widen the web, merge cuts, or close minor cuts.</small></span></label>
+              <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect detached material</strong><small>Add bounded, filter-aware ties to pieces that separate before or after kerf.</small></span></label>
+            </fieldset>
+            <button class="button button-primary button-full" id="btn-preview-repairs" type="button">Preview error repairs</button>
+          </section>
+
+          <section class="repair-stage repair-warning-stage" id="repair-warning-step" data-state="locked" aria-labelledby="repair-warning-step-title">
+            <div class="repair-stage-heading">
+              <span class="repair-stage-number" aria-hidden="true">2</span>
+              <div><strong id="repair-warning-step-title">Reduce structural warnings <em>Optional</em></strong><small id="repair-warning-readiness">Fix every blocking error before correcting warnings.</small></div>
+            </div>
+            <p>Thickens weak material only while validation improves. This can simplify fine image detail.</p>
+            <button class="button button-secondary button-full" id="btn-preview-warning-repairs" type="button" disabled>Preview warning corrections</button>
+          </section>
 
           <div class="repair-preview" id="repair-preview" hidden>
             <div class="repair-plan-heading">

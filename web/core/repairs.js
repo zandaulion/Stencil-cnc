@@ -548,7 +548,11 @@ export function planManufacturingRepairs(mask, options) {
       if (!supportItem) break;
       const supported = applyCapsuleBridges(candidate, bridges, options.sheet);
       const supportedValidation = validate(supported);
-      if (!safeStructuralWarningImprovement(validation, supportedValidation)) break;
+      const rejection = structuralWarningRejectionReason(validation, supportedValidation);
+      if (rejection) {
+        notes.push(`The next structural-tie pass was not kept because ${rejection}`);
+        break;
+      }
       candidate = supported;
       validation = supportedValidation;
       protectedMask = withProtectedEdits(protectedMask, supportItem.edits.enlarge.keep);
@@ -565,7 +569,11 @@ export function planManufacturingRepairs(mask, options) {
       const thickeningItem = materialAdditionRepairItem(candidate, expanded, pass, pixel);
       if (!thickeningItem) break;
       const expandedValidation = validate(expanded);
-      if (!safeStructuralWarningImprovement(validation, expandedValidation)) break;
+      const rejection = structuralWarningRejectionReason(validation, expandedValidation);
+      if (rejection) {
+        notes.push(`The next material-thickening pass was not kept because ${rejection}`);
+        break;
+      }
       candidate = expanded;
       validation = expandedValidation;
       items.push(thickeningItem);
@@ -640,6 +648,28 @@ export function applySmallOpeningRepairPlan(mask, plan) {
     for (const index of edits.remove) output.data[index] = REMOVED;
   }
   return output;
+}
+
+/**
+ * Composes a newly previewed mask change into an existing reversible repair
+ * layer. The `before` mask already includes that layer, so reversing one of
+ * its edits removes the old instruction instead of adding a contradictory one.
+ */
+export function mergeRepairLayerEdits(before, after, existing = null) {
+  assertMask(before);
+  assertMask(after);
+  assertSameSize(before, after);
+  const keep = new Set(existing?.keep ?? []);
+  const remove = new Set(existing?.remove ?? []);
+  for (let index = 0; index < after.data.length; index += 1) {
+    if (before.data[index] === after.data[index]) continue;
+    if (after.data[index] === RETAINED) {
+      if (!remove.delete(index)) keep.add(index);
+    } else if (!keep.delete(index)) {
+      remove.add(index);
+    }
+  }
+  return { keep, remove };
 }
 
 /** Changes one repair, or every geometrically similar repair, in place. */
@@ -753,17 +783,21 @@ function thinAreaPixelCount(validation) {
   return validation?.issues?.find((issue) => issue.code === "MIN_WEB_THIN_AREAS")?.details?.pixelCount ?? 0;
 }
 
-function safeStructuralWarningImprovement(before, after) {
-  if (validationLocationCount(after, "error") !== 0) return false;
+function structuralWarningRejectionReason(before, after) {
+  const afterErrors = validationLocationCount(after, "error");
+  if (afterErrors !== 0) {
+    return `it would create ${afterErrors} blocking ${afterErrors === 1 ? "location" : "locations"}.`;
+  }
   const beforeLocations = structuralWarningLocationCount(before);
   const afterLocations = structuralWarningLocationCount(after);
   const beforeWeakWebs = weakWebCount(before);
   const afterWeakWebs = weakWebCount(after);
   const beforeThinPixels = thinAreaPixelCount(before);
   const afterThinPixels = thinAreaPixelCount(after);
-  return afterLocations < beforeLocations &&
-    afterWeakWebs <= beforeWeakWebs &&
-    afterThinPixels <= beforeThinPixels;
+  if (afterLocations >= beforeLocations) return "it would not reduce the structural-warning count.";
+  if (afterWeakWebs > beforeWeakWebs) return "it would create more disconnected full-width material regions.";
+  if (afterThinPixels > beforeThinPixels) return "it would create more thin-material raster cells.";
+  return null;
 }
 
 function supportRepairItem(mask, bridges, sheet, role) {

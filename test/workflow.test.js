@@ -49,7 +49,8 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
     'repair-panel', 'btn-preview-repairs', 'repair-safety', 'repair-preview',
     'btn-repair-next', 'repair-similar', 'btn-discard-repairs',
     'btn-apply-repairs', 'btn-undo-repair', 'repair-category-slivers',
-    'repair-category-gaps', 'repair-category-webs', 'repair-category-warnings', 'repair-layer-status',
+    'repair-category-gaps', 'repair-category-webs', 'repair-error-step',
+    'repair-warning-step', 'btn-preview-warning-repairs', 'repair-warning-readiness', 'repair-layer-status',
     'btn-toggle-repair-layer', 'btn-clear-repair-layer', 'repair-plan-status',
     'repair-plan-note',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
@@ -61,12 +62,17 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
   }
   assert.match(editor, /planManufacturingRepairs\(mask/);
   assert.match(editor, /maximumBridges: 192/);
-  assert.match(editor, /warnings: el\('repair-category-warnings'\)\?\.checked === true/);
+  assert.match(editor, /if \(mode === 'warnings'\)/);
+  assert.match(editor, /warnings: false/);
+  assert.ok(html.indexOf('id="repair-error-step"') < html.indexOf('id="repair-warning-step"'));
+  assert.match(html, /id="btn-preview-warning-repairs"[^>]*disabled/);
   assert.match(editor, /plan\.outcome\.safeToApply/);
   assert.match(editor, /state\.repairPlan\.outcome\?\.safeToApply !== true/);
   assert.match(editor, /state\.repairItemIndex = Math\.min\(state\.repairItemIndex, plan\.items\.length - 1\)/);
   assert.match(editor, /manufacturingRepairs: \{/);
   assert.match(editor, /state\.repairPreviewBaseMask/);
+  assert.match(editor, /state\.repairPreviewUsesExistingLayer/);
+  assert.match(editor, /mergeRepairLayerEdits\(/);
   assert.match(editor, /setSmallOpeningRepairAction\(state\.repairPlan/);
   assert.match(editor, /await runValidation\(\)/);
   assert.match(editor, /function undoLastRepair\(\)/);

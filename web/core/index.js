@@ -26,6 +26,7 @@ export { applyCapsuleBridge, applyCapsuleBridges, validateBridge } from "./bridg
 export { connectedRegionIndices, physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
 export {
   applySmallOpeningRepairPlan,
+  mergeRepairLayerEdits,
   planCutGapRepairs,
   planLoosePieceRepairs,
   planManufacturingRepairs,

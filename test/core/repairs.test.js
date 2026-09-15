@@ -5,6 +5,7 @@ import {
   RETAINED,
   applySmallOpeningRepairPlan,
   createMask,
+  mergeRepairLayerEdits,
   planCutGapRepairs,
   planLoosePieceRepairs,
   planManufacturingRepairs,
@@ -23,6 +24,18 @@ function validate(mask, sheet = { widthMm: mask.width, heightMm: mask.height }) 
     requireSingleComponent: true,
   });
 }
+
+test("a warning pass composes with the existing error-repair layer", () => {
+  const repaired = maskFromAscii(["#.#."]);
+  const warningResult = maskFromAscii(["####"]);
+  const combined = mergeRepairLayerEdits(repaired, warningResult, {
+    keep: new Set([2]),
+    remove: new Set([1]),
+  });
+
+  assert.deepEqual([...combined.keep].sort((a, b) => a - b), [2, 3]);
+  assert.deepEqual([...combined.remove], []);
+});
 
 test("durable small-opening repair closes isolated specks in one batch", () => {
   const mask = maskFromAscii([

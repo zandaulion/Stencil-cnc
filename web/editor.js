@@ -30,6 +30,7 @@ import {
   exportSvg,
   maskFromImageData,
   maskToRgba,
+  mergeRepairLayerEdits,
   orientSheet,
   physicalDiscIndices,
   physicalStrokeIndices,
@@ -161,6 +162,7 @@ const state = {
   highlightedIssueLocation: 0,
   repairPlan: null,
   repairPreviewBaseMask: null,
+  repairPreviewUsesExistingLayer: false,
   repairPreviewMask: null,
   repairPreviewKerfMask: null,
   repairItemIndex: 0,
@@ -988,6 +990,7 @@ function invalidateValidation({ clearAnalysis = false } = {}) {
   state.highlightedIssueLocation = 0;
   state.repairPlan = null;
   state.repairPreviewBaseMask = null;
+  state.repairPreviewUsesExistingLayer = false;
   state.repairPreviewMask = null;
   state.repairPreviewKerfMask = null;
   state.repairItemIndex = 0;
@@ -1306,6 +1309,7 @@ function repairableIssue(kind = null) {
             'KERF_DISCONNECTED_RETAINED_MATERIAL',
             'MIN_OPENING_UNCUTTABLE',
             'MIN_CUT_GAP',
+            'MIN_WEB_NO_SURVIVING_CORE',
             'MIN_WEB_DISCONNECT',
             'MIN_WEB_THIN_AREAS',
           ];
@@ -1322,11 +1326,23 @@ function repairableValidationLocationCount(validation, severity = 'error') {
     'KERF_DISCONNECTED_RETAINED_MATERIAL',
     'MIN_OPENING_UNCUTTABLE',
     'MIN_CUT_GAP',
+    'MIN_WEB_NO_SURVIVING_CORE',
     'MIN_WEB_DISCONNECT',
     'MIN_WEB_THIN_AREAS',
   ]);
   return (validation?.issues ?? [])
     .filter((issue) => issue.severity === severity && codes.has(issue.code))
+    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+}
+
+function structuralWarningLocationCount(validation) {
+  const codes = new Set([
+    'MIN_WEB_NO_SURVIVING_CORE',
+    'MIN_WEB_DISCONNECT',
+    'MIN_WEB_THIN_AREAS',
+  ]);
+  return (validation?.issues ?? [])
+    .filter((issue) => issue.severity === 'warning' && codes.has(issue.code))
     .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
 }
 
@@ -1369,52 +1385,54 @@ function validationLocationCount(validation, severity) {
     .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
 }
 
-function selectedRepairCategories() {
+function selectedRepairCategories(mode = 'errors') {
+  if (mode === 'warnings') {
+    return { slivers: false, gaps: false, webs: false, warnings: true };
+  }
   return {
     slivers: el('repair-category-slivers')?.checked !== false,
     gaps: el('repair-category-gaps')?.checked !== false,
     webs: el('repair-category-webs')?.checked !== false,
-    warnings: el('repair-category-warnings')?.checked === true,
+    warnings: false,
   };
 }
 
-function cloneCurrentGeometryWithoutRepairLayer() {
-  const layerWasEnabled = state.manufacturingRepairs.enabled;
-  const layerWasStale = state.manufacturingRepairs.stale;
-  if (manufacturingRepairCount() && layerWasEnabled && !layerWasStale) {
-    state.manufacturingRepairs.enabled = false;
-    rebuildSource();
-    rebuildDesign();
-  }
-  const current = geometryForExport();
-  const result = current ? { ...current, data: Uint8Array.from(current.data) } : null;
-  if (manufacturingRepairCount() && layerWasEnabled && !layerWasStale) {
-    state.manufacturingRepairs.enabled = true;
-    rebuildSource();
-    rebuildDesign();
-  }
-  return result;
+function cloneGeometry(mask) {
+  return mask ? { ...mask, data: Uint8Array.from(mask.data) } : null;
 }
 
-async function buildRepairPreview({ focus = true } = {}) {
-  const mask = cloneCurrentGeometryWithoutRepairLayer();
+function repairPlanningGeometry() {
+  const current = cloneGeometry(geometryForExport());
+  const usesExistingLayer = manufacturingRepairCount() > 0 &&
+    state.manufacturingRepairs.enabled && !state.manufacturingRepairs.stale;
+  return { current, usesExistingLayer };
+}
+
+async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
+  const { current: mask, usesExistingLayer } = repairPlanningGeometry();
   if (!mask) {
     toast('Import artwork before planning manufacturing repairs.');
     return false;
   }
-  const categories = selectedRepairCategories();
+  if (mode === 'warnings' && (!state.validation || validationLocationCount(state.validation, 'error') > 0)) {
+    toast('Fix every blocking error before reducing structural warnings.');
+    return false;
+  }
+  const categories = selectedRepairCategories(mode);
   if (!categories.slivers && !categories.gaps && !categories.webs && !categories.warnings) {
     toast('Select at least one repair category.');
     return false;
   }
 
-  const button = el('btn-preview-repairs');
+  const button = el(mode === 'warnings' ? 'btn-preview-warning-repairs' : 'btn-preview-repairs');
   button?.setAttribute('aria-busy', 'true');
   if (button) {
     button.disabled = true;
-    button.textContent = 'Planning combined repairs…';
+    button.textContent = mode === 'warnings' ? 'Planning warning corrections…' : 'Planning error repairs…';
   }
-  toast('Planning all selected manufacturing repairs…');
+  toast(mode === 'warnings'
+    ? 'Planning optional structural warning corrections…'
+    : 'Planning selected blocking-error repairs…');
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
   try {
@@ -1443,6 +1461,7 @@ async function buildRepairPreview({ focus = true } = {}) {
     const candidate = proposal.mask;
     const plan = {
       kind: proposal.kind,
+      mode,
       strategy: proposal.strategy,
       categories: proposal.categories,
       items: proposal.items,
@@ -1453,6 +1472,7 @@ async function buildRepairPreview({ focus = true } = {}) {
     if (!plan.items.length || !plan.outcome.safeToApply) {
       state.repairPlan = null;
       state.repairPreviewBaseMask = null;
+      state.repairPreviewUsesExistingLayer = false;
       state.repairPreviewMask = null;
       state.repairPreviewKerfMask = null;
       const explanation = plan.outcome.notes[0] ??
@@ -1464,6 +1484,7 @@ async function buildRepairPreview({ focus = true } = {}) {
     }
     state.repairPlan = plan;
     state.repairPreviewBaseMask = mask;
+    state.repairPreviewUsesExistingLayer = usesExistingLayer;
     state.repairPreviewMask = candidate;
     const previewKerfMm = toMm(numberField('kerf', 1.2));
     state.repairPreviewKerfMask = previewKerfMm > 0
@@ -1479,6 +1500,7 @@ async function buildRepairPreview({ focus = true } = {}) {
     console.error(error);
     state.repairPlan = null;
     state.repairPreviewBaseMask = null;
+    state.repairPreviewUsesExistingLayer = false;
     state.repairPreviewMask = null;
     state.repairPreviewKerfMask = null;
     toast('Automatic repair planning failed; the geometry was not changed.');
@@ -1528,6 +1550,7 @@ function updateRepairPreviewMasks() {
 function discardRepairPreview() {
   state.repairPlan = null;
   state.repairPreviewBaseMask = null;
+  state.repairPreviewUsesExistingLayer = false;
   state.repairPreviewMask = null;
   state.repairPreviewKerfMask = null;
   state.repairItemIndex = 0;
@@ -1572,22 +1595,65 @@ function renderRepairPanel() {
   if (panel.hidden) return;
   updateManufacturingRepairState();
 
+  const blockingLocations = validationLocationCount(state.validation, 'error');
+  const warningLocations = structuralWarningLocationCount(state.validation);
+  const validationReady = Boolean(state.validation);
+  const errorStep = el('repair-error-step');
+  const warningStep = el('repair-warning-step');
+  const errorButton = el('btn-preview-repairs');
+  const warningButton = el('btn-preview-warning-repairs');
+  if (errorStep) errorStep.dataset.state = !validationReady
+    ? 'locked'
+    : blockingLocations > 0 ? 'ready' : 'complete';
+  if (warningStep) warningStep.dataset.state = !validationReady || blockingLocations > 0
+    ? 'locked'
+    : warningLocations > 0 ? 'ready' : 'complete';
+  if (errorButton) {
+    errorButton.disabled = !validationReady || blockingLocations === 0;
+    errorButton.textContent = state.repairPlan?.mode === 'errors'
+      ? 'Regenerate error-repair preview'
+      : 'Preview error repairs';
+  }
+  if (warningButton) {
+    warningButton.disabled = !validationReady || blockingLocations > 0 || warningLocations === 0;
+    warningButton.textContent = state.repairPlan?.mode === 'warnings'
+      ? 'Regenerate warning-correction preview'
+      : 'Preview warning corrections';
+  }
+  const errorReadiness = el('repair-error-readiness');
+  if (errorReadiness) errorReadiness.textContent = !validationReady
+    ? 'Run validation to find blocking errors.'
+    : blockingLocations > 0
+      ? `${blockingLocations} blocking ${blockingLocations === 1 ? 'location needs' : 'locations need'} correction.`
+      : 'Complete · no blocking errors remain.';
+  const warningReadiness = el('repair-warning-readiness');
+  if (warningReadiness) warningReadiness.textContent = !validationReady
+    ? 'Run validation before correcting warnings.'
+    : blockingLocations > 0
+      ? 'Locked until every blocking error is resolved.'
+      : warningLocations > 0
+        ? `${warningLocations} structural warning ${warningLocations === 1 ? 'location is' : 'locations are'} eligible for optional correction.`
+        : 'Complete · no structural warnings remain.';
+
   const complete = !issue && Boolean(result);
   panel.classList.toggle('is-complete', complete);
-  el('repair-title').textContent = complete
+  el('repair-title').textContent = state.repairPlan?.mode === 'warnings'
+    ? 'Reduce structural warnings'
+    : complete
     ? manufacturing ? 'Manufacturing repairs applied' : loosePieces ? 'Tiny loose pieces removed' : cutGaps ? 'Close cut gaps repaired' : 'Small openings repaired'
     : manufacturing ? 'Repair manufacturing issues' : loosePieces ? 'Remove tiny loose pieces' : cutGaps ? 'Repair close cuts' : 'Repair small openings';
   el('repair-intro').textContent = manufacturing
-    ? 'Plan cleanup, cut-gap corrections, and filter-aware structural ties together as one reversible layer.'
+    ? 'Fix blockers first, then optionally reduce structural warnings. Both stages remain in one reversible layer.'
     : loosePieces
     ? 'Remove only sub-manufacturing specks in one batch. Larger detached artwork remains available for smart supports.'
     : cutGaps
       ? 'Repair every undersized cut gap as a batch, preview the result, then override important exceptions.'
       : 'Repair this repeated problem as a batch, then override important exceptions.';
   const validationErrors = repairableValidationLocationCount(state.validation);
-  const validationWarnings = repairableValidationLocationCount(state.validation, 'warning');
-  const plannedCount = state.repairPlan?.outcome.beforeErrors ||
-    (state.repairPlan?.categories.warnings ? state.repairPlan.outcome.beforeWarnings : 0);
+  const validationWarnings = structuralWarningLocationCount(state.validation);
+  const plannedCount = state.repairPlan?.mode === 'warnings'
+    ? state.repairPlan.outcome.beforeWarnings
+    : state.repairPlan?.outcome.beforeErrors;
   const targetCount = state.repairPlan ? plannedCount : (validationErrors || validationWarnings);
   el('repair-count').textContent = complete ? '✓' : String(manufacturing
     ? targetCount
@@ -1596,7 +1662,9 @@ function renderRepairPanel() {
   applied.hidden = !result;
   if (result) {
     const remaining = result.remaining ?? repairIssueCount(issue);
-    const noun = result.kind === 'manufacturing'
+    const noun = result.mode === 'warnings'
+      ? 'warning corrections'
+      : result.kind === 'manufacturing'
       ? 'manufacturing repair groups'
       : result.kind === 'loose-pieces'
       ? 'loose pieces removed'
@@ -1606,16 +1674,13 @@ function renderRepairPanel() {
       : remaining > 0
         ? `${result.count} repairs applied · ${remaining} still need review.`
         : result.remainingWarnings > 0
-          ? `${result.count} repairs applied · no blockers; ${result.remainingWarnings} warning locations remain.`
+          ? `${result.count} ${noun} applied · no blockers; ${result.remainingWarnings} warning locations remain.`
         : `${result.count} repairs applied and validation passed.`;
   }
   if (!issue && !state.repairPlan) return;
 
   const strategy = selectedRepairStrategy();
   el('repair-strategy-description').textContent = REPAIR_STRATEGY_COPY[kind][strategy];
-  el('btn-preview-repairs').textContent = manufacturing && state.repairPlan
-    ? 'Regenerate repair preview'
-    : 'Generate repair preview';
   el('repair-target-control').hidden = loosePieces;
   const preview = el('repair-preview');
   preview.hidden = !state.repairPlan;
@@ -1633,7 +1698,7 @@ function renderRepairPanel() {
   el('repair-enlarge-count').textContent = String(counts.enlarge);
   el('repair-merge-count').textContent = String(counts.merge);
   el('btn-apply-repairs').textContent = manufacturing
-    ? `Apply repair layer`
+    ? state.repairPlan.mode === 'warnings' ? 'Apply warning corrections' : 'Apply error repairs'
     : `Apply ${items.length} repairs`;
   const outcome = state.repairPlan.outcome;
   el('repair-before-errors').textContent = String(outcome?.beforeErrors ?? '—');
@@ -1724,15 +1789,13 @@ async function applyRepairPlan() {
     toast('This preview does not safely improve the complete validation result, so it cannot be applied.');
     return;
   }
-  const keep = new Set();
-  const remove = new Set();
-  for (let index = 0; index < state.repairPreviewMask.data.length; index += 1) {
-    const before = state.repairPreviewBaseMask.data[index];
-    const after = state.repairPreviewMask.data[index];
-    if (before === after) continue;
-    if (after === RETAINED) keep.add(index);
-    else remove.add(index);
-  }
+  // Merge this pass into the active reversible layer. Warning correction can
+  // therefore build on error repair without replacing the earlier edits.
+  const { keep, remove } = mergeRepairLayerEdits(
+    state.repairPreviewBaseMask,
+    state.repairPreviewMask,
+    state.repairPreviewUsesExistingLayer ? state.manufacturingRepairs : null,
+  );
   if (keep.size + remove.size === 0) {
     toast('The proposed repairs do not change the editable artwork.');
     return;
@@ -1740,9 +1803,11 @@ async function applyRepairPlan() {
 
   const repairCount = state.repairPlan.items.length;
   const repairKind = state.repairPlan.kind;
+  const repairMode = state.repairPlan.mode;
   const repairSummary = {
     ...state.repairPlan.outcome,
     repairCount,
+    mode: repairMode,
     supportCount: state.repairPlan.supportCount ?? 0,
     strategy: state.repairPlan.strategy,
     categories: state.repairPlan.categories,
@@ -1756,10 +1821,13 @@ async function applyRepairPlan() {
   };
   state.repairPlan = null;
   state.repairPreviewBaseMask = null;
+  state.repairPreviewUsesExistingLayer = false;
   state.repairPreviewMask = null;
   state.repairPreviewKerfMask = null;
   refresh({ immediate: true, preserveManufacturingRepairs: true });
-  state.repairResult = { kind: repairKind, count: repairCount, running: true, remaining: null };
+  state.repairResult = {
+    kind: repairKind, mode: repairMode, count: repairCount, running: true, remaining: null,
+  };
   updateManufacturingRepairState();
   pushHistory();
   renderRepairPanel();
@@ -1767,13 +1835,15 @@ async function applyRepairPlan() {
   const remaining = validationLocationCount(state.validation, 'error');
   const remainingWarnings = validationLocationCount(state.validation, 'warning');
   state.repairResult = {
-    kind: repairKind, count: repairCount, running: false, remaining, remainingWarnings,
+    kind: repairKind, mode: repairMode, count: repairCount, running: false, remaining, remainingWarnings,
   };
   renderRepairPanel();
   toast(remaining > 0
     ? `Repair layer applied; ${remaining} blocking locations still need review.`
     : remainingWarnings > 0
-      ? `Repair layer applied; no blockers and ${remainingWarnings} warning locations remain.`
+      ? repairMode === 'warnings'
+        ? `Warning corrections applied; ${remainingWarnings} warning locations remain for review.`
+        : `Error repairs applied; no blockers and ${remainingWarnings} warning locations remain. Optional warning correction is now available.`
       : `Manufacturing repair layer applied and checked.`);
 }
 
@@ -4131,23 +4201,21 @@ function wire() {
   // --- validation and export
   el('btn-validate')?.addEventListener('click', runValidation);
   el('btn-validate-sidebar')?.addEventListener('click', runValidation);
-  el('btn-preview-repairs')?.addEventListener('click', () => void buildRepairPreview());
+  el('btn-preview-repairs')?.addEventListener('click', () => void buildRepairPreview({ mode: 'errors' }));
+  el('btn-preview-warning-repairs')?.addEventListener('click', () => void buildRepairPreview({ mode: 'warnings' }));
   for (const node of all('input[name="openingRepairStrategy"]')) {
     node.addEventListener('change', () => {
       const kind = state.repairPlan?.kind ?? 'manufacturing';
       el('repair-strategy-description').textContent = REPAIR_STRATEGY_COPY[kind][selectedRepairStrategy()];
-      if (state.repairPlan) void buildRepairPreview({ focus: false });
+      if (state.repairPlan) void buildRepairPreview({ focus: false, mode: state.repairPlan.mode });
     });
   }
   el('repair-safety')?.addEventListener('change', () => {
-    if (state.repairPlan) void buildRepairPreview({ focus: false });
+    if (state.repairPlan) void buildRepairPreview({ focus: false, mode: state.repairPlan.mode });
   });
-  for (const id of [
-    'repair-category-slivers', 'repair-category-gaps', 'repair-category-webs',
-    'repair-category-warnings',
-  ]) {
+  for (const id of ['repair-category-slivers', 'repair-category-gaps', 'repair-category-webs']) {
     el(id)?.addEventListener('change', () => {
-      if (state.repairPlan) void buildRepairPreview({ focus: false });
+      if (state.repairPlan?.mode === 'errors') void buildRepairPreview({ focus: false, mode: 'errors' });
     });
   }
   el('btn-repair-next')?.addEventListener('click', () => focusRepairItem(state.repairItemIndex + 1));

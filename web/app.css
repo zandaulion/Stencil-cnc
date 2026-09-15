@@ -3103,6 +3103,85 @@ select:focus {
   font-size: 0.57rem;
 }
 
+.repair-stage {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.repair-stage-heading {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.repair-stage-heading strong,
+.repair-stage-heading small {
+  display: block;
+}
+
+.repair-stage-heading strong {
+  color: var(--ink-soft);
+  font-size: 0.59rem;
+}
+
+.repair-stage-heading strong em {
+  margin-left: 4px;
+  color: var(--warning);
+  font-size: 0.47rem;
+  font-style: normal;
+  font-weight: 740;
+  text-transform: uppercase;
+}
+
+.repair-stage-heading small,
+.repair-warning-stage p {
+  color: var(--muted);
+  font-size: 0.5rem;
+  line-height: 1.4;
+}
+
+.repair-stage-number {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 0.53rem;
+  font-weight: 780;
+}
+
+.repair-stage[data-state="complete"] .repair-stage-number,
+.repair-stage[data-state="ready"] .repair-stage-number {
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.repair-stage[data-state="locked"] {
+  background: var(--surface-2);
+}
+
+.repair-stage[data-state="locked"] .repair-stage-number {
+  opacity: 0.65;
+}
+
+.repair-warning-stage p {
+  margin: 0;
+}
+
+.repair-stage .repair-categories {
+  margin-bottom: 0;
+}
+
 .repair-preview {
   margin-top: 12px;
   padding-top: 12px;
