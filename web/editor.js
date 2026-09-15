@@ -4323,7 +4323,7 @@ function nearestRetainedPoint(point, maximumDistanceMm = 30) {
   return nearest ?? point;
 }
 
-function manualSupportPoint(point, start = null) {
+function manualSupportPoint(point, start = null, { followDirection = true } = {}) {
   const currentSheet = sheet();
   const raw = {
     x: Math.max(0, Math.min(currentSheet.widthMm, point.x)),
@@ -4331,7 +4331,7 @@ function manualSupportPoint(point, start = null) {
   };
   const maximumDistance = Math.max(20, safeBridgeWidthMm() * 3);
   if (!start) return nearestRetainedPoint(raw, maximumDistance);
-  const aligned = constrainSupportEndpoint(start, raw);
+  const aligned = followDirection ? constrainSupportEndpoint(start, raw) : raw;
   if (el('support-snap')?.checked !== true) return aligned;
   const snappedAligned = nearestRetainedPoint(aligned, maximumDistance);
   if (snappedAligned !== aligned) return snappedAligned;
@@ -5498,7 +5498,11 @@ function wire() {
       draggingBridge.bridge.width = safeBridgeWidthMm(draggingBridge.bridge.width);
       if (draggingBridge.mode === 'start' || draggingBridge.mode === 'end') {
         const other = draggingBridge.mode === 'start' ? draggingBridge.bridge.end : draggingBridge.bridge.start;
-        const endpoint = manualSupportPoint({ x: mmX, y: mmY }, other);
+        const endpoint = manualSupportPoint(
+          { x: mmX, y: mmY },
+          other,
+          { followDirection: false },
+        );
         draggingBridge.bridge[draggingBridge.mode] = endpoint;
       } else {
         draggingBridge.bridge.start = { ...draggingBridge.start };

@@ -134,6 +134,7 @@ test('supports are easy to select, move, resize, rotate, and delete', () => {
   assert.match(html, /Drag the support[\s\S]*round endpoint/);
   assert.match(html, /Arrow keys move 1 mm[\s\S]*Delete removes/);
   assert.match(editor, /hoveredBridge: null/);
+  assert.match(editor, /manualSupportPoint\([\s\S]*\{ followDirection: false \}/);
   assert.match(editor, /event\.pointerType === 'touch' \? 24 : 14/);
   assert.match(editor, /function setBridgeGeometry\(/);
   assert.match(editor, /function translateBridge\(/);
