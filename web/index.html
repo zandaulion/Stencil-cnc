@@ -1072,7 +1072,8 @@
             <legend>Repair categories</legend>
             <label><input id="repair-category-slivers" type="checkbox" checked><span><strong>Clean raster slivers</strong><small>Remove detached specks and close uncuttable holes.</small></span></label>
             <label><input id="repair-category-gaps" type="checkbox" checked><span><strong>Repair close cuts</strong><small>Widen the web, merge cuts, or close minor cuts.</small></span></label>
-            <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect and strengthen material</strong><small>Repair detached pieces first, then add bounded filter-aware reinforcement when it is safe.</small></span></label>
+            <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect detached material</strong><small>Add bounded, filter-aware ties to pieces that separate before or after kerf.</small></span></label>
+            <label><input id="repair-category-warnings" type="checkbox"><span><strong>Reduce structural warnings</strong><small>Optionally thicken weak material after every blocking error is resolved. This may visibly simplify fine detail.</small></span></label>
           </fieldset>
 
           <fieldset class="repair-fieldset">

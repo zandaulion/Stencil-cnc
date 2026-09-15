@@ -1,6 +1,7 @@
 import { physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
 import { applyCapsuleBridges } from "./bridges.js";
-import { suggestKerfAwareBridges, suggestSlatStabilizers } from "./suggestions.js";
+import { dilateMaskPhysical } from "./morphology.js";
+import { suggestBridges, suggestKerfAwareBridges } from "./suggestions.js";
 import { validateDesign } from "./validation.js";
 import {
   REMOVED,
@@ -363,7 +364,7 @@ const CONNECTIVITY_ERROR_CODES = new Set([
  *   targetWebMm:number,
  *   targetOpeningMm:number,
  *   strategy?:"preserve"|"balanced"|"durable",
- *   categories?:{slivers?:boolean,gaps?:boolean,webs?:boolean},
+ *   categories?:{slivers?:boolean,gaps?:boolean,webs?:boolean,warnings?:boolean},
  *   protectedMask?:import('./mask.js').RasterMask|null,
  *   bridgeWidthMm:number,
  *   bridgeStrategy?:object,
@@ -389,6 +390,7 @@ export function planManufacturingRepairs(mask, options) {
     slivers: options.categories?.slivers !== false,
     gaps: options.categories?.gaps !== false,
     webs: options.categories?.webs !== false,
+    warnings: options.categories?.warnings === true,
   };
   let protectedMask = options.protectedMask
     ? cloneMask(options.protectedMask)
@@ -522,44 +524,59 @@ export function planManufacturingRepairs(mask, options) {
     }
   }
 
-  // Weak-web findings are warnings, not thousands of independent blockers.
-  // Slats have a meaningful reinforcement vocabulary, so try bounded,
-  // staggered rungs only after all hard constraints have passed.
-  if (categories.webs && validationLocationCount(validation, "error") === 0 &&
-      options.bridgeStrategy?.kind === "lamele" &&
-      Number.isFinite(options.bridgeStrategy.maximumUnsupportedSpanMm) &&
-      weakWebCount(validation) > 0 && supportCount < maximumBridges) {
-    const available = maximumBridges - supportCount;
-    const stabilizers = suggestSlatStabilizers(validation.postKerfMask, {
-      sheet: options.sheet,
-      widthMm: Math.max(bridgeWidthMm, targetWebMm + kerfMm),
-      barAngleDeg: options.bridgeStrategy.barAngleDeg,
-      slatPitchMm: options.bridgeStrategy.slatPitchMm,
-      maximumUnsupportedSpanMm: options.bridgeStrategy.maximumUnsupportedSpanMm,
-      organicVariation: options.bridgeStrategy.organicVariation,
-      detailAt: options.bridgeStrategy.detailAt,
-    }).slice(0, available);
-    const supportItem = supportRepairItem(candidate, stabilizers, options.sheet, "stabilizer");
-    if (supportItem) {
-      const previousMask = candidate;
-      const previousValidation = validation;
-      const previousWeakWebs = weakWebCount(validation);
-      candidate = applyCapsuleBridges(candidate, stabilizers, options.sheet);
-      validation = validate(candidate);
-      const safeImprovement = validationLocationCount(validation, "error") === 0 &&
-        weakWebCount(validation) < previousWeakWebs;
-      if (safeImprovement) {
-        items.push(supportItem);
-        supportCount += stabilizers.length;
-      } else {
-        candidate = previousMask;
-        validation = previousValidation;
-        notes.push("Weak-web stabilizers were rolled back because they did not improve validation safely.");
-      }
+  // Structural warnings are an explicit opt-in because correcting them can
+  // visibly thicken artwork. First join disconnected full-width cores with a
+  // sparse filter-aware tree, then try one-pixel physical dilation shells.
+  // Every candidate must keep the blocker count at zero and reduce the warning
+  // count without making another structural-warning metric worse.
+  if (categories.warnings && validationLocationCount(validation, "error") === 0) {
+    for (let pass = 1; pass <= 3 && supportCount < maximumBridges; pass += 1) {
+      if (!validation.minimumWebCoreMask || validation.minimumWebCore?.componentCount <= 1) break;
+      const available = maximumBridges - supportCount;
+      const bridges = suggestBridges(validation.minimumWebCoreMask, {
+        sheet: options.sheet,
+        widthMm: Math.max(bridgeWidthMm, targetWebMm + kerfMm),
+        anchorBoundary: false,
+        requireSingleComponent: true,
+        minimumWebMm: targetWebMm,
+        kerfMm,
+        strategy: options.bridgeStrategy
+          ? { ...options.bridgeStrategy, maximumUnsupportedSpanMm: undefined }
+          : undefined,
+      }).filter((bridge) => !bridge.stabilizer).slice(0, available);
+      const supportItem = supportRepairItem(candidate, bridges, options.sheet, `minimum-web-${pass}`);
+      if (!supportItem) break;
+      const supported = applyCapsuleBridges(candidate, bridges, options.sheet);
+      const supportedValidation = validate(supported);
+      if (!safeStructuralWarningImprovement(validation, supportedValidation)) break;
+      candidate = supported;
+      validation = supportedValidation;
+      protectedMask = withProtectedEdits(protectedMask, supportItem.edits.enlarge.keep);
+      items.push(supportItem);
+      supportCount += bridges.length;
     }
-  } else if (categories.webs && weakWebCount(validation) > 0 &&
-      validationLocationCount(validation, "error") === 0) {
-    notes.push("Weak-web regions remain warnings; automatic reinforcement is limited to filters with a safe structural direction.");
+
+    const pixel = pixelSizeMm(candidate, options.sheet);
+    const shellRadiusMm = Math.min(pixel.x, pixel.y) * 0.51;
+    const maximumShells = { preserve: 1, balanced: 2, durable: 3 }[strategy];
+    for (let pass = 1; pass <= maximumShells; pass += 1) {
+      if (structuralWarningLocationCount(validation) === 0) break;
+      const expanded = dilateMaskPhysical(candidate, shellRadiusMm, options.sheet);
+      const thickeningItem = materialAdditionRepairItem(candidate, expanded, pass, pixel);
+      if (!thickeningItem) break;
+      const expandedValidation = validate(expanded);
+      if (!safeStructuralWarningImprovement(validation, expandedValidation)) break;
+      candidate = expanded;
+      validation = expandedValidation;
+      items.push(thickeningItem);
+    }
+
+    const remainingStructuralWarnings = structuralWarningLocationCount(validation);
+    if (remainingStructuralWarnings > 0) {
+      notes.push(
+        `${remainingStructuralWarnings} structural warning ${remainingStructuralWarnings === 1 ? "location remains" : "locations remain"}; further automatic thickening would not be safely beneficial.`,
+      );
+    }
   }
 
   const afterValidation = validation;
@@ -596,6 +613,8 @@ export function planManufacturingRepairs(mask, options) {
       afterConnectivityErrors: connectivityErrorCount(afterValidation),
       beforeWeakWebs: weakWebCount(beforeValidation),
       afterWeakWebs: weakWebCount(afterValidation),
+      beforeThinAreaPixels: thinAreaPixelCount(beforeValidation),
+      afterThinAreaPixels: thinAreaPixelCount(afterValidation),
       improved,
       safeToApply,
       complete: afterErrors === 0,
@@ -725,6 +744,28 @@ function weakWebCount(validation) {
   return validationLocationCount(validation, "warning", codes);
 }
 
+function structuralWarningLocationCount(validation) {
+  const codes = new Set(["MIN_WEB_NO_SURVIVING_CORE", "MIN_WEB_DISCONNECT", "MIN_WEB_THIN_AREAS"]);
+  return validationLocationCount(validation, "warning", codes);
+}
+
+function thinAreaPixelCount(validation) {
+  return validation?.issues?.find((issue) => issue.code === "MIN_WEB_THIN_AREAS")?.details?.pixelCount ?? 0;
+}
+
+function safeStructuralWarningImprovement(before, after) {
+  if (validationLocationCount(after, "error") !== 0) return false;
+  const beforeLocations = structuralWarningLocationCount(before);
+  const afterLocations = structuralWarningLocationCount(after);
+  const beforeWeakWebs = weakWebCount(before);
+  const afterWeakWebs = weakWebCount(after);
+  const beforeThinPixels = thinAreaPixelCount(before);
+  const afterThinPixels = thinAreaPixelCount(after);
+  return afterLocations < beforeLocations &&
+    afterWeakWebs <= beforeWeakWebs &&
+    afterThinPixels <= beforeThinPixels;
+}
+
 function supportRepairItem(mask, bridges, sheet, role) {
   if (!bridges?.length) return null;
   const supported = applyCapsuleBridges(mask, bridges, sheet);
@@ -740,7 +781,29 @@ function supportRepairItem(mask, bridges, sheet, role) {
     bounds: boundsForIndices(mask, keep),
     pixelCount: keep.length,
     supportCount: bridges.length,
+    role,
     similarityKey: `${role}-supports`,
+    action: "enlarge",
+    recommended: "enlarge",
+    availableActions: { close: false, enlarge: true, merge: false },
+    edits: { close: null, enlarge: { keep, remove: [] }, merge: null },
+  };
+}
+
+function materialAdditionRepairItem(mask, expanded, pass, pixel) {
+  const keep = [];
+  for (let index = 0; index < expanded.data.length; index += 1) {
+    if (expanded.data[index] === RETAINED && mask.data[index] !== RETAINED) keep.push(index);
+  }
+  if (!keep.length) return null;
+  return {
+    id: `warning-${pass}-thin-material-thickening`,
+    category: "warning",
+    issueCode: "MIN_WEB_THIN_AREAS",
+    bounds: boundsForIndices(mask, keep),
+    pixelCount: keep.length,
+    addedAreaMm2: keep.length * pixel.x * pixel.y,
+    similarityKey: `warning-thickening-${pass}`,
     action: "enlarge",
     recommended: "enlarge",
     availableActions: { close: false, enlarge: true, merge: false },

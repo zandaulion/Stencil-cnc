@@ -258,3 +258,42 @@ test("manufacturing repair never accepts a proposal that worsens blockers", () =
   assert.ok(plan.supportCount <= 4);
   assert.equal(plan.outcome.safeToApply, plan.items.length > 0 && plan.outcome.improved);
 });
+
+test("structural-warning repair is opt-in and thickens material only while validation improves", () => {
+  const mask = maskFromAscii([
+    ".......###.......",
+    ".......###.......",
+    ".......###.......",
+    ".......###.......",
+    ".......###.......",
+    ".......###.......",
+    ".......###.......",
+  ]);
+  const options = {
+    sheet: { widthMm: 17, heightMm: 7 },
+    kerfMm: 0,
+    minimumWebMm: 3,
+    minimumOpeningMm: 0,
+    targetWebMm: 3.4,
+    targetOpeningMm: 2.4,
+    strategy: "balanced",
+    bridgeWidthMm: 4,
+    bridgeStrategy: { mode: "smart", kind: "generic", level: 2 },
+  };
+  const withoutWarningRepair = planManufacturingRepairs(mask, {
+    ...options,
+    categories: { slivers: false, gaps: false, webs: false, warnings: false },
+  });
+  const withWarningRepair = planManufacturingRepairs(mask, {
+    ...options,
+    categories: { slivers: false, gaps: false, webs: false, warnings: true },
+  });
+
+  assert.equal(withoutWarningRepair.items.length, 0);
+  assert.equal(withoutWarningRepair.outcome.safeToApply, false);
+  assert.ok(withWarningRepair.items.some((item) => item.category === "warning"));
+  assert.equal(withWarningRepair.outcome.afterErrors, 0);
+  assert.ok(withWarningRepair.outcome.afterWarnings < withWarningRepair.outcome.beforeWarnings);
+  assert.ok(withWarningRepair.outcome.afterThinAreaPixels < withWarningRepair.outcome.beforeThinAreaPixels);
+  assert.equal(withWarningRepair.outcome.safeToApply, true);
+});

@@ -49,7 +49,7 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
     'repair-panel', 'btn-preview-repairs', 'repair-safety', 'repair-preview',
     'btn-repair-next', 'repair-similar', 'btn-discard-repairs',
     'btn-apply-repairs', 'btn-undo-repair', 'repair-category-slivers',
-    'repair-category-gaps', 'repair-category-webs', 'repair-layer-status',
+    'repair-category-gaps', 'repair-category-webs', 'repair-category-warnings', 'repair-layer-status',
     'btn-toggle-repair-layer', 'btn-clear-repair-layer', 'repair-plan-status',
     'repair-plan-note',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
@@ -61,6 +61,7 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
   }
   assert.match(editor, /planManufacturingRepairs\(mask/);
   assert.match(editor, /maximumBridges: 192/);
+  assert.match(editor, /warnings: el\('repair-category-warnings'\)\?\.checked === true/);
   assert.match(editor, /plan\.outcome\.safeToApply/);
   assert.match(editor, /state\.repairPlan\.outcome\?\.safeToApply !== true/);
   assert.match(editor, /state\.repairItemIndex = Math\.min\(state\.repairItemIndex, plan\.items\.length - 1\)/);

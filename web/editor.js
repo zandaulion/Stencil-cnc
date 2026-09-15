@@ -1374,6 +1374,7 @@ function selectedRepairCategories() {
     slivers: el('repair-category-slivers')?.checked !== false,
     gaps: el('repair-category-gaps')?.checked !== false,
     webs: el('repair-category-webs')?.checked !== false,
+    warnings: el('repair-category-warnings')?.checked === true,
   };
 }
 
@@ -1402,7 +1403,7 @@ async function buildRepairPreview({ focus = true } = {}) {
     return false;
   }
   const categories = selectedRepairCategories();
-  if (!categories.slivers && !categories.gaps && !categories.webs) {
+  if (!categories.slivers && !categories.gaps && !categories.webs && !categories.warnings) {
     toast('Select at least one repair category.');
     return false;
   }
@@ -1583,8 +1584,13 @@ function renderRepairPanel() {
     : cutGaps
       ? 'Repair every undersized cut gap as a batch, preview the result, then override important exceptions.'
       : 'Repair this repeated problem as a batch, then override important exceptions.';
+  const validationErrors = repairableValidationLocationCount(state.validation);
+  const validationWarnings = repairableValidationLocationCount(state.validation, 'warning');
+  const plannedCount = state.repairPlan?.outcome.beforeErrors ||
+    (state.repairPlan?.categories.warnings ? state.repairPlan.outcome.beforeWarnings : 0);
+  const targetCount = state.repairPlan ? plannedCount : (validationErrors || validationWarnings);
   el('repair-count').textContent = complete ? '✓' : String(manufacturing
-    ? (state.repairPlan?.outcome.beforeErrors ?? repairableValidationLocationCount(state.validation))
+    ? targetCount
     : repairIssueCount(issue));
   const applied = el('repair-applied');
   applied.hidden = !result;
@@ -1599,6 +1605,8 @@ function renderRepairPanel() {
       ? `${result.count} ${noun} applied · validating…`
       : remaining > 0
         ? `${result.count} repairs applied · ${remaining} still need review.`
+        : result.remainingWarnings > 0
+          ? `${result.count} repairs applied · no blockers; ${result.remainingWarnings} warning locations remain.`
         : `${result.count} repairs applied and validation passed.`;
   }
   if (!issue && !state.repairPlan) return;
@@ -1638,7 +1646,9 @@ function renderRepairPanel() {
   const fullyRepaired = safe && outcome.complete;
   status.dataset.state = safe ? 'safe' : 'unsafe';
   status.textContent = fullyRepaired
-    ? 'Safe preview · all blocking locations are resolved.'
+    ? state.repairPlan.categories.warnings && outcome.afterWarnings > 0
+      ? `Safe preview · all blockers are resolved and warnings are reduced to ${outcome.afterWarnings}.`
+      : 'Safe preview · all blocking locations are resolved.'
     : safe
       ? `Safe partial improvement · ${outcome.afterErrors} blocking ${outcome.afterErrors === 1 ? 'location remains' : 'locations remain'} for review.`
       : 'Unsafe preview · this proposal will not be applied.';
@@ -1655,13 +1665,17 @@ function renderRepairPanel() {
     enlarge: cutGaps || item.category === 'gap' ? 'add metal locally to widen the web' : 'enlarge it into a cuttable opening',
     merge: cutGaps || item.category === 'gap' ? 'merge the cuts into one opening' : 'merge it with the nearby cut',
   }[item.action];
-  const measured = loosePieces || item.category === 'sliver'
+  const measured = item.category === 'warning'
+    ? Math.round(item.addedAreaMm2)
+    : loosePieces || item.category === 'sliver'
     ? item.pixelCount
     : Math.round(((cutGaps || item.category === 'gap') ? item.gapMm : item.equivalentDiameterMm) * 10) / 10;
   el('repair-current-description').textContent = manufacturing && item.category === 'web'
-    ? item.similarityKey === 'connectivity-supports'
+    ? item.role === 'connectivity'
       ? `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie connects' : 'ties connect'} detached material and survives the kerf simulation.`
-      : `${item.supportCount} staggered ${item.supportCount === 1 ? 'tie supports' : 'ties support'} long slats without forming a regular rail.`
+      : `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie reinforces' : 'ties reinforce'} disconnected full-width material regions.`
+    : manufacturing && item.category === 'warning'
+      ? `${item.pixelCount} raster cells add about ${measured} mm² of metal to thicken weak material.`
     : manufacturing && item.category === 'sliver'
       ? `${item.pixelCount} raster ${item.pixelCount === 1 ? 'cell' : 'cells'}; this detached sliver will be removed.`
       : manufacturing && item.category === 'gap'
@@ -1673,7 +1687,9 @@ function renderRepairPanel() {
     : cutGaps
       ? `${measured} mm gap; the batch plan will ${actionCopy}.`
       : `About ${measured} mm across; the batch plan will ${actionCopy}.`;
-  const actionLabels = loosePieces || item.category === 'sliver'
+  const actionLabels = item.category === 'warning'
+    ? { close: 'Close', enlarge: 'Thicken', merge: 'Merge' }
+    : loosePieces || item.category === 'sliver'
     ? { close: 'Remove speck', enlarge: 'Enlarge', merge: 'Merge' }
     : cutGaps || item.category === 'gap'
       ? { close: 'Close cut', enlarge: 'Widen web', merge: 'Merge cuts' }
@@ -1681,7 +1697,9 @@ function renderRepairPanel() {
   for (const button of all('[data-repair-action]')) {
     const action = button.dataset.repairAction;
     button.textContent = actionLabels[action];
-    button.hidden = (loosePieces || item.category === 'sliver') && action !== 'close';
+    button.hidden = item.category === 'warning'
+      ? action !== 'enlarge'
+      : (loosePieces || item.category === 'sliver') && action !== 'close';
     button.disabled = item.availableActions[action] !== true;
     button.setAttribute('aria-pressed', String(item.action === action));
   }
@@ -1747,11 +1765,16 @@ async function applyRepairPlan() {
   renderRepairPanel();
   await runValidation();
   const remaining = validationLocationCount(state.validation, 'error');
-  state.repairResult = { kind: repairKind, count: repairCount, running: false, remaining };
+  const remainingWarnings = validationLocationCount(state.validation, 'warning');
+  state.repairResult = {
+    kind: repairKind, count: repairCount, running: false, remaining, remainingWarnings,
+  };
   renderRepairPanel();
   toast(remaining > 0
     ? `Repair layer applied; ${remaining} blocking locations still need review.`
-    : `Manufacturing repair layer applied and checked.`);
+    : remainingWarnings > 0
+      ? `Repair layer applied; no blockers and ${remainingWarnings} warning locations remain.`
+      : `Manufacturing repair layer applied and checked.`);
 }
 
 function undoLastRepair() {
@@ -4119,7 +4142,10 @@ function wire() {
   el('repair-safety')?.addEventListener('change', () => {
     if (state.repairPlan) void buildRepairPreview({ focus: false });
   });
-  for (const id of ['repair-category-slivers', 'repair-category-gaps', 'repair-category-webs']) {
+  for (const id of [
+    'repair-category-slivers', 'repair-category-gaps', 'repair-category-webs',
+    'repair-category-warnings',
+  ]) {
     el(id)?.addEventListener('change', () => {
       if (state.repairPlan) void buildRepairPreview({ focus: false });
     });
