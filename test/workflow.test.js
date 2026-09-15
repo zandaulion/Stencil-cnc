@@ -22,9 +22,11 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
 test('validated final geometry can be exported as a shareable PNG', () => {
   assert.match(html, /id="btn-export-png"[^>]*disabled/);
   assert.match(html, /Full-resolution black-and-white preview/);
+  assert.match(html, /File names include the project, panel size, cut style, frame choice, purpose, and validation timestamp/);
   assert.match(editor, /\['btn-export-svg', 'btn-export-dxf', 'btn-export-png'\]/);
   assert.match(editor, /const mask = geometryForExport\(\)/);
-  assert.match(editor, /downloadBlob\(`\$\{name\}\.png`, await pngBlob\(mask\)\)/);
+  assert.match(editor, /downloadBlob\(exportFilename\('png'\), await pngBlob\(mask\)\)/);
+  assert.match(editor, /state\.exportTimestamp = state\.validation\.valid \? new Date\(\) : null/);
   assert.match(editor, /el\('btn-export-png'\)\?\.addEventListener\('click', \(\) => exportGeometry\('png'\)\)/);
 });
 

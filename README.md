@@ -26,6 +26,11 @@ The central rule is simple: dark geometry represents retained metal and light ge
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.
 5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Stencil project.
 
+Related manufacturing exports share the validation timestamp and use descriptive,
+portable names: `project_297x420mm_slats_frame_cut_2026-09-15-162005.dxf`.
+PNG files use `preview`, editable projects use `editable`, and exports without a
+perimeter frame use `no-frame`.
+
 The default panel is 1250 × 2500 mm. The default plasma profile requires a 2 mm minimum opening and a 3 mm finished gap/web; generated features include kerf allowance where appropriate.
 
 ## Architecture

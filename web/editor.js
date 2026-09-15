@@ -19,6 +19,7 @@ import {
   applyCapsuleBridges,
   applySmallOpeningRepairPlan,
   buildDesignMask,
+  buildExportFilename,
   calculateArtworkPlacement,
   connectedRegionIndices,
   createProject,
@@ -180,6 +181,7 @@ const state = {
   validated: false,
   revision: 0,
   validatedRevision: -1,
+  exportTimestamp: null,
 
   zoom: 1,
   pan: { x: 0, y: 0 },
@@ -995,6 +997,7 @@ function invalidateValidation({ clearAnalysis = false } = {}) {
   state.revision += 1;
   state.validated = false;
   state.validatedRevision = -1;
+  state.exportTimestamp = null;
   state.validation = null;
   state.highlightedIssue = null;
   state.highlightedIssueLocation = 0;
@@ -1158,6 +1161,7 @@ async function runValidation() {
   });
   state.validated = state.validation.valid;
   state.validatedRevision = state.revision;
+  state.exportTimestamp = state.validation.valid ? new Date() : null;
   renderIssues(state.validation.issues ?? []);
   updateConnectivityCard();
   updateExportReadiness();
@@ -3798,15 +3802,14 @@ async function exportGeometry(kind) {
   // Validation and download deliberately use the same transformed mask. This
   // prevents export-only options from bypassing the safety result.
   const mask = geometryForExport();
-  const name = state.name.replace(/[^\w-]+/g, '-').toLowerCase() || 'panel';
   try {
     const units = el('export-units')?.value === 'in' ? 'in' : 'mm';
     if (kind === 'svg') {
-      downloadText(`${name}.svg`, exportSvg(mask, sheet(), { title: state.name, units }), 'image/svg+xml');
+      downloadText(exportFilename('svg'), exportSvg(mask, sheet(), { title: state.name, units }), 'image/svg+xml');
     } else if (kind === 'dxf') {
-      downloadText(`${name}.dxf`, exportDxf(mask, sheet(), { units }), 'application/dxf');
+      downloadText(exportFilename('dxf'), exportDxf(mask, sheet(), { units }), 'application/dxf');
     } else if (kind === 'png') {
-      downloadBlob(`${name}.png`, await pngBlob(mask));
+      downloadBlob(exportFilename('png'), await pngBlob(mask));
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
@@ -3815,6 +3818,20 @@ async function exportGeometry(kind) {
     console.error(error);
     toast(`The ${kind.toUpperCase()} could not be written.`);
   }
+}
+
+function exportFilename(kind, timestamp = state.exportTimestamp ?? new Date()) {
+  const style = selectedCutStyle();
+  const projectFile = kind === 'project';
+  return buildExportFilename({
+    projectName: state.name,
+    sheet: sheet(),
+    styleName: CUT_STYLE_NAMES[style] || style,
+    includeFrame: projectFile ? frameConfig().enabled : el('export-frame')?.checked !== false,
+    purpose: projectFile ? 'editable' : kind === 'png' ? 'preview' : 'cut',
+    extension: projectFile ? 'stencil.json' : kind,
+    timestamp,
+  });
 }
 
 /* ------------------------------------------------------------------ chrome */
@@ -4586,7 +4603,7 @@ function wire() {
   el('btn-download-project')?.addEventListener('click', async () => {
     if (!state.sourceMask) { toast('Import an image first.'); return; }
     await persist();
-    downloadText(`${state.name || 'panel'}.stencil.json`, serializeProject(projectFromState(), { pretty: true }));
+    downloadText(exportFilename('project', new Date()), serializeProject(projectFromState(), { pretty: true }));
   });
 
   for (const chip of all('[data-issue-filter]')) {
