@@ -39,6 +39,7 @@ test('local project management is searchable, recoverable, and privacy preservin
   assert.match(storage, /export async function trashProject/);
   assert.match(storage, /export async function restoreProject/);
   assert.match(css, /\.project-library-dialog/);
+  assert.match(css, /\.project-grid \{[\s\S]*?grid-auto-rows: max-content/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.project-library-dialog/);
 });
 

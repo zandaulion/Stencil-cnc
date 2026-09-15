@@ -3805,7 +3805,9 @@ select:focus {
 .project-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: max-content;
   align-content: start;
+  align-items: start;
   gap: 14px;
   overflow-y: auto;
   padding: 12px 27px 28px;
@@ -3813,6 +3815,7 @@ select:focus {
 
 .project-card {
   min-width: 0;
+  align-self: start;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
