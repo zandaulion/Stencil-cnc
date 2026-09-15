@@ -15,7 +15,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and minimum-web strength.
 - Builds reversible manufacturing-repair previews before changing the artwork.
-- Saves projects and creative candidates locally in the browser.
+- Saves projects and creative candidates locally in the browser, with a searchable project library, recoverable Trash, and recent recovery points.
 - Exports validated geometry as SVG, DXF, or a shareable PNG.
 - Runs as an installable, offline-capable PWA after an authorised device has loaded it.
 
@@ -33,6 +33,14 @@ PNG files use `preview`, editable projects use `editable`, and exports without a
 perimeter frame use `no-frame`.
 
 The default panel is 1250 × 2500 mm. The default plasma profile requires a 2 mm minimum opening and a 3 mm finished gap/web; generated features include kerf allowance where appropriate.
+
+## Project library
+
+Select **Projects** in the editor header to browse every panel stored in the current browser. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is still available on the device. Projects can be opened, renamed, duplicated, downloaded, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
+
+Autosave reports `Saving…`, the local save time, or a retry action if storage fails. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate local save. Stencil CNC retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
+
+Recovery points and portable `.stencil.json` downloads contain the editable processed geometry and settings, but never the browser-local source photograph. A restored recovery point reuses the photograph only when that source is still available in the same browser project.
 
 ## Architecture
 

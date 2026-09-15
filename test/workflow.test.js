@@ -7,6 +7,7 @@ const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname)
 const html = fs.readFileSync(path.join(projectRoot, 'web/index.html'), 'utf8');
 const editor = fs.readFileSync(path.join(projectRoot, 'web/editor.js'), 'utf8');
 const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
+const storage = fs.readFileSync(path.join(projectRoot, 'web/storage.js'), 'utf8');
 
 test('the creative workflow exposes every preview and a candidate workspace', () => {
   for (const id of [
@@ -17,6 +18,28 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   }
   assert.match(editor, /const CANDIDATE_LIMIT = 8/);
   assert.match(editor, /baseMask: encodeMask\(state\.baseMask\)/);
+});
+
+test('local project management is searchable, recoverable, and privacy preserving', () => {
+  for (const id of [
+    'btn-projects', 'project-library-dialog', 'project-search', 'project-status-filter',
+    'project-list', 'project-count-active', 'project-count-trash', 'rename-project-dialog',
+    'version-dialog', 'version-list', 'save-state-label',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const action of ['open', 'rename', 'duplicate', 'download', 'versions', 'trash', 'restore', 'delete']) {
+    assert.match(editor, new RegExp(`projectAction\\([^\\n]+['"]${action}['"]`), action);
+  }
+  assert.match(editor, /async function flushPendingSave\(\)/);
+  assert.match(editor, /Save failed — Retry/);
+  assert.match(editor, /await flushPendingSave\(\)/);
+  assert.match(editor, /serializeProject\(record, \{ pretty: true \}\)/);
+  assert.match(editor, /saveCheckpoint\(project, label\)/);
+  assert.match(storage, /const CHECKPOINT_LIMIT = 10/);
+  assert.match(storage, /const \{ localSource: _localSource, \.\.\.portableProject \} = project/);
+  assert.match(storage, /export async function trashProject/);
+  assert.match(storage, /export async function restoreProject/);
+  assert.match(css, /\.project-library-dialog/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.project-library-dialog/);
 });
 
 test('validated final geometry can be exported as a shareable PNG', () => {

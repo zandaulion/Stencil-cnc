@@ -19,7 +19,7 @@ export const PROJECT_VERSION = 1;
  * @property {{kind:'none'|'image',name:string|null,mimeType:string|null,widthPx:number|null,heightPx:number|null,imageDataUrl:string|null}} source
  * @property {{sourceMask:EncodedMask|null,baseMask:EncodedMask|null}} raster
  * @property {Array<object>} bridges
- * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,painted:{keep:number[],remove:number[]},manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean}|null} editor
+ * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,painted:{keep:number[],remove:number[]},manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean,projectSummary:{thumbnail:string|null,cutStyle:string,status:'draft'|'needs-validation'|'ready',lastValidatedAt:string|null,lastExportedAt:string|null}}|null} editor
  * @property {string|null} createdAt
  * @property {string|null} updatedAt
  */
@@ -336,6 +336,11 @@ function normalizeEditor(editor) {
       automaticSupportsStale: candidate.automaticSupportsStale === true,
     };
   });
+  const summaryInput = editor.projectSummary && typeof editor.projectSummary === "object" &&
+    !Array.isArray(editor.projectSummary) ? editor.projectSummary : {};
+  const status = ['draft', 'needs-validation', 'ready'].includes(summaryInput.status)
+    ? summaryInput.status
+    : 'draft';
   return {
     controls,
     styleSettings,
@@ -357,6 +362,15 @@ function normalizeEditor(editor) {
     candidates,
     selectedCandidateId: nullableString(editor.selectedCandidateId ?? null, "editor.selectedCandidateId"),
     automaticSupportsStale: editor.automaticSupportsStale === true,
+    projectSummary: {
+      thumbnail: nullableString(summaryInput.thumbnail ?? null, "editor.projectSummary.thumbnail"),
+      cutStyle: typeof summaryInput.cutStyle === 'string' && summaryInput.cutStyle.trim()
+        ? summaryInput.cutStyle
+        : 'line-art',
+      status,
+      lastValidatedAt: nullableString(summaryInput.lastValidatedAt ?? null, "editor.projectSummary.lastValidatedAt"),
+      lastExportedAt: nullableString(summaryInput.lastExportedAt ?? null, "editor.projectSummary.lastExportedAt"),
+    },
   };
 }
 

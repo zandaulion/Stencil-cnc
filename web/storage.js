@@ -1,7 +1,9 @@
 const DB_NAME = 'stencil-cnc';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PROJECT_STORE = 'projects';
 const META_STORE = 'meta';
+const CHECKPOINT_STORE = 'checkpoints';
+const CHECKPOINT_LIMIT = 10;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -15,6 +17,11 @@ function openDatabase() {
       }
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(CHECKPOINT_STORE)) {
+        const checkpoints = db.createObjectStore(CHECKPOINT_STORE, { keyPath: 'id' });
+        checkpoints.createIndex('projectId', 'projectId');
+        checkpoints.createIndex('createdAt', 'createdAt');
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -44,7 +51,7 @@ async function transaction(storeName, mode, operation) {
   }
 }
 
-export async function saveProject(record) {
+export async function saveProject(record, { makeCurrent = true } = {}) {
   const now = new Date().toISOString();
   const value = {
     ...record,
@@ -53,11 +60,16 @@ export async function saveProject(record) {
     updatedAt: now
   };
   await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  if (makeCurrent) await setLastProject(value.id);
+  return value;
+}
+
+export async function setLastProject(id) {
+  if (!id) return clearLastProject();
   await transaction(META_STORE, 'readwrite', (store) => requestResult(store.put({
     key: 'lastProjectId',
-    value: value.id
+    value: id,
   })));
-  return value;
 }
 
 export async function loadProject(id) {
@@ -67,20 +79,74 @@ export async function loadProject(id) {
 
 export async function loadLastProject() {
   const meta = await transaction(META_STORE, 'readonly', (store) => requestResult(store.get('lastProjectId')));
-  return meta?.value ? loadProject(meta.value) : null;
+  const project = meta?.value ? await loadProject(meta.value) : null;
+  return project?.trashedAt ? null : project;
 }
 
 export async function clearLastProject() {
   await transaction(META_STORE, 'readwrite', (store) => requestResult(store.delete('lastProjectId')));
 }
 
-export async function listProjects() {
+export async function listProjects({ trashed = false } = {}) {
   const rows = await transaction(PROJECT_STORE, 'readonly', (store) => requestResult(store.getAll()));
-  return rows.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return rows
+    .filter((row) => Boolean(row.trashedAt) === trashed)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
 export async function deleteProject(id) {
   await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.delete(id)));
+  const checkpoints = await listCheckpoints(id);
+  for (const checkpoint of checkpoints) {
+    await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.delete(checkpoint.id)));
+  }
+  const meta = await transaction(META_STORE, 'readonly', (store) => requestResult(store.get('lastProjectId')));
+  if (meta?.value === id) await clearLastProject();
+}
+
+export async function updateProject(id, changes) {
+  const current = await loadProject(id);
+  if (!current) throw new RangeError('Project not found');
+  const value = { ...current, ...changes, id, updatedAt: new Date().toISOString() };
+  await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  return value;
+}
+
+export async function trashProject(id) {
+  const value = await updateProject(id, { trashedAt: new Date().toISOString() });
+  const meta = await transaction(META_STORE, 'readonly', (store) => requestResult(store.get('lastProjectId')));
+  if (meta?.value === id) await clearLastProject();
+  return value;
+}
+
+export async function restoreProject(id) {
+  return updateProject(id, { trashedAt: null });
+}
+
+export async function saveCheckpoint(project, label) {
+  if (!project?.id) throw new TypeError('A saved project is required for a checkpoint');
+  const { localSource: _localSource, ...portableProject } = project;
+  const checkpoint = {
+    id: crypto.randomUUID(),
+    projectId: project.id,
+    label: String(label || 'Automatic checkpoint'),
+    createdAt: new Date().toISOString(),
+    project: portableProject,
+  };
+  await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.put(checkpoint)));
+  const checkpoints = await listCheckpoints(project.id);
+  for (const stale of checkpoints.slice(CHECKPOINT_LIMIT)) {
+    await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.delete(stale.id)));
+  }
+  return checkpoint;
+}
+
+export async function listCheckpoints(projectId) {
+  if (!projectId) return [];
+  const rows = await transaction(CHECKPOINT_STORE, 'readonly', (store) => (
+    requestResult(store.index('projectId').getAll(projectId))
+  ));
+  return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 export function downloadBlob(filename, blob) {

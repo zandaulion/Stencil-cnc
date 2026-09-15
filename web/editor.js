@@ -46,7 +46,22 @@ import {
   REMOVED,
   RETAINED,
 } from '/core/index.js';
-import { clearLastProject, downloadBlob, downloadText, loadLastProject, saveProject } from '/storage.js';
+import {
+  clearLastProject,
+  deleteProject,
+  downloadBlob,
+  downloadText,
+  listCheckpoints,
+  listProjects,
+  loadLastProject,
+  loadProject,
+  restoreProject,
+  saveCheckpoint,
+  saveProject,
+  setLastProject,
+  trashProject,
+  updateProject,
+} from '/storage.js';
 
 /* ------------------------------------------------------------------ state */
 
@@ -182,6 +197,8 @@ const state = {
   revision: 0,
   validatedRevision: -1,
   exportTimestamp: null,
+  lastValidatedAt: null,
+  lastExportedAt: null,
 
   zoom: 1,
   pan: { x: 0, y: 0 },
@@ -1196,6 +1213,7 @@ async function runValidation() {
   state.validated = state.validation.valid;
   state.validatedRevision = state.revision;
   state.exportTimestamp = state.validation.valid ? new Date() : null;
+  state.lastValidatedAt = new Date().toISOString();
   renderIssues(state.validation.issues ?? []);
   updateConnectivityCard();
   updateExportReadiness();
@@ -1203,6 +1221,8 @@ async function runValidation() {
   toast(state.validation.valid
     ? 'Checks passed. The panel holds together.'
     : 'Connectivity errors block export.');
+  markDirty();
+  await createRecoveryPoint(state.validation.valid ? 'Validation passed' : 'Validation checked');
 }
 
 /* ----------------------------------------------------------------- issues */
@@ -1893,6 +1913,9 @@ async function applyRepairPlan() {
         ? `Warning corrections applied; ${remainingWarnings} warning locations remain for review.`
         : `Error repairs applied; no blockers and ${remainingWarnings} warning locations remain. Optional warning correction is now available.`
       : `Manufacturing repair layer applied and checked.`);
+  await createRecoveryPoint(repairMode === 'warnings'
+    ? 'Structural warnings repaired'
+    : 'Manufacturing errors repaired');
 }
 
 function undoLastRepair() {
@@ -2593,12 +2616,33 @@ function redo() {
 function markDirty() {
   if (!state.source && !state.baseMask && !state.sourceMask) return;
   state.dirty = true;
-  const badge = el('save-state');
-  if (badge) { badge.textContent = 'Unsaved'; badge.dataset.state = 'dirty'; }
+  dirtyGeneration += 1;
+  setSaveState('saving', 'Saving…');
   scheduleSave();
 }
 
 let saveTimer = null;
+let saveInFlight = null;
+let lastSavedRecord = null;
+let dirtyGeneration = 0;
+
+function setSaveState(kind, label) {
+  const badge = el('save-state');
+  const text = el('save-state-label');
+  if (!badge || !text) return;
+  badge.dataset.state = kind;
+  text.textContent = label;
+  badge.title = kind === 'error'
+    ? 'Local save failed. Select to try again.'
+    : label;
+}
+
+function savedAtLabel(value = new Date()) {
+  return `Saved locally at ${new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit', minute: '2-digit',
+  }).format(value)}`;
+}
+
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persist, 1200);
@@ -2654,15 +2698,32 @@ function projectFromState() {
       candidates: state.candidates,
       selectedCandidateId: state.selectedCandidateId,
       automaticSupportsStale: state.automaticSupportsStale,
+      projectSummary: {
+        thumbnail: maskThumbnail(state.designMask),
+        cutStyle: selectedCutStyle(),
+        status: !state.designMask
+          ? 'draft'
+          : state.validated && state.validatedRevision === state.revision
+            ? 'ready'
+            : 'needs-validation',
+        lastValidatedAt: state.lastValidatedAt,
+        lastExportedAt: state.lastExportedAt,
+      },
     },
     createdAt: state.createdAt,
   });
 }
 
 async function persist() {
+  clearTimeout(saveTimer);
   saveTimer = null;
-  if (!state.sourceMask) return;
-  try {
+  if (!state.sourceMask) return null;
+  if (saveInFlight) {
+    await saveInFlight.catch(() => null);
+    if (!state.dirty) return lastSavedRecord;
+  }
+  const generation = dirtyGeneration;
+  const operation = (async () => {
     // The original image is kept as a browser-local Blob so an automatic PWA
     // refresh does not turn an editable photograph into frozen geometry. It is
     // deliberately outside the portable project schema: project downloads do
@@ -2674,12 +2735,415 @@ async function persist() {
     const saved = await saveProject(record);
     state.projectId = saved.id;
     state.createdAt = saved.createdAt;
-    state.dirty = false;
-    const badge = el('save-state');
-    if (badge) { badge.textContent = 'Saved'; badge.dataset.state = 'saved'; }
+    lastSavedRecord = saved;
+    if (generation === dirtyGeneration) {
+      state.dirty = false;
+      setSaveState('saved', savedAtLabel(new Date(saved.updatedAt)));
+    } else {
+      scheduleSave();
+    }
+    return saved;
+  })();
+  saveInFlight = operation;
+  try {
+    return await operation;
   } catch (error) {
     console.error(error);
-    toast('Could not save locally.');
+    state.dirty = true;
+    setSaveState('error', 'Save failed — Retry');
+    toast('Could not save locally. Your current work remains open.');
+    return null;
+  } finally {
+    if (saveInFlight === operation) saveInFlight = null;
+  }
+}
+
+async function flushPendingSave() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (saveInFlight) await saveInFlight.catch(() => null);
+  if (state.dirty) await persist();
+  return !state.dirty;
+}
+
+async function createRecoveryPoint(label) {
+  if (!state.sourceMask) return false;
+  try {
+    if (!await flushPendingSave() || !state.projectId) return false;
+    const project = await loadProject(state.projectId);
+    if (!project) return false;
+    await saveCheckpoint(project, label);
+    return true;
+  } catch (error) {
+    console.warn('Could not create a local recovery point:', error);
+    return false;
+  }
+}
+
+/* ------------------------------------------------------- project library */
+
+let projectLibraryView = 'active';
+let projectLibraryRows = [];
+let renameProjectId = null;
+let versionProjectId = null;
+let versionRows = [];
+
+function projectStatus(record) {
+  return record.editor?.projectSummary?.status ??
+    (record.raster?.sourceMask ? 'needs-validation' : 'draft');
+}
+
+function projectStatusLabel(status) {
+  return {
+    draft: 'Draft',
+    'needs-validation': 'Needs validation',
+    ready: 'Ready to export',
+  }[status] ?? 'Draft';
+}
+
+function formatProjectDate(value) {
+  if (!value) return 'Unknown date';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium', timeStyle: 'short',
+  }).format(date);
+}
+
+function formatStorage(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function projectFilename(record) {
+  const style = record.editor?.projectSummary?.cutStyle ?? record.editor?.controls?.cutStyle ?? 'line-art';
+  return buildExportFilename({
+    projectName: record.name,
+    sheet: record.sheet,
+    styleName: CUT_STYLE_NAMES[style] || style,
+    includeFrame: record.frame?.enabled !== false,
+    purpose: 'editable',
+    extension: 'stencil.json',
+    timestamp: new Date(),
+  });
+}
+
+function projectAction(label, action, { primary = false } = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.projectAction = action;
+  button.textContent = label;
+  if (primary) button.dataset.primary = 'true';
+  return button;
+}
+
+function buildProjectCard(record) {
+  const article = document.createElement('article');
+  article.className = 'project-card';
+  article.dataset.projectId = record.id;
+  article.dataset.current = String(record.id === state.projectId);
+  article.setAttribute('role', 'listitem');
+
+  const preview = document.createElement('div');
+  preview.className = 'project-card-preview';
+  const thumbnail = record.editor?.projectSummary?.thumbnail;
+  if (thumbnail) {
+    const image = document.createElement('img');
+    image.src = thumbnail;
+    image.alt = '';
+    preview.append(image);
+  } else {
+    preview.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 14h14l4 5h16v21H7z"></path><path d="M7 14V9h14l4 5"></path></svg>';
+  }
+
+  const body = document.createElement('div');
+  body.className = 'project-card-body';
+  const titleRow = document.createElement('div');
+  titleRow.className = 'project-card-title-row';
+  const title = document.createElement('h3');
+  title.className = 'project-card-title';
+  title.textContent = record.name;
+  title.title = record.name;
+  titleRow.append(title);
+  if (record.id === state.projectId) {
+    const current = document.createElement('span');
+    current.className = 'project-card-current';
+    current.textContent = 'Open';
+    titleRow.append(current);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'project-card-meta';
+  const style = record.editor?.projectSummary?.cutStyle ?? record.editor?.controls?.cutStyle ?? 'line-art';
+  const sourceSize = record.localSource instanceof Blob ? formatStorage(record.localSource.size) : '';
+  for (const value of [
+    formatProjectDate(record.updatedAt),
+    `${record.sheet.widthMm} × ${record.sheet.heightMm} mm`,
+    CUT_STYLE_NAMES[style] || style,
+    sourceSize ? `Source on device · ${sourceSize}` : 'Processed geometry only',
+  ]) {
+    const span = document.createElement('span');
+    span.textContent = value;
+    meta.append(span);
+  }
+
+  const statusValue = projectStatus(record);
+  const status = document.createElement('span');
+  status.className = 'project-status';
+  status.dataset.status = statusValue;
+  status.textContent = projectStatusLabel(statusValue);
+
+  const actions = document.createElement('div');
+  actions.className = 'project-card-actions';
+  if (projectLibraryView === 'trash') {
+    actions.append(
+      projectAction('Restore', 'restore', { primary: true }),
+      projectAction('Delete forever', 'delete'),
+    );
+  } else {
+    actions.append(
+      projectAction(record.id === state.projectId ? 'Continue' : 'Open', 'open', { primary: true }),
+      projectAction('Rename', 'rename'),
+      projectAction('Duplicate', 'duplicate'),
+      projectAction('Download', 'download'),
+      projectAction(`Versions${record.checkpointCount ? ` · ${record.checkpointCount}` : ''}`, 'versions'),
+      projectAction('Trash', 'trash'),
+    );
+  }
+  body.append(titleRow, meta, status, actions);
+  article.append(preview, body);
+  return article;
+}
+
+function renderProjectLibrary() {
+  const query = el('project-search')?.value.trim().toLocaleLowerCase() ?? '';
+  const statusFilter = projectLibraryView === 'trash'
+    ? 'all'
+    : el('project-status-filter')?.value ?? 'all';
+  const rows = projectLibraryRows.filter((record) => (
+    (!query || record.name.toLocaleLowerCase().includes(query)) &&
+    (statusFilter === 'all' || projectStatus(record) === statusFilter)
+  ));
+  const list = el('project-list');
+  list.hidden = rows.length === 0;
+  list?.replaceChildren(...rows.map(buildProjectCard));
+  const empty = el('project-library-empty');
+  empty.hidden = rows.length > 0;
+  if (!rows.length) {
+    empty.querySelector('strong').textContent = projectLibraryView === 'trash'
+      ? 'Trash is empty'
+      : query ? 'No matching projects' : 'No projects yet';
+    empty.querySelector('span').textContent = projectLibraryView === 'trash'
+      ? 'Projects moved to Trash will remain recoverable here.'
+      : query ? 'Try another name or status.' : 'Import an image to create your first project.';
+  }
+  el('project-library-result').textContent = `${rows.length} ${rows.length === 1 ? 'project' : 'projects'}`;
+}
+
+async function refreshProjectLibrary() {
+  const [active, trash] = await Promise.all([
+    listProjects(),
+    listProjects({ trashed: true }),
+  ]);
+  el('project-count-active').textContent = String(active.length);
+  el('project-count-trash').textContent = String(trash.length);
+  const baseRows = projectLibraryView === 'trash' ? trash : active;
+  projectLibraryRows = await Promise.all(baseRows.map(async (record) => ({
+    ...record,
+    checkpointCount: (await listCheckpoints(record.id)).length,
+  })));
+  for (const tab of all('[data-project-view]')) {
+    const selected = tab.dataset.projectView === projectLibraryView;
+    tab.setAttribute('aria-selected', String(selected));
+  }
+  if (el('project-status-filter')) el('project-status-filter').disabled = projectLibraryView === 'trash';
+  try {
+    const estimate = await navigator.storage?.estimate?.();
+    el('project-storage-summary').textContent = estimate?.usage
+      ? `${formatStorage(estimate.usage)} used by this site`
+      : 'Stored locally';
+  } catch {
+    el('project-storage-summary').textContent = 'Stored locally';
+  }
+  renderProjectLibrary();
+}
+
+async function openProjectLibrary({ flush = true } = {}) {
+  if (flush && !await flushPendingSave()) return;
+  try {
+    await refreshProjectLibrary();
+    const dialog = el('project-library-dialog');
+    if (!dialog?.open) {
+      dialog.returnValue = '';
+      dialog.showModal();
+    }
+    requestAnimationFrame(() => el('project-search')?.focus());
+  } catch (error) {
+    console.error(error);
+    toast('The local project library could not be opened on this device.');
+  }
+}
+
+function closeProjectLibrary() {
+  const dialog = el('project-library-dialog');
+  if (dialog?.open) dialog.close();
+}
+
+async function openStoredProject(id) {
+  if (id === state.projectId) {
+    closeProjectLibrary();
+    return;
+  }
+  if (!await flushPendingSave()) return;
+  const project = await loadProject(id);
+  if (!project || project.trashedAt) {
+    toast('That project is no longer available.');
+    await refreshProjectLibrary();
+    return;
+  }
+  styleAbort?.abort();
+  await loadProjectState(project);
+  await setLastProject(project.id);
+  state.dirty = false;
+  setSaveState('saved', savedAtLabel(new Date(project.updatedAt)));
+  closeProjectLibrary();
+  pushHistory();
+  toast(`Opened “${project.name}”.`);
+}
+
+async function beginRenameProject(record) {
+  renameProjectId = record.id;
+  closeProjectLibrary();
+  el('rename-project-input').value = record.name;
+  const dialog = el('rename-project-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+  requestAnimationFrame(() => el('rename-project-input')?.select());
+}
+
+async function showProjectVersions(record) {
+  versionProjectId = record.id;
+  versionRows = await listCheckpoints(record.id);
+  closeProjectLibrary();
+  el('version-dialog-title').textContent = `Recovery points · ${record.name}`;
+  const list = el('version-list');
+  list.replaceChildren();
+  if (!versionRows.length) {
+    const item = document.createElement('li');
+    item.textContent = 'No recovery points yet. Validate, repair, generate supports, or export to create one.';
+    list.append(item);
+  } else {
+    for (const checkpoint of versionRows) {
+      const item = document.createElement('li');
+      item.dataset.checkpointId = checkpoint.id;
+      const copy = document.createElement('div');
+      const label = document.createElement('strong');
+      label.textContent = checkpoint.label;
+      const date = document.createElement('span');
+      date.textContent = formatProjectDate(checkpoint.createdAt);
+      copy.append(label, date);
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.dataset.checkpointAction = 'restore';
+      restore.textContent = 'Restore';
+      item.append(copy, restore);
+      list.append(item);
+    }
+  }
+  el('version-dialog').returnValue = '';
+  el('version-dialog').showModal();
+}
+
+async function startNewProject() {
+  closeProjectLibrary();
+  if (state.sourceMask && !await confirmAction(
+    'Start a new panel?',
+    'The current panel is saved on this device first.',
+    'Start new',
+  )) return;
+  if (!await flushPendingSave()) return;
+  styleAbort?.abort();
+  await clearLastProject();
+  location.reload();
+}
+
+async function handleProjectAction(action, record) {
+  if (action === 'open') {
+    await openStoredProject(record.id);
+    return;
+  }
+  if (action === 'rename') {
+    await beginRenameProject(record);
+    return;
+  }
+  if (action === 'duplicate') {
+    const names = new Set((await listProjects()).map((row) => row.name));
+    let name = `${record.name} copy`;
+    let suffix = 2;
+    while (names.has(name)) name = `${record.name} copy ${suffix++}`;
+    const { checkpointCount: _checkpointCount, ...original } = record;
+    await saveProject({
+      ...original,
+      id: null,
+      name,
+      createdAt: null,
+      updatedAt: null,
+      trashedAt: null,
+    }, { makeCurrent: false });
+    await refreshProjectLibrary();
+    toast(`Duplicated as “${name}”.`);
+    return;
+  }
+  if (action === 'download') {
+    downloadText(projectFilename(record), serializeProject(record, { pretty: true }));
+    toast('Portable project downloaded without the source photograph.');
+    return;
+  }
+  if (action === 'versions') {
+    await showProjectVersions(record);
+    return;
+  }
+  if (action === 'restore') {
+    await restoreProject(record.id);
+    projectLibraryView = 'active';
+    await refreshProjectLibrary();
+    toast(`Restored “${record.name}”.`);
+    return;
+  }
+  if (action === 'trash') {
+    closeProjectLibrary();
+    if (!await confirmAction(
+      'Move project to Trash?',
+      `“${record.name}” can be restored later from the Projects library.`,
+      'Move to Trash',
+    )) {
+      await openProjectLibrary({ flush: false });
+      return;
+    }
+    if (record.id === state.projectId && !await flushPendingSave()) return;
+    await trashProject(record.id);
+    if (record.id === state.projectId) {
+      location.reload();
+      return;
+    }
+    await openProjectLibrary({ flush: false });
+    toast(`Moved “${record.name}” to Trash.`);
+    return;
+  }
+  if (action === 'delete') {
+    closeProjectLibrary();
+    if (!await confirmAction(
+      'Delete project forever?',
+      `“${record.name}” and its recovery points will be permanently removed from this device.`,
+      'Delete forever',
+    )) {
+      await openProjectLibrary({ flush: false });
+      return;
+    }
+    await deleteProject(record.id);
+    await openProjectLibrary({ flush: false });
+    toast(`Deleted “${record.name}”.`);
   }
 }
 
@@ -2755,6 +3219,9 @@ async function loadProjectState(project, { imported = false } = {}) {
   state.projectId = imported ? null : project.id;
   state.createdAt = imported ? null : project.createdAt;
   state.name = project.name || 'Untitled panel';
+  state.lastValidatedAt = project.editor?.projectSummary?.lastValidatedAt ?? null;
+  state.lastExportedAt = project.editor?.projectSummary?.lastExportedAt ?? null;
+  state.dirty = false;
   el('project-name').value = state.name;
   state.source = null;
   state.styleMask = null;
@@ -2830,6 +3297,9 @@ async function loadProjectState(project, { imported = false } = {}) {
   renderCandidates();
   selectBridge(null);
   resetHistory();
+  setSaveState(imported ? 'saving' : 'saved', imported
+    ? 'Saving as a new project…'
+    : savedAtLabel(new Date(project.updatedAt ?? Date.now())));
   if (state.source && state.mode === 'line-art' && !state.offline) void renderStyle();
 }
 
@@ -2861,6 +3331,7 @@ function resetManualStyleForNewImage() {
 
 async function importFile(file) {
   if (!file) return;
+  if (!await flushPendingSave()) return;
   if (file.name.toLowerCase().endsWith('.stencil.json') || file.type === 'application/json') {
     await importProjectFile(file);
     return;
@@ -2888,6 +3359,10 @@ async function importFile(file) {
     state.validation = null;
     resetManualStyleForNewImage();
     resetHistory();
+    state.lastValidatedAt = null;
+    state.lastExportedAt = null;
+    state.name = file.name.replace(/\.[^.]+$/, '').trim() || 'Untitled panel';
+    el('project-name').value = state.name;
     setSourceRecipeAvailability(true);
     updateViewAvailability();
     updateAutomaticSupportState();
@@ -3540,6 +4015,7 @@ async function autoBridge() {
         ? 'Everything is already one connected piece after kerf.'
         : 'No safe automatic repair was found; reduce detail or add a manual support.';
     toast(`${resultMessage}${fallbackNotice}`);
+    if (suggested.length) await createRecoveryPoint('Smart supports generated');
   } catch (error) {
     console.error(error);
     const reason = error instanceof Error && error.message
@@ -3847,6 +4323,9 @@ async function exportGeometry(kind) {
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
+    state.lastExportedAt = new Date().toISOString();
+    markDirty();
+    await createRecoveryPoint(`${kind.toUpperCase()} exported`);
     toast(`${kind.toUpperCase()} written.`);
   } catch (error) {
     console.error(error);
@@ -4113,6 +4592,7 @@ function confirmAction(title, message, label = 'Continue') {
   el('confirm-dialog-title').textContent = title;
   el('confirm-dialog-message').textContent = message;
   el('confirm-dialog-action').textContent = label;
+  dialog.returnValue = '';
   dialog.showModal();
   return new Promise((resolve) => {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
@@ -4269,9 +4749,10 @@ function wire() {
     resetManufacturingRepairs();
     state.paintedFor = null; state.bridges = []; state.automaticSupportsStale = false;
     state.candidates = []; state.selectedCandidateId = null; state.validation = null;
+    state.lastValidatedAt = null; state.lastExportedAt = null;
     state.projectId = null; state.createdAt = null; state.dirty = false;
     await clearLastProject();
-    if (el('save-state')) { el('save-state').textContent = 'No artwork'; el('save-state').dataset.state = 'saved'; }
+    setSaveState('saved', 'No artwork');
     setSourceRecipeAvailability(true);
     updateViewAvailability();
     updateAutomaticSupportState();
@@ -4667,11 +5148,105 @@ function wire() {
   // --- history and project
   el('btn-undo')?.addEventListener('click', undo);
   el('btn-redo')?.addEventListener('click', redo);
-  el('btn-new-project')?.addEventListener('click', async () => {
-    if (!await confirmAction('Start a new panel?', 'The current panel is saved on this device first.', 'Start new')) return;
-    await persist();
-    await clearLastProject();
-    location.reload();
+  el('btn-new-project')?.addEventListener('click', () => void startNewProject());
+  el('btn-library-new-project')?.addEventListener('click', () => void startNewProject());
+  el('save-state')?.addEventListener('click', () => {
+    if (state.dirty) void flushPendingSave();
+  });
+  el('btn-projects')?.addEventListener('click', () => void openProjectLibrary());
+  el('btn-close-projects')?.addEventListener('click', closeProjectLibrary);
+  el('project-library-dialog')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeProjectLibrary();
+  });
+  el('project-search')?.addEventListener('input', renderProjectLibrary);
+  el('project-status-filter')?.addEventListener('change', renderProjectLibrary);
+  for (const tab of all('[data-project-view]')) {
+    tab.addEventListener('click', async () => {
+      projectLibraryView = tab.dataset.projectView;
+      await refreshProjectLibrary();
+    });
+  }
+  el('project-list')?.addEventListener('dblclick', (event) => {
+    if (event.target.closest?.('button')) return;
+    const card = event.target.closest?.('[data-project-id]');
+    if (card && projectLibraryView === 'active') void openStoredProject(card.dataset.projectId);
+  });
+  el('project-list')?.addEventListener('click', async (event) => {
+    const button = event.target.closest?.('[data-project-action]');
+    const card = event.target.closest?.('[data-project-id]');
+    if (!button || !card) return;
+    const record = projectLibraryRows.find((row) => row.id === card.dataset.projectId);
+    if (!record) return;
+    try {
+      await handleProjectAction(button.dataset.projectAction, record);
+    } catch (error) {
+      console.error(error);
+      toast('That project action could not be completed. Your current work was not changed.');
+      await openProjectLibrary({ flush: false });
+    }
+  });
+  el('rename-project-dialog')?.addEventListener('close', async (event) => {
+    const id = renameProjectId;
+    renameProjectId = null;
+    if (event.currentTarget.returnValue === 'confirm' && id) {
+      const name = el('rename-project-input').value.trim();
+      if (name) {
+        await updateProject(id, { name });
+        if (id === state.projectId) {
+          state.name = name;
+          el('project-name').value = name;
+        }
+        toast(`Renamed project to “${name}”.`);
+      } else {
+        toast('Project names cannot be empty.');
+      }
+    }
+    await openProjectLibrary({ flush: false });
+  });
+  el('version-dialog')?.addEventListener('close', () => {
+    if (!versionProjectId) return;
+    versionProjectId = null;
+    void openProjectLibrary({ flush: false });
+  });
+  el('version-list')?.addEventListener('click', async (event) => {
+    const button = event.target.closest?.('[data-checkpoint-action="restore"]');
+    const item = event.target.closest?.('[data-checkpoint-id]');
+    if (!button || !item || !versionProjectId) return;
+    const checkpoint = versionRows.find((row) => row.id === item.dataset.checkpointId);
+    const projectId = versionProjectId;
+    versionProjectId = null;
+    el('version-dialog').close();
+    const current = await loadProject(projectId);
+    if (!checkpoint || !current) return;
+    if (!await confirmAction(
+      'Restore this recovery point?',
+      'The current project state remains protected by autosave and newer recovery points.',
+      'Restore',
+    )) {
+      await openProjectLibrary({ flush: false });
+      return;
+    }
+    try {
+      await saveCheckpoint(current, 'Before recovery restore');
+    } catch (error) {
+      console.error(error);
+      toast('The current state could not be protected, so the recovery point was not restored.');
+      await openProjectLibrary({ flush: false });
+      return;
+    }
+    const restored = await saveProject({
+      ...checkpoint.project,
+      id: current.id,
+      name: current.name,
+      createdAt: current.createdAt,
+      localSource: current.localSource ?? null,
+      trashedAt: null,
+    });
+    styleAbort?.abort();
+    await loadProjectState(restored);
+    setSaveState('saved', savedAtLabel(new Date(restored.updatedAt)));
+    pushHistory();
+    toast(`Restored “${checkpoint.label}”.`);
   });
   el('project-name')?.addEventListener('input', (event) => {
     state.name = event.target.textContent?.trim() || event.target.value?.trim() || 'Untitled panel';
@@ -4959,6 +5534,11 @@ function wire() {
 
   document.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey) {
+      if (event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        void flushPendingSave();
+        return;
+      }
       if (event.key === 'z' && !event.shiftKey) { event.preventDefault(); undo(); }
       if (event.key === 'y' || (event.key === 'z' && event.shiftKey)) { event.preventDefault(); redo(); }
       return;
@@ -5070,9 +5650,12 @@ export async function startEditor({ device, offline = false } = {}) {
     if (previous?.raster?.sourceMask) {
       await loadProjectState(previous);
       toast('Reopened your last panel.');
+    } else {
+      setSaveState('saved', 'No artwork');
     }
   } catch (error) {
     console.error(error);
+    setSaveState('error', 'Could not open local project');
   }
 
   pushHistory();

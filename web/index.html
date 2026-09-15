@@ -106,13 +106,17 @@
       <div class="project-identity">
         <label class="visually-hidden" for="project-name">Project name</label>
         <input id="project-name" name="projectName" value="Untitled stencil" autocomplete="off" spellcheck="false">
-        <span class="save-state" id="save-state" role="status">
+        <button class="save-state" id="save-state" type="button" data-state="saved" title="Project is saved locally">
           <span class="status-dot" aria-hidden="true"></span>
-          Saved locally
-        </span>
+          <span id="save-state-label" aria-live="polite">Saved locally</span>
+        </button>
       </div>
 
       <div class="header-actions" aria-label="Project actions">
+        <button class="button button-quiet projects-label" id="btn-projects" type="button" aria-haspopup="dialog" aria-controls="project-library-dialog">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"></path><path d="M3 7V5h7l2 2"></path></svg>
+          <span>Projects</span>
+        </button>
         <button class="icon-button" id="btn-undo" type="button" disabled aria-label="Undo" title="Undo">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6"></path></svg>
         </button>
@@ -1228,6 +1232,81 @@
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
         <button class="button button-primary" id="confirm-dialog-action" value="confirm">Continue</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="project-library-dialog" id="project-library-dialog" aria-labelledby="project-library-title">
+    <section class="project-library-shell">
+      <header class="project-library-header">
+        <div>
+          <span class="eyebrow">Stored privately on this device</span>
+          <h2 id="project-library-title">Projects</h2>
+        </div>
+        <button class="icon-button" id="btn-close-projects" type="button" aria-label="Close projects" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </header>
+
+      <div class="project-library-toolbar">
+        <label class="project-search" for="project-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16 16 5 5"></path></svg>
+          <input id="project-search" type="search" placeholder="Search projects" autocomplete="off">
+        </label>
+        <label class="visually-hidden" for="project-status-filter">Filter projects by status</label>
+        <select id="project-status-filter">
+          <option value="all">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="needs-validation">Needs validation</option>
+          <option value="ready">Ready to export</option>
+        </select>
+        <button class="button button-primary" id="btn-library-new-project" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          New project
+        </button>
+      </div>
+
+      <div class="project-library-tabs" role="tablist" aria-label="Project location">
+        <button type="button" role="tab" data-project-view="active" aria-selected="true">Projects <span id="project-count-active">0</span></button>
+        <button type="button" role="tab" data-project-view="trash" aria-selected="false">Trash <span id="project-count-trash">0</span></button>
+      </div>
+
+      <div class="project-library-summary">
+        <span id="project-library-result">Loading projects…</span>
+        <span id="project-storage-summary"></span>
+      </div>
+      <div class="project-grid" id="project-list" role="list" aria-live="polite"></div>
+      <div class="project-library-empty" id="project-library-empty" hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 14h14l4 5h16v21H7z"></path><path d="M7 14V9h14l4 5"></path></svg>
+        <strong>No projects here</strong>
+        <span>Start a project from an image, or change your search.</span>
+      </div>
+
+      <footer class="project-library-footer">
+        Original photographs remain in this browser. Downloaded project files omit them unless a future portable-package option is explicitly selected.
+      </footer>
+    </section>
+  </dialog>
+
+  <dialog class="app-dialog" id="rename-project-dialog" aria-labelledby="rename-project-title">
+    <form method="dialog">
+      <h2 id="rename-project-title">Rename project</h2>
+      <label class="dialog-field" for="rename-project-input">Project name</label>
+      <input id="rename-project-input" type="text" maxlength="100" autocomplete="off">
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="rename-project-action" value="confirm">Rename</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="app-dialog version-dialog" id="version-dialog" aria-labelledby="version-dialog-title">
+    <form method="dialog">
+      <h2 id="version-dialog-title">Recovery points</h2>
+      <p>Stencil CNC keeps up to ten checkpoints created after validation, repair, support generation, and export.</p>
+      <ol class="version-list" id="version-list"></ol>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Close</button>
       </div>
     </form>
   </dialog>

@@ -178,3 +178,27 @@ test("creative candidates round-trip as processed recipes without source photogr
   assert.equal(serializeProject(project).includes("private.jpg"), true);
   assert.equal(serializeProject(project).includes("localSource"), false);
 });
+
+test("project-library summary data round-trips with the editable project", () => {
+  const project = createProject({
+    editor: {
+      controls: { cutStyle: 'lamele' },
+      projectSummary: {
+        thumbnail: 'data:image/png;base64,preview',
+        cutStyle: 'lamele',
+        status: 'ready',
+        lastValidatedAt: '2026-09-15T10:00:00.000Z',
+        lastExportedAt: '2026-09-15T10:05:00.000Z',
+      },
+    },
+  });
+
+  const restored = deserializeProject(serializeProject(project));
+  assert.deepEqual(restored.editor.projectSummary, {
+    thumbnail: 'data:image/png;base64,preview',
+    cutStyle: 'lamele',
+    status: 'ready',
+    lastValidatedAt: '2026-09-15T10:00:00.000Z',
+    lastExportedAt: '2026-09-15T10:05:00.000Z',
+  });
+});
