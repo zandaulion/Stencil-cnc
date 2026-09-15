@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "analiza"
 
 from stiluri import (  # noqa: E402
     _cap_din_subiect,
+    _raze_adaptive,
     ReglajImposibil,
     aplica_limite_fizice,
     benzi_contur,
@@ -473,6 +474,37 @@ class TestStiluriDinReferinte(unittest.TestCase):
         self.assertFalse(masca[20:160, 30:190].all())
         self.assertTrue(masca[20:160, 30:190].any())
 
+    def test_razele_folosesc_diametrul_real_cerut_pentru_miez(self):
+        camp = np.zeros((400, 400), np.float32)
+        zona = np.ones_like(camp, dtype=bool)
+        masca = raze(
+            camp, zona, MM_PE_PX, numar_raze=64, celula_mm=10,
+            diametru_miez_mm=30, centru_x=0.5, centru_y=0.5,
+            fanta_min_mm=1.5, punte_min_mm=1.5,
+        )
+        yy, xx = np.mgrid[:400, :400]
+        distanta_mm = np.hypot(xx - 199.5, yy - 199.5) * MM_PE_PX
+        self.assertTrue(masca[distanta_mm < 14.5].all())
+        prima_taiere_mm = float(distanta_mm[~masca].min())
+        self.assertGreaterEqual(prima_taiere_mm, 14.5)
+        self.assertLess(prima_taiere_mm, 16.5)
+
+    def test_razele_se_dubleaza_ordonat_spre_exterior(self):
+        numere = _raze_adaptive(
+            64,
+            np.array([20.0, 40.0, 80.0]),
+            fanta_px=3.0,
+            punte_px=3.0,
+        )
+        self.assertEqual(numere.tolist(), [16, 32, 64])
+
+    def test_razele_refuza_un_miez_mai_mic_decat_o_fanta_si_o_punte(self):
+        with self.assertRaises(ReglajImposibil):
+            raze(
+                self.camp, self.zona, MM_PE_PX,
+                diametru_miez_mm=1, fanta_min_mm=2, punte_min_mm=3,
+            )
+
     def test_razele_redau_tonul_prin_suprafata_celulelor_polare(self):
         camp = np.full((400, 400), 0.9, np.float32)
         camp[:, 200:] = 0.1
@@ -499,6 +531,7 @@ class TestStiluriDinReferinte(unittest.TestCase):
         cv2.circle(camp, (135, 80), 28, 1.0, -1)
         x, y, gasit, raza_mm = centru_automat_raze(
             camp, zona, MM_PE_PX, numar_raze=12, celula_mm=6,
+            diametru_miez_mm=20,
             fanta_min_mm=1.5, punte_min_mm=1.5, prag_lumina=0.12,
         )
         self.assertTrue(gasit)
@@ -508,6 +541,7 @@ class TestStiluriDinReferinte(unittest.TestCase):
         miez = (xx - centru[0]) ** 2 + (yy - centru[1]) ** 2 <= raza_px ** 2
         self.assertTrue((camp[miez] >= 0.88).all())
         self.assertGreater(centru[0], 90, "the undersized central patch must not be selected")
+        self.assertAlmostEqual(raza_mm, 10.0)
 
     def test_centrul_automat_foloseste_rezerva_ceruta_daca_nu_are_loc(self):
         camp = np.zeros((100, 200), np.float32)

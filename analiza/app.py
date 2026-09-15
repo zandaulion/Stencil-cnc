@@ -192,6 +192,7 @@ async def analizeaza(
     # raze
     numar_raze: int = Form(64),
     celula_raze_mm: float = Form(12.0),
+    diametru_miez_raze_mm: float = Form(50.0),
     centru_raze_automat: bool = Form(True),
     centru_raze_x: float = Form(0.25),
     centru_raze_y: float = Form(0.50),
@@ -340,11 +341,14 @@ async def analizeaza(
             if centru_raze_automat:
                 centru_raze_x, centru_raze_y, centru_gasit, raza_miez_mm = centru_automat_raze(
                     camp, masca_subiect, mm_pe_px, numar_raze=numar_raze,
-                    celula_mm=celula_raze_mm, fanta_min_mm=fanta_min_mm,
+                    celula_mm=celula_raze_mm, diametru_miez_mm=diametru_miez_raze_mm,
+                    fanta_min_mm=fanta_min_mm,
                     punte_min_mm=punte_min_mm, prag_lumina=prag_raze,
                 )
             masca = raze(camp, masca_subiect, mm_pe_px, numar_raze=numar_raze,
-                          celula_mm=celula_raze_mm, centru_x=centru_raze_x,
+                          celula_mm=celula_raze_mm,
+                          diametru_miez_mm=diametru_miez_raze_mm,
+                          centru_x=centru_raze_x,
                           centru_y=centru_raze_y, fanta_min_mm=fanta_min_mm,
                           punte_min_mm=punte_min_mm, gamma=gamma,
                           prag_lumina=prag_raze)
@@ -355,6 +359,8 @@ async def analizeaza(
                     "automatic": bool(centru_raze_automat),
                     "matchedMetal": bool(centru_gasit) if centru_raze_automat else None,
                     "hubRadiusMm": round(float(raza_miez_mm), 2) if centru_raze_automat else None,
+                    "hubDiameterMm": round(float(diametru_miez_raze_mm), 2),
+                    "adaptiveRays": True,
                 },
             }
         elif stil == "ornament":

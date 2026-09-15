@@ -358,11 +358,15 @@ test('cut styles use a compact categorized picker on desktop and mobile', () => 
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.style-picker-grid\s*\{[\s\S]*?grid-template-columns: 1fr/);
 });
 
-test('radial cuts automatically conceal their complete solid hub', () => {
+test('radial cuts expose an actual hub diameter and split rays outward', () => {
+  assert.match(html, /Maximum rays <small>Rays split progressively toward the outside/);
+  assert.match(html, /id="style-ray-count"[^>]*max="192"/);
+  assert.match(html, /id="style-ray-hub"[^>]*value="50"/);
   assert.match(html, /id="style-ray-center-auto"[^>]*type="checkbox" checked/);
   assert.match(html, /id="style-ray-center-x"[^>]*value="25" disabled/);
   assert.match(html, /id="style-ray-center-y"[^>]*value="50" disabled/);
   assert.match(editor, /form\.set\('centru_raze_automat'/);
+  assert.match(editor, /form\.set\('diametru_miez_raze_mm'/);
   assert.match(editor, /radial\.matchedMetal/);
   assert.match(editor, /25% \/ 50% fallback/);
 });

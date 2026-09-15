@@ -8,6 +8,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 - Converts line art locally in the browser and photographs through a private analysis service.
 - Provides 13 cut styles: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
+- Radial cuts use a directly controlled solid-hub diameter and split rays progressively toward the panel edge.
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
 - Models a configurable panel frame and preserves unused letterbox areas as metal.
 - Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face.

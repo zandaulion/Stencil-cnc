@@ -474,12 +474,16 @@
 
               <div id="style-radial" hidden>
                 <div class="range-control">
-                  <label for="style-ray-count"><span>Number of rays</span><output id="style-ray-count-value" for="style-ray-count">64</output></label>
-                  <input id="style-ray-count" name="styleRayCount" type="range" min="6" max="96" step="2" value="64">
+                  <label for="style-ray-count"><span>Maximum rays <small>Rays split progressively toward the outside</small></span><output id="style-ray-count-value" for="style-ray-count">64</output></label>
+                  <input id="style-ray-count" name="styleRayCount" type="range" min="6" max="192" step="2" value="64">
                 </div>
                 <label class="field-row" for="style-ray-cell">
-                  <span>Radial cell <small>Dash and connecting-web cycle</small></span>
+                  <span>Radial pitch <small>Dash and connecting-web cycle</small></span>
                   <span class="number-field compact"><input id="style-ray-cell" name="styleRayCell" type="number" min="2" max="60" step="0.5" value="12"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-ray-hub">
+                  <span>Solid hub diameter <small>Actual uncut circle at the focal point</small></span>
+                  <span class="number-field compact"><input id="style-ray-hub" name="styleRayHub" type="number" min="5" max="600" step="0.5" value="50"><span data-unit-label>mm</span></span>
                 </label>
                 <label class="toggle-row" for="style-ray-center-auto">
                   <span>Place solid hub automatically<small>Fits it inside the nearest existing solid-metal area</small></span>
@@ -493,7 +497,7 @@
                   <label for="style-ray-center-y"><span>Focal point height</span><output id="style-ray-center-y-value" for="style-ray-center-y">50%</output></label>
                   <input id="style-ray-center-y" name="styleRayCenterY" type="range" min="0" max="100" step="0.1" value="50" disabled>
                 </div>
-                <p class="section-help" id="style-ray-center-status">The server will place the complete solid hub inside planned metal.</p>
+                <p class="section-help" id="style-ray-center-status">The server will place the selected solid hub inside planned metal.</p>
                 <div class="range-control">
                   <label for="style-ray-cutoff"><span>Dark-area cutoff <small>Suppresses radial marks in shadows</small></span><output id="style-ray-cutoff-value" for="style-ray-cutoff">12%</output></label>
                   <input id="style-ray-cutoff" name="styleRayCutoff" type="range" min="0" max="50" step="1" value="12">

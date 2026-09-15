@@ -291,23 +291,32 @@ def benzi_contur(
     return ~(taiat & zona)
 
 
-def _raza_miez_raze_px(
-    mm_pe_px: float,
-    numar_raze: int,
-    celula_mm: float,
-    fanta_min_mm: float,
-    punte_min_mm: float,
-) -> float:
-    """Radius of the disk that the polar grid necessarily leaves uncut."""
-    perioada = 2 * np.pi / int(numar_raze)
-    celula = max(2.0, celula_mm / mm_pe_px)
-    fanta = fanta_min_mm / mm_pe_px
-    punte = punte_min_mm / mm_pe_px
-    # A sector first becomes wide enough for a slot at the inner edge of this
-    # ring. Even there, the radial mark is kept half a web away from that edge,
-    # so the disk below remains solid for every possible source tone.
-    primul_inel = int(np.ceil((fanta + punte) / (celula * perioada)))
-    return primul_inel * celula + punte / 2
+def _raze_adaptive(
+    raze_maxime: int,
+    raze_interioare_px: np.ndarray,
+    fanta_px: float,
+    punte_px: float,
+) -> np.ndarray:
+    """Choose nested ray counts that fit each ring's inner circumference.
+
+    A fixed angular count forces a large empty centre: all outer rays are
+    crowded around the smallest circumference. Divisors of the requested
+    outer count form a clean hierarchy instead. A 64-ray pattern can therefore
+    grow 8 → 16 → 32 → 64 without moving established sector boundaries.
+    """
+    divizori = np.array(
+        [valoare for valoare in range(1, int(raze_maxime) + 1)
+         if int(raze_maxime) % valoare == 0],
+        dtype=np.int64,
+    )
+    capacitate = np.floor(
+        2 * np.pi * np.asarray(raze_interioare_px, dtype=np.float64)
+        / (fanta_px + punte_px)
+    ).astype(np.int64)
+    pozitii = np.searchsorted(divizori, capacitate, side="right") - 1
+    if np.any(pozitii < 0):
+        raise ReglajImposibil("Miezul radial este prea mic pentru fantă şi punte.")
+    return divizori[np.clip(pozitii, 0, divizori.size - 1)]
 
 
 def centru_automat_raze(
@@ -316,6 +325,7 @@ def centru_automat_raze(
     mm_pe_px: float,
     numar_raze: int = 64,
     celula_mm: float = 12.0,
+    diametru_miez_mm: float = 50.0,
     fanta_min_mm: float = 2.0,
     punte_min_mm: float = 3.0,
     prag_lumina: float = 0.12,
@@ -334,16 +344,27 @@ def centru_automat_raze(
     """
     if camp.ndim != 2 or camp.shape != subiect.shape:
         raise ValueError("Câmpul şi subiectul trebuie să aibă aceeaşi mărime.")
-    if not 6 <= int(numar_raze) <= 96:
-        raise ReglajImposibil("Numărul de raze trebuie să fie între 6 şi 96.")
+    if not 6 <= int(numar_raze) <= 192:
+        raise ReglajImposibil("Numărul de raze trebuie să fie între 6 şi 192.")
     if celula_mm < fanta_min_mm + punte_min_mm:
         raise ReglajImposibil("Celula radială nu poate ţine fanta şi puntea cerute.")
+    if not np.isfinite(diametru_miez_mm) or diametru_miez_mm <= 0:
+        raise ReglajImposibil("Diametrul miezului radial trebuie să fie pozitiv.")
+    diametru_minim = (fanta_min_mm + punte_min_mm) / np.pi
+    if diametru_miez_mm < diametru_minim:
+        raise ReglajImposibil(
+            f"Diametrul miezului radial trebuie să fie de cel puţin {diametru_minim:.2f} mm."
+        )
     if not 0 <= prag_lumina < 1:
         raise ReglajImposibil("Pragul de lumină trebuie să fie între 0 şi 1.")
 
     h, w = camp.shape
-    raza_miez_px = _raza_miez_raze_px(
-        mm_pe_px, numar_raze, celula_mm, fanta_min_mm, punte_min_mm,
+    raza_miez_px = diametru_miez_mm / (2 * mm_pe_px)
+    # Even one opening needs one slot and one web around the requested hub.
+    # Reject an impossible value instead of silently making the circle larger.
+    _raze_adaptive(
+        numar_raze, np.array([raza_miez_px]),
+        fanta_min_mm / mm_pe_px, punte_min_mm / mm_pe_px,
     )
     # Half tone is the same natural dark/light split used by the portrait
     # styles. Using the much stricter radial cutoff here would reject ordinary
@@ -395,6 +416,7 @@ def raze(
     mm_pe_px: float,
     numar_raze: int = 64,
     celula_mm: float = 12.0,
+    diametru_miez_mm: float = 50.0,
     centru_x: float = 0.45,
     centru_y: float = 0.42,
     fanta_min_mm: float = 2.0,
@@ -404,20 +426,27 @@ def raze(
 ) -> np.ndarray:
     """A radial halftone whose cells visibly carry the source photograph.
 
-    Both dimensions of every polar mark follow the local light value. The old
-    renderer changed only dash length while every ray stayed one tool-width
-    wide; at panel scale those tiny differences disappeared and the result read
-    as an unmodulated sunburst. Wider light cells and small or absent dark cells
-    preserve the radial rhythm while making the image legible from a distance.
+    Both dimensions of every polar mark follow the local light value. Ray counts
+    are nested divisors of the requested outer maximum, so sectors split as the
+    circumference grows instead of forcing every outer ray around the hub.
+    Wider light cells and small or absent dark cells preserve the radial rhythm
+    while making the image legible from a distance.
 
     Radial and tangential marks leave ``punte_min_mm`` between neighbouring
-    cells. The innermost rings that cannot fit both a cut and a web remain a
-    solid hub rather than creating sub-tool geometry around the focal point.
+    cells. ``diametru_miez_mm`` is the actual fully retained circle: the first
+    possible cuts begin at its boundary rather than moving it implicitly.
     """
-    if not 6 <= int(numar_raze) <= 96:
-        raise ReglajImposibil("Numărul de raze trebuie să fie între 6 şi 96.")
+    if not 6 <= int(numar_raze) <= 192:
+        raise ReglajImposibil("Numărul de raze trebuie să fie între 6 şi 192.")
     if celula_mm < fanta_min_mm + punte_min_mm:
         raise ReglajImposibil("Celula radială nu poate ţine fanta şi puntea cerute.")
+    if not np.isfinite(diametru_miez_mm) or diametru_miez_mm <= 0:
+        raise ReglajImposibil("Diametrul miezului radial trebuie să fie pozitiv.")
+    diametru_minim = (fanta_min_mm + punte_min_mm) / np.pi
+    if diametru_miez_mm < diametru_minim:
+        raise ReglajImposibil(
+            f"Diametrul miezului radial trebuie să fie de cel puţin {diametru_minim:.2f} mm."
+        )
     if not 0 <= centru_x <= 1 or not 0 <= centru_y <= 1:
         raise ReglajImposibil("Centrul razelor trebuie să fie în fotografie.")
     if not 0 <= prag_lumina < 1:
@@ -428,13 +457,23 @@ def raze(
     dx = xx - centru_x * (w - 1)
     dy = yy - centru_y * (h - 1)
     raza = np.hypot(dx, dy)
-    perioada = 2 * np.pi / int(numar_raze)
     unghi = np.mod(np.arctan2(dy, dx), 2 * np.pi)
-    sector = np.floor(unghi / perioada).astype(np.int64)
     celula = max(2.0, celula_mm / mm_pe_px)
-    radial = np.floor(raza / celula).astype(np.int64)
+    raza_miez = diametru_miez_mm / (2 * mm_pe_px)
+    distanta_radiala = np.maximum(0.0, raza - raza_miez)
+    radial = np.floor(distanta_radiala / celula).astype(np.int64)
+    inele = int(radial.max()) + 1
+    fanta = fanta_min_mm / mm_pe_px
+    punte = punte_min_mm / mm_pe_px
+    raze_interioare = raza_miez + np.arange(inele, dtype=np.float64) * celula
+    raze_pe_inel = _raze_adaptive(
+        numar_raze, raze_interioare, fanta, punte,
+    )
+    raze_locale = raze_pe_inel[radial]
+    perioada_locala = 2 * np.pi / raze_locale
+    sector = np.floor(unghi / perioada_locala).astype(np.int64)
     identificator = radial * int(numar_raze) + sector
-    numar = int(identificator.max()) + 1
+    numar = inele * int(numar_raze)
     lumina = np.clip(1.0 - camp, 0.0, 1.0)
     zona = subiect.astype(bool)
     sume = np.bincount(identificator[zona], weights=lumina[zona], minlength=numar)
@@ -445,16 +484,14 @@ def raze(
         gamma,
     )
 
-    fanta = fanta_min_mm / mm_pe_px
-    punte = punte_min_mm / mm_pe_px
-
-    # Radially, every mark is centred in a cell and stops one web short of the
-    # next. Tangentially, sector width grows with radius. Use the inner edge of
-    # the radial cell for the maximum mark width; that is the narrowest point
-    # and therefore guarantees the requested web throughout the entire cell.
+    # Radially, every mark starts at the requested hub boundary and stops one
+    # web short of the next ring. Tangentially, nested sector counts grow only
+    # when the circumference can hold them at full manufacturing width.
     indice_radial = np.arange(numar, dtype=np.int64) // int(numar_raze)
-    raza_interioara = indice_radial.astype(np.float64) * celula
-    latime_max = raza_interioara * perioada - punte
+    raza_interioara = raza_miez + indice_radial.astype(np.float64) * celula
+    raze_identificator = raze_pe_inel[indice_radial]
+    perioada_identificator = 2 * np.pi / raze_identificator
+    latime_max = raza_interioara * perioada_identificator - punte
     viabil = latime_max >= fanta
     latime = fanta + ton_celula * np.maximum(0.0, latime_max - fanta)
 
@@ -464,14 +501,16 @@ def raze(
     latime[~exista] = 0.0
     lungime[~exista] = 0.0
 
-    abatere_unghi = np.abs(np.mod(unghi + perioada / 2, perioada) - perioada / 2)
+    abatere_unghi = np.abs(
+        np.mod(unghi + perioada_locala / 2, perioada_locala) - perioada_locala / 2
+    )
     abatere_tangentiala = abatere_unghi * np.maximum(raza, 1)
-    pozitie_radiala = np.mod(raza, celula) - celula / 2
+    pozitie_radiala = np.mod(distanta_radiala, celula)
     jumatate_lungime = lungime[identificator] / 2
     jumatate_latime = latime[identificator] / 2
     taiat = ((abatere_tangentiala <= jumatate_latime)
-             & (np.abs(pozitie_radiala) <= jumatate_lungime))
-    taiat &= zona & (jumatate_latime > 0)
+             & (pozitie_radiala <= 2 * jumatate_lungime))
+    taiat &= zona & (raza >= raza_miez) & (jumatate_latime > 0)
     return ~taiat
 
 

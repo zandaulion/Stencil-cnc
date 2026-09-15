@@ -629,6 +629,7 @@ function styleParams(stil = selectedCutStyle()) {
   } else if (stil === 'raze') {
     form.set('numar_raze', String(numberField('style-ray-count', 64)));
     form.set('celula_raze_mm', String(toMm(numberField('style-ray-cell', 12))));
+    form.set('diametru_miez_raze_mm', String(toMm(numberField('style-ray-hub', 50))));
     form.set('centru_raze_automat', String(el('style-ray-center-auto')?.checked !== false));
     form.set('centru_raze_x', String(numberField('style-ray-center-x', 25) / 100));
     form.set('centru_raze_y', String(numberField('style-ray-center-y', 50) / 100));
@@ -675,7 +676,7 @@ function enforceStyleSpacing() {
       ? [['style-dot-pitch', 'dot pitch']]
     : style === 'gravura'
       ? [['style-wood-spacing', 'mark spacing']]
-      : style === 'raze' ? [['style-ray-cell', 'radial cell']] : [];
+      : style === 'raze' ? [['style-ray-cell', 'radial pitch']] : [];
   for (const [id, eticheta] of spacingFields) {
     const node = el(id);
     if (!node) continue;
@@ -683,6 +684,38 @@ function enforceStyleSpacing() {
     if (numberField(id, 3) < minim) {
       node.value = roundUnit(minim);
       ajustate.push(`${eticheta} to ${node.value} ${state.unit}`);
+    }
+  }
+  if (style === 'raze') {
+    const node = el('style-ray-hub');
+    const minimumDiameterMm = Math.max(5, (slot + web) / Math.PI);
+    const sourceSize = state.source
+      ? { width: state.source.width, height: state.source.height }
+      : null;
+    const placement = sourceSize
+      ? calculateArtworkPlacement(sourceSize, sheet(), {
+          frame: frameConfig(),
+          marginMm: toMm(numberField('panel-margin', 0)),
+          fitToFrame: el('fit-artwork')?.checked !== false,
+        })
+      : sheet();
+    // The deterministic fallback is one quarter from the left edge. Limiting
+    // the diameter to half the artwork width keeps the complete circle inside
+    // the rendered image even when no feature is large enough to conceal it.
+    const maximumDiameterMm = Math.max(
+      minimumDiameterMm,
+      Math.min(placement.widthMm / 2, placement.heightMm),
+    );
+    const minimumDiameter = fromMm(minimumDiameterMm);
+    const maximumDiameter = fromMm(maximumDiameterMm);
+    node.min = String(roundUnit(minimumDiameter));
+    node.max = String(roundUnit(maximumDiameter));
+    if (numberField('style-ray-hub', 50) < minimumDiameter) {
+      node.value = roundUnit(minimumDiameter);
+      ajustate.push(`solid hub diameter to ${node.value} ${state.unit}`);
+    } else if (numberField('style-ray-hub', 50) > maximumDiameter) {
+      node.value = roundUnit(maximumDiameter);
+      ajustate.push(`solid hub diameter to ${node.value} ${state.unit}`);
     }
   }
   if (style === 'puncte') {
@@ -849,11 +882,12 @@ async function renderStyle() {
       if (centerY) centerY.value = String(Math.round(radial.y * 1000) / 10);
       const centerStatus = el('style-ray-center-status');
       if (centerStatus) {
+        const diameter = radial.hubDiameterMm ?? Math.round((radial.hubRadiusMm ?? 25) * 2 * 100) / 100;
         centerStatus.textContent = radial.automatic
           ? radial.matchedMetal
-            ? `Auto-placed in existing metal · complete hub radius ${radial.hubRadiusMm} mm.`
-            : 'No solid-metal area could contain the complete hub · using the 25% / 50% fallback.'
-          : 'Manual focal point. Switch automatic placement on to conceal the solid hub in existing metal.';
+            ? `${diameter} mm solid hub auto-placed in existing metal · rays split progressively outward.`
+            : `No solid-metal area could contain the ${diameter} mm hub · using the 25% / 50% fallback.`
+          : `${diameter} mm solid hub at the manual focal point.`;
       }
       updateRangeOutputs();
     }
@@ -927,9 +961,9 @@ function reflectRayCentreControls() {
   }
   const status = el('style-ray-center-status');
   if (status && automatic && !state.source) {
-    status.textContent = 'The server will place the complete solid hub inside planned metal.';
+    status.textContent = 'The server will place the selected solid hub inside planned metal.';
   } else if (status && !automatic) {
-    status.textContent = 'Manual focal point. Switch automatic placement on to conceal the solid hub in existing metal.';
+    status.textContent = `${numberField('style-ray-hub', 50)} ${state.unit} solid hub at the manual focal point.`;
   }
 }
 
@@ -4367,7 +4401,7 @@ function wire() {
     'style-line-detail', 'style-line-width', 'style-wood-spacing', 'style-wood-length',
     'style-graphic-balance', 'style-graphic-detail', 'style-graphic-simplify',
     'style-silhouette-smooth', 'style-contour-levels', 'style-contour-width',
-    'style-ray-count', 'style-ray-cell', 'style-ray-center-auto', 'style-ray-center-x', 'style-ray-center-y', 'style-ray-cutoff', 'style-ornament-detail',
+    'style-ray-count', 'style-ray-cell', 'style-ray-hub', 'style-ray-center-auto', 'style-ray-center-x', 'style-ray-center-y', 'style-ray-cutoff', 'style-ornament-detail',
     'style-ornament-width', 'style-ornament-four-way', 'style-cutout', 'style-clothes']) {
     el(id)?.addEventListener('input', () => {
       if (STYLE_SHARED_CONTROL_IDS.includes(id)) rememberStyleSettings();
@@ -4421,7 +4455,7 @@ function wire() {
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
-      'style-contour-width', 'style-ray-cell', 'style-ornament-width',
+      'style-contour-width', 'style-ray-cell', 'style-ray-hub', 'style-ornament-width',
       'style-dot-pitch', 'style-dot-max']) {
       const node = el(id);
       if (!node) continue;
