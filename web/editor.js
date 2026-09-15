@@ -3240,30 +3240,45 @@ function bridgeImageSamplers() {
   const protectDetail = el('protect-faces')?.checked === true;
   const followFeatures = el('support-follow-features')?.checked === true;
   if ((!protectDetail && !followFeatures) || !state.source?.imageData || !state.placement) {
-    return { detailAt: null, featureAt: null };
+    return { detailAt: null, featureAt: null, fallbackDetailAt: null };
   }
   const { width, height, data } = state.source.imageData;
+  // Keep photographic guidance deliberately smaller than the uploaded image.
+  // Phone photos are commonly 9-20 MP; duplicating one into a Float32Array can
+  // add 40-80 MB just as the component planner allocates its own large rasters.
+  // A bounded analysis raster is ample for choosing a bridge location and
+  // feature direction, while preventing memory pressure from aborting support
+  // planning before any structural work has begun.
+  const analysisMaximumDimension = 768;
+  const analysisScale = Math.min(1, analysisMaximumDimension / Math.max(width, height));
+  const analysisWidth = Math.max(1, Math.round(width * analysisScale));
+  const analysisHeight = Math.max(1, Math.round(height * analysisScale));
+  const analysisLuminance = new Float32Array(analysisWidth * analysisHeight);
   // Relative percentiles make "dark" mean dark within this photograph, while
   // ignoring a few clipped black or white pixels that would distort the range.
   const histogram = new Uint32Array(256);
-  const stride = Math.max(1, Math.floor(width * height / 250_000));
-  const luminance = new Float32Array(width * height);
-  let sampleCount = 0;
-  for (let index = 0; index < luminance.length; index += 1) {
-    const offset = index * 4;
-    const alpha = data[offset + 3] / 255;
-    luminance[index] = (0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2]) * alpha
-      + 255 * (1 - alpha);
-    if (index % stride === 0) {
-      histogram[Math.round(luminance[index])] += 1;
-      sampleCount += 1;
+  for (let analysisY = 0; analysisY < analysisHeight; analysisY += 1) {
+    const sourceY = analysisHeight === 1
+      ? 0
+      : Math.round(analysisY / (analysisHeight - 1) * (height - 1));
+    for (let analysisX = 0; analysisX < analysisWidth; analysisX += 1) {
+      const sourceX = analysisWidth === 1
+        ? 0
+        : Math.round(analysisX / (analysisWidth - 1) * (width - 1));
+      const sourceOffset = (sourceY * width + sourceX) * 4;
+      const alpha = data[sourceOffset + 3] / 255;
+      const value = (0.2126 * data[sourceOffset] + 0.7152 * data[sourceOffset + 1]
+        + 0.0722 * data[sourceOffset + 2]) * alpha + 255 * (1 - alpha);
+      analysisLuminance[analysisY * analysisWidth + analysisX] = value;
+      histogram[Math.round(value)] += 1;
     }
   }
-  const sourceLuminance = (x, y) => luminance[
-    Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))
+  const sourceLuminance = (x, y) => analysisLuminance[
+    Math.max(0, Math.min(analysisHeight - 1, y)) * analysisWidth
+      + Math.max(0, Math.min(analysisWidth - 1, x))
   ];
   const percentile = (ratio) => {
-    const target = sampleCount * ratio;
+    const target = analysisLuminance.length * ratio;
     let total = 0;
     for (let value = 0; value < histogram.length; value += 1) {
       total += histogram[value];
@@ -3285,8 +3300,10 @@ function bridgeImageSamplers() {
     const localY = (y - placement.yMm) / Math.max(placement.heightMm, Number.EPSILON);
     const fullX = (bounds.x + localX * bounds.width) / Math.max(1, sourceSize.width);
     const fullY = (bounds.y + localY * bounds.height) / Math.max(1, sourceSize.height);
-    const imageX = Math.max(0, Math.min(width - 1, Math.round(fullX * (width - 1))));
-    const imageY = Math.max(0, Math.min(height - 1, Math.round(fullY * (height - 1))));
+    const imageX = Math.max(0, Math.min(analysisWidth - 1,
+      Math.round(fullX * (analysisWidth - 1))));
+    const imageY = Math.max(0, Math.min(analysisHeight - 1,
+      Math.round(fullY * (analysisHeight - 1))));
     const center = sourceLuminance(imageX, imageY);
     const gx = sourceLuminance(imageX + 1, imageY) - sourceLuminance(imageX - 1, imageY);
     const gy = sourceLuminance(imageX, imageY + 1) - sourceLuminance(imageX, imageY - 1);
@@ -3303,11 +3320,16 @@ function bridgeImageSamplers() {
     };
   };
 
+  const detailAt = protectDetail ? (point) => {
+    const sample = sampleSource(point);
+    return sample ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0;
+  } : null;
   return {
-    detailAt: protectDetail && !followFeatures ? (point) => {
-      const sample = sampleSource(point);
-      return sample ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0;
-    } : null,
+    // Feature samples already carry their own detail value, so do not sample
+    // the photograph twice for every candidate. Retain the standalone sampler
+    // only for the feature-free retry.
+    detailAt: followFeatures ? null : detailAt,
+    fallbackDetailAt: detailAt,
     featureAt: followFeatures ? (point) => {
       const sample = sampleSource(point);
       // Outside the visible source there is no image feature to hide in.
@@ -3320,16 +3342,19 @@ function bridgeImageSamplers() {
   };
 }
 
-function smartBridgeStrategy() {
+function smartBridgeStrategy({ sampleImage = true } = {}) {
   const style = selectedCutStyle();
   const level = Math.max(1, Math.min(3, Number(el('bridge-count')?.value || 2)));
-  const imageSamplers = bridgeImageSamplers();
+  const imageSamplers = sampleImage
+    ? bridgeImageSamplers()
+    : { detailAt: null, featureAt: null, fallbackDetailAt: null };
   const strategy = {
     mode: 'smart',
     kind: style,
     level,
     detailAt: imageSamplers.detailAt,
     featureAt: imageSamplers.featureAt,
+    fallbackDetailAt: imageSamplers.fallbackDetailAt,
   };
   // A tie across parallel retained bars is their normal. It reads as one of
   // the pattern's own rungs, like the supplied diagonal-slat reference.
@@ -3384,7 +3409,7 @@ async function autoBridge() {
     const base = buildDesignMask(state.sourceMask, {
       sheet: sheet(), frame: frameConfig(), bridges: manual,
     });
-    const plan = suggestKerfAwareBridges(base.mask, {
+    const planningConfig = {
       sheet: sheet(),
       widthMm,
       anchorMask: base.frameMask,
@@ -3393,8 +3418,43 @@ async function autoBridge() {
       minimumWebMm,
       kerfMm,
       maxPasses: 4,
-      strategy: smartBridgeStrategy(),
+    };
+    let strategy;
+    let usedImageFallback = false;
+    try {
+      strategy = smartBridgeStrategy();
+    } catch (imageError) {
+      // Feature guidance is optional. A large or unusual source image must
+      // never prevent the geometry-only support planner from running.
+      console.warn('Could not prepare image guidance for smart supports; using structural placement.', imageError);
+      strategy = smartBridgeStrategy({ sampleImage: false });
+      usedImageFallback = true;
+    }
+    const planWith = (candidateStrategy) => suggestKerfAwareBridges(base.mask, {
+      ...planningConfig,
+      strategy: candidateStrategy,
     });
+    let plan;
+    try {
+      plan = planWith(strategy);
+    } catch (featureError) {
+      if (!strategy.featureAt) throw featureError;
+      // A failing photographic callback should only weaken the aesthetic
+      // guidance, never cancel the structural repair. First retain facial
+      // detail avoidance; if that sampler also fails, use geometry alone.
+      console.warn('Feature-following support scoring failed; retrying without it.', featureError);
+      try {
+        plan = planWith({
+          ...strategy,
+          featureAt: null,
+          detailAt: strategy.fallbackDetailAt,
+        });
+      } catch (detailError) {
+        console.warn('Image-aware support scoring failed; retrying structurally.', detailError);
+        plan = planWith(smartBridgeStrategy({ sampleImage: false }));
+      }
+      usedImageFallback = true;
+    }
     const suggested = plan.bridges;
     state.bridges = [...manual, ...suggested];
     state.automaticSupportsStale = false;
@@ -3423,11 +3483,15 @@ async function autoBridge() {
     const repairSummary = plan.initialComponentCount > 1
       ? ` Post-kerf pieces: ${plan.initialComponentCount} → ${plan.finalComponentCount} in ${plan.passes} ${plan.passes === 1 ? 'pass' : 'passes'}.`
       : '';
-    toast(suggested.length
+    const fallbackNotice = usedImageFallback
+      ? ' Image guidance was unavailable, so structural placement was used.'
+      : '';
+    const resultMessage = suggested.length
       ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${repairSummary}${survivesKerf ? ' Kerf simulation stays connected.' : ' Some geometry still separates after kerf; run validation to locate it.'}`
       : survivesKerf
         ? 'Everything is already one connected piece after kerf.'
-        : 'No safe automatic repair was found; reduce detail or add a manual support.');
+        : 'No safe automatic repair was found; reduce detail or add a manual support.';
+    toast(`${resultMessage}${fallbackNotice}`);
   } catch (error) {
     console.error(error);
     toast('Could not work out where to bridge.');
