@@ -22,6 +22,37 @@ test("artwork is contained without stretching when sheet and source aspects diff
   assert.equal(mask.data[90 * mask.width + 50], 0);
 });
 
+test("letterbox space on the shorter artwork axis can be retained as metal", () => {
+  const source = createMask(4, 2, true);
+  source.data[1 * source.width + 2] = 0;
+  const { mask, placement } = placeMaskOnSheet(source, { widthMm: 100, heightMm: 100 }, {
+    longEdgePx: 100,
+    fitToFrame: false,
+    fillLetterboxWithMetal: true,
+  });
+
+  assert.deepEqual(
+    [placement.xMm, placement.yMm, placement.widthMm, placement.heightMm],
+    [0, 25, 100, 50],
+  );
+  assert.equal(mask.data[10 * mask.width + 50], 1, "top letterbox band is metal");
+  assert.equal(mask.data[90 * mask.width + 50], 1, "bottom letterbox band is metal");
+  assert.equal(mask.data[62 * mask.width + 62], 0, "removed artwork stays removed");
+});
+
+test("letterbox fill does not consume an explicit artwork margin", () => {
+  const source = createMask(4, 2, true);
+  const { mask } = placeMaskOnSheet(source, { widthMm: 100, heightMm: 100 }, {
+    longEdgePx: 100,
+    marginMm: 10,
+    frame: { enabled: false },
+    fillLetterboxWithMetal: true,
+  });
+
+  assert.equal(mask.data[5 * mask.width + 50], 0, "explicit outer margin remains clear");
+  assert.equal(mask.data[15 * mask.width + 50], 1, "aspect-ratio gap inside the safe area is metal");
+});
+
 test("sheet orientation swaps physical dimensions without resizing the stock", () => {
   assert.deepEqual(
     orientSheet({ widthMm: 1250, heightMm: 2500 }, "landscape"),

@@ -52,20 +52,22 @@ export function validateDesign(mask, config) {
     issues.push(issue("EMPTY_DESIGN", "error", "The design contains no retained material."));
   }
   if (config.requireSingleComponent === true && initial.componentCount > 1) {
-    for (const component of disconnectedComponents(initial)) {
-      issues.push(issue(
-        "DISCONNECTED_RETAINED_MATERIAL",
-        "error",
-        `Retained piece ${component.id} is disconnected from the main panel.`,
-        {
-          phase: "initial",
-          componentId: component.id,
-          pixelCount: component.pixelCount,
-          bounds: component.bounds,
-          componentCount: initial.componentCount,
-        },
-      ));
-    }
+    const components = disconnectedComponents(initial);
+    const locations = componentLocations(components);
+    issues.push(issue(
+      "DISCONNECTED_RETAINED_MATERIAL",
+      "error",
+      `${components.length} retained ${components.length === 1 ? "piece is" : "pieces are"} disconnected from the main panel.`,
+      {
+        phase: "initial",
+        componentCount: components.length,
+        totalComponentCount: initial.componentCount,
+        componentId: locations[0].componentId,
+        pixelCount: locations.reduce((sum, location) => sum + location.pixelCount, 0),
+        bounds: locations[0].bounds,
+        locations,
+      },
+    ));
   }
   if (config.requireAnchored !== false) {
     for (const component of initial.islands) {
@@ -88,20 +90,22 @@ export function validateDesign(mask, config) {
   }
   if (kerfMm > 0) {
     if (config.requireSingleComponent === true && postKerf.componentCount > 1) {
-      for (const component of disconnectedComponents(postKerf)) {
-        issues.push(issue(
-          "KERF_DISCONNECTED_RETAINED_MATERIAL",
-          "error",
-          `Retained piece ${component.id} becomes disconnected after kerf.`,
-          {
-            phase: "postKerf",
-            componentId: component.id,
-            pixelCount: component.pixelCount,
-            bounds: component.bounds,
-            componentCount: postKerf.componentCount,
-          },
-        ));
-      }
+      const components = disconnectedComponents(postKerf);
+      const locations = componentLocations(components);
+      issues.push(issue(
+        "KERF_DISCONNECTED_RETAINED_MATERIAL",
+        "error",
+        `${components.length} retained ${components.length === 1 ? "piece becomes" : "pieces become"} disconnected after kerf.`,
+        {
+          phase: "postKerf",
+          componentCount: components.length,
+          totalComponentCount: postKerf.componentCount,
+          componentId: locations[0].componentId,
+          pixelCount: locations.reduce((sum, location) => sum + location.pixelCount, 0),
+          bounds: locations[0].bounds,
+          locations,
+        },
+      ));
     }
     if (config.requireAnchored !== false) {
       for (const component of postKerf.islands) {
@@ -127,7 +131,14 @@ export function validateDesign(mask, config) {
     for (let index = 0; index < mask.data.length; index += 1) {
       if (mask.data[index] !== RETAINED) removedMask.data[index] = RETAINED;
     }
-    removed = analyzeConnectivity(removedMask, { anchorBoundary: false });
+    // Cut topology uses 8-connectivity deliberately. Diagonally adjacent
+    // removed cells are one continuous cutter path at raster resolution; if
+    // labelled with 4-connectivity they become two cuts with a fictitious
+    // 0.00 mm gap and generate hundreds of impossible repair targets.
+    removed = analyzeConnectivity(removedMask, {
+      anchorBoundary: false,
+      connectivity: 8,
+    });
   }
   if (minimumOpeningMm > 0) {
     openingCoreMask = erodeMaskPhysical(removedMask, minimumOpeningMm / 2, config.sheet, {
@@ -169,13 +180,23 @@ export function validateDesign(mask, config) {
   // constraint: rounded outer corners do not look like two cuts and therefore
   // cannot create a false export blocker.
   if (minimumWebMm > 0 && removed?.componentCount > 1) {
-    const gap = findCutGapViolation(removedMask, removed.labels, config.sheet, minimumWebMm);
-    if (gap) {
+    const gaps = findCutGapViolations(removedMask, removed.labels, config.sheet, minimumWebMm);
+    if (gaps.length > 0) {
+      const closest = gaps[0];
+      const count = gaps.length;
       issues.push(issue(
         "MIN_CUT_GAP",
         "error",
-        `Separate cuts are only ${gap.gapMm.toFixed(2)} mm apart; the configured minimum is ${minimumWebMm} mm.`,
-        { phase: "cutGap", minimumWebMm, ...gap },
+        count === 1
+          ? `Separate cuts are only ${closest.gapMm.toFixed(2)} mm apart; the configured minimum is ${minimumWebMm} mm.`
+          : `${count} pairs of separate cuts are closer than ${minimumWebMm} mm; the closest gap is ${closest.gapMm.toFixed(2)} mm.`,
+        {
+          phase: "cutGap",
+          violationCount: count,
+          minimumWebMm,
+          ...closest,
+          locations: gaps,
+        },
       ));
     }
   }
@@ -183,6 +204,7 @@ export function validateDesign(mask, config) {
   let minimumWebCoreMask = null;
   let minimumWebCore = null;
   let thinAreaMask = createMask(mask.width, mask.height);
+  let thinAreaZones = null;
   let thinPixelCount = 0;
   if (minimumWebMm > 0 && postKerf.retainedPixels > 0) {
     const webRadius = minimumWebMm / 2;
@@ -207,26 +229,52 @@ export function validateDesign(mask, config) {
         { minimumWebMm },
       ));
     }
-    for (const component of minimumWebCore.islands) {
+    if (minimumWebCore.islands.length > 0) {
+      const locations = minimumWebCore.islands.map((component) => ({
+        componentId: component.id,
+        pixelCount: component.pixelCount,
+        bounds: component.bounds,
+      }));
+      const count = locations.length;
       issues.push(issue(
         "MIN_WEB_DISCONNECT",
         "warning",
-        `The minimum-web simulation leaves a detached material core (${component.id}).`,
+        `${count} full-width material ${count === 1 ? "region relies" : "regions rely"} on connections narrower than ${minimumWebMm} mm.`,
         {
           phase: "minimumWeb",
-          componentId: component.id,
-          pixelCount: component.pixelCount,
-          bounds: component.bounds,
+          componentCount: count,
           minimumWebMm,
+          componentId: locations[0].componentId,
+          pixelCount: locations.reduce((sum, location) => sum + location.pixelCount, 0),
+          bounds: locations[0].bounds,
+          locations,
         },
       ));
     }
     if (thinPixelCount > 0) {
+      thinAreaZones = analyzeConnectivity(thinAreaMask, {
+        anchorBoundary: false,
+        connectivity: 8,
+      });
+      const locations = thinAreaZones.components.map((component) => ({
+        componentId: component.id,
+        pixelCount: component.pixelCount,
+        bounds: component.bounds,
+      }));
+      const zoneCount = locations.length;
       issues.push(issue(
         "MIN_WEB_THIN_AREAS",
         "warning",
-        `${thinPixelCount} raster cells are outside any full-width material core.`,
-        { pixelCount: thinPixelCount, minimumWebMm },
+        `${zoneCount} thin material ${zoneCount === 1 ? "zone contains" : "zones contain"} ${thinPixelCount} raster cells outside any full-width core.`,
+        {
+          phase: "thinArea",
+          componentCount: zoneCount,
+          componentId: locations[0].componentId,
+          bounds: locations[0].bounds,
+          locations,
+          pixelCount: thinPixelCount,
+          minimumWebMm,
+        },
       ));
     }
   }
@@ -262,6 +310,7 @@ export function validateDesign(mask, config) {
     removed,
     removedMask,
     thinAreaMask,
+    thinAreaZones,
     metrics: {
       widthMm: config.sheet.widthMm,
       heightMm: config.sheet.heightMm,
@@ -282,15 +331,17 @@ function issue(code, severity, message, details = {}) {
 }
 
 /**
- * Finds a pair of distinct cut regions whose edge-to-edge distance is below
- * the machine floor. Boundary pixels are spatially bucketed, keeping this
- * bounded by local cutter-scale neighbourhoods instead of comparing every
- * contour point with every other one.
+ * Finds every distinct pair of cut regions whose closest edge-to-edge distance
+ * is below the machine floor. One location is returned per component pair, so
+ * a long parallel near-miss is one actionable finding rather than hundreds of
+ * pixel-level duplicates. Boundary pixels are spatially bucketed, keeping the
+ * search bounded by local cutter-scale neighbourhoods.
  */
-function findCutGapViolation(removedMask, labels, sheet, minimumGapMm) {
+function findCutGapViolations(removedMask, labels, sheet, minimumGapMm) {
   const pixel = pixelSizeMm(removedMask, sheet);
   const cellSize = minimumGapMm + Math.max(pixel.x, pixel.y);
   const buckets = new Map();
+  const closestByPair = new Map();
 
   for (let y = 0; y < removedMask.height; y += 1) {
     for (let x = 0; x < removedMask.width; x += 1) {
@@ -313,9 +364,13 @@ function findCutGapViolation(removedMask, labels, sheet, minimumGapMm) {
             const gapY = Math.max(0, Math.abs(point.yMm - other.yMm) - pixel.y);
             const gapMm = Math.hypot(gapX, gapY);
             if (gapMm + 1e-9 >= minimumGapMm) continue;
-            return {
+            const componentIds = [other.componentId, componentId].sort((first, second) => first - second);
+            const pairKey = `${componentIds[0]},${componentIds[1]}`;
+            const current = closestByPair.get(pairKey);
+            if (current && current.gapMm <= gapMm) continue;
+            closestByPair.set(pairKey, {
               gapMm,
-              componentIds: [other.componentId, componentId],
+              componentIds,
               points: [
                 { x: other.x, y: other.y },
                 { x, y },
@@ -328,7 +383,7 @@ function findCutGapViolation(removedMask, labels, sheet, minimumGapMm) {
                 width: Math.abs(x - other.x) + 1,
                 height: Math.abs(y - other.y) + 1,
               },
-            };
+            });
           }
         }
       }
@@ -337,7 +392,10 @@ function findCutGapViolation(removedMask, labels, sheet, minimumGapMm) {
       buckets.get(key).push(point);
     }
   }
-  return null;
+  return [...closestByPair.values()].sort((first, second) =>
+    first.gapMm - second.gapMm ||
+    first.componentIds[0] - second.componentIds[0] ||
+    first.componentIds[1] - second.componentIds[1]);
 }
 
 function isRemovedBoundary(mask, x, y) {
@@ -354,6 +412,14 @@ function disconnectedComponents(analysis) {
     .slice()
     .sort((first, second) => second.pixelCount - first.pixelCount || first.id - second.id)
     .slice(1);
+}
+
+function componentLocations(components) {
+  return components.map((component) => ({
+    componentId: component.id,
+    pixelCount: component.pixelCount,
+    bounds: component.bounds,
+  }));
 }
 
 function nonNegative(value, name) {

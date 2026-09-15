@@ -73,6 +73,7 @@ export function suggestBridges(mask, config) {
  *   requireSingleComponent?:boolean,
  *   minimumWebMm?:number,
  *   kerfMm?:number,
+ *   targetMinimumWebConnectivity?:boolean,
  *   outsideIsRemoved?:boolean,
  *   maxPasses?:number,
  *   strategy?:object,
@@ -92,13 +93,19 @@ export function suggestKerfAwareBridges(mask, config) {
     throw new RangeError("maxPasses must be an integer between 1 and 12");
   }
 
-  const erodeForKerf = (candidate) => kerfMm > 0
-    ? erodeMaskPhysical(candidate, kerfMm / 2, config.sheet, {
+  // Ordinary support planning asks whether metal remains connected after the
+  // kerf. Manufacturing repair can opt into the stricter question: whether a
+  // full minimum-web-width core remains connected after kerf. That turns the
+  // validator's narrow-web warning into the same sparse, filter-aware bridge
+  // problem instead of painting every thin raster cell indiscriminately.
+  const planningErosionMm = kerfMm + (config.targetMinimumWebConnectivity === true ? minimumWebMm : 0);
+  const erodeForKerf = (candidate) => planningErosionMm > 0
+    ? erodeMaskPhysical(candidate, planningErosionMm / 2, config.sheet, {
       outsideIsRemoved: config.outsideIsRemoved,
     })
     : cloneMask(candidate);
-  const planningAnchor = config.anchorMask && kerfMm > 0
-    ? erodeMaskPhysical(config.anchorMask, kerfMm / 2, config.sheet, {
+  const planningAnchor = config.anchorMask && planningErosionMm > 0
+    ? erodeMaskPhysical(config.anchorMask, planningErosionMm / 2, config.sheet, {
       outsideIsRemoved: config.outsideIsRemoved,
     })
     : config.anchorMask ?? null;

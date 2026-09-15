@@ -83,12 +83,15 @@ export async function deleteProject(id) {
   await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.delete(id)));
 }
 
-export function downloadText(filename, text, type = 'application/json') {
-  const blob = new Blob([text], { type });
+export function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+export function downloadText(filename, text, type = 'application/json') {
+  downloadBlob(filename, new Blob([text], { type }));
 }

@@ -129,7 +129,7 @@ export function trimMaskToContent(sourceMask, contentValue = RETAINED) {
  *
  * @param {import('./mask.js').RasterMask} sourceMask
  * @param {{widthMm:number,heightMm:number}} sheet
- * @param {{frame?:object,marginMm?:number,fitToFrame?:boolean,longEdgePx?:number}} [config]
+ * @param {{frame?:object,marginMm?:number,fitToFrame?:boolean,longEdgePx?:number,fillLetterboxWithMetal?:boolean}} [config]
  */
 export function placeMaskOnSheet(sourceMask, sheet, config = {}) {
   assertMask(sourceMask);
@@ -150,16 +150,28 @@ export function placeMaskOnSheet(sourceMask, sheet, config = {}) {
   const output = createMask(width, height);
   const pixelWidthMm = sheet.widthMm / width;
   const pixelHeightMm = sheet.heightMm / height;
+  const safe = placement.safeArea;
+  const hasHorizontalLetterbox = placement.widthMm < safe.widthMm - pixelWidthMm / 2;
+  const hasVerticalLetterbox = placement.heightMm < safe.heightMm - pixelHeightMm / 2;
 
   for (let y = 0; y < height; y += 1) {
     const yMm = (y + 0.5) * pixelHeightMm;
     const sourceY = Math.floor((yMm - placement.yMm) / placement.heightMm * sourceMask.height);
-    if (sourceY < 0 || sourceY >= sourceMask.height) continue;
     for (let x = 0; x < width; x += 1) {
       const xMm = (x + 0.5) * pixelWidthMm;
       const sourceX = Math.floor((xMm - placement.xMm) / placement.widthMm * sourceMask.width);
-      if (sourceX < 0 || sourceX >= sourceMask.width) continue;
-      if (sourceMask.data[sourceY * sourceMask.width + sourceX] === RETAINED) {
+      if (sourceX >= 0 && sourceX < sourceMask.width && sourceY >= 0 && sourceY < sourceMask.height) {
+        output.data[y * width + x] = sourceMask.data[sourceY * sourceMask.width + sourceX];
+        continue;
+      }
+      if (config.fillLetterboxWithMetal !== true) continue;
+      const insideSafeArea = xMm >= safe.xMm && xMm < safe.xMm + safe.widthMm &&
+        yMm >= safe.yMm && yMm < safe.yMm + safe.heightMm;
+      const inHorizontalBand = hasHorizontalLetterbox &&
+        (xMm < placement.xMm || xMm >= placement.xMm + placement.widthMm);
+      const inVerticalBand = hasVerticalLetterbox &&
+        (yMm < placement.yMm || yMm >= placement.yMm + placement.heightMm);
+      if (insideSafeArea && (inHorizontalBand || inVerticalBand)) {
         output.data[y * width + x] = RETAINED;
       }
     }

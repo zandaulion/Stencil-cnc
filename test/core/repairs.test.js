@@ -1,0 +1,201 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  RETAINED,
+  applySmallOpeningRepairPlan,
+  createMask,
+  planCutGapRepairs,
+  planLoosePieceRepairs,
+  planSmallOpeningRepairs,
+  setSmallOpeningRepairAction,
+  validateDesign,
+} from "../../web/core/index.js";
+import { maskFromAscii } from "./fixtures.js";
+
+function validate(mask, sheet = { widthMm: mask.width, heightMm: mask.height }) {
+  return validateDesign(mask, {
+    sheet,
+    minimumOpeningMm: 2,
+    minimumWebMm: 3,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+}
+
+test("durable small-opening repair closes isolated specks in one batch", () => {
+  const mask = maskFromAscii([
+    "#########",
+    "##.###.##",
+    "#########",
+    "####.####",
+    "#########",
+  ]);
+  const validation = validate(mask);
+  const plan = planSmallOpeningRepairs(mask, validation, {
+    sheet: { widthMm: 9, heightMm: 5 },
+    strategy: "durable",
+    targetOpeningMm: 2.4,
+    minimumWebMm: 3.4,
+  });
+
+  assert.equal(plan.items.length, 3);
+  assert.equal(plan.counts.close, 3);
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+  assert.ok(repaired.data.every((value) => value === RETAINED));
+  assert.ok(!validate(repaired).errors.some((issue) => issue.code === "MIN_OPENING_UNCUTTABLE"));
+});
+
+test("preserve-detail repair enlarges a meaningful opening past the machine floor", () => {
+  const mask = maskFromAscii([
+    "#########",
+    "#########",
+    "####.####",
+    "#########",
+    "#########",
+    "#########",
+    "#########",
+    "#########",
+    "#########",
+  ]);
+  const sheet = { widthMm: 9, heightMm: 9 };
+  const plan = planSmallOpeningRepairs(mask, validate(mask, sheet), {
+    sheet,
+    strategy: "preserve",
+    targetOpeningMm: 2.4,
+    minimumWebMm: 0,
+  });
+
+  assert.equal(plan.items[0].action, "enlarge");
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+  assert.ok(!validate(repaired, sheet).errors.some((issue) => issue.code === "MIN_OPENING_UNCUTTABLE"));
+});
+
+test("an occurrence override can be applied to all geometrically similar openings", () => {
+  const mask = maskFromAscii([
+    "#########",
+    "##.###.##",
+    "#########",
+  ]);
+  const plan = planSmallOpeningRepairs(mask, validate(mask), {
+    sheet: { widthMm: 9, heightMm: 3 },
+    strategy: "durable",
+    targetOpeningMm: 2.4,
+    minimumWebMm: 0,
+  });
+
+  assert.equal(setSmallOpeningRepairAction(plan, plan.items[0].id, "enlarge", { similar: true }), true);
+  assert.equal(plan.counts.enlarge, 2);
+  assert.ok(plan.items.every((item) => item.action === "enlarge"));
+});
+
+test("protected structural pixels are never carved by an enlargement", () => {
+  const mask = maskFromAscii([
+    "#####",
+    "#####",
+    "##.##",
+    "#####",
+    "#####",
+  ]);
+  const protectedMask = createMask(5, 5);
+  protectedMask.data[2 * 5 + 3] = RETAINED;
+  const plan = planSmallOpeningRepairs(mask, validate(mask), {
+    sheet: { widthMm: 5, heightMm: 5 },
+    strategy: "preserve",
+    targetOpeningMm: 2.4,
+    minimumWebMm: 0,
+    protectedMask,
+  });
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+
+  assert.equal(repaired.data[2 * 5 + 3], RETAINED);
+});
+
+test("balanced close-cut repair widens every reported gap in one batch", () => {
+  const mask = maskFromAscii([
+    "#################",
+    "#...##...##...###",
+    "#################",
+  ]);
+  const sheet = { widthMm: 17, heightMm: 3 };
+  const validation = validateDesign(mask, {
+    sheet,
+    minimumOpeningMm: 0,
+    minimumWebMm: 3,
+    requireAnchored: false,
+  });
+  const plan = planCutGapRepairs(mask, validation, {
+    sheet,
+    strategy: "balanced",
+    targetGapMm: 3.4,
+    targetOpeningMm: 2.4,
+  });
+
+  assert.equal(plan.items.length, 2);
+  assert.equal(plan.counts.enlarge, 2);
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+  const checked = validateDesign(repaired, {
+    sheet,
+    minimumOpeningMm: 0,
+    minimumWebMm: 3,
+    requireAnchored: false,
+  });
+  assert.ok(!checked.errors.some((issue) => issue.code === "MIN_CUT_GAP"));
+});
+
+test("durable close-cut repair closes the smaller conflicting cut", () => {
+  const mask = maskFromAscii([
+    "############",
+    "#..##.....##",
+    "############",
+  ]);
+  const sheet = { widthMm: 12, heightMm: 3 };
+  const validation = validateDesign(mask, {
+    sheet,
+    minimumOpeningMm: 0,
+    minimumWebMm: 3,
+    requireAnchored: false,
+  });
+  const plan = planCutGapRepairs(mask, validation, {
+    sheet,
+    strategy: "durable",
+    targetGapMm: 3.4,
+    targetOpeningMm: 2.4,
+  });
+
+  assert.equal(plan.items.length, 1);
+  assert.equal(plan.counts.close, 1);
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+  assert.equal(repaired.data[1 * mask.width + 1], RETAINED);
+  assert.equal(repaired.data[1 * mask.width + 2], RETAINED);
+});
+
+test("preserve cleanup removes one-cell loose specks but leaves larger artwork for support", () => {
+  const mask = maskFromAscii([
+    "#####....",
+    ".........",
+    "...#.....",
+    "......##.",
+    "......##.",
+  ]);
+  const sheet = { widthMm: 9, heightMm: 5 };
+  const validation = validateDesign(mask, {
+    sheet,
+    minimumWebMm: 3,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const plan = planLoosePieceRepairs(mask, validation, {
+    sheet,
+    strategy: "preserve",
+    minimumWebMm: 3,
+  });
+
+  assert.equal(validation.errors[0].details.locations.length, 2);
+  assert.equal(plan.totalCount, 2);
+  assert.equal(plan.items.length, 1);
+  assert.equal(plan.skippedCount, 1);
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+  assert.equal(repaired.data[2 * mask.width + 3], 0);
+  assert.equal(repaired.data[3 * mask.width + 6], RETAINED);
+});

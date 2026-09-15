@@ -1,17 +1,24 @@
 import { RETAINED, assertMask, assertSameSize } from "./mask.js";
 
 /**
- * Labels finite-width retained regions using 4-connectivity. A diagonal point
- * contact is deliberately not treated as a structural connection.
+ * Labels finite-width regions using 4- or 8-connectivity. Retained material
+ * defaults to 4-connectivity because a diagonal point contact is not a
+ * structural connection. Callers classifying cut paths may opt into
+ * 8-connectivity: two diagonally adjacent removed raster cells belong to the
+ * same physical cut, not two cuts separated by a zero-width web.
  *
  * @param {import('./mask.js').RasterMask} mask
- * @param {{ anchorMask?: import('./mask.js').RasterMask | null, anchorBoundary?: boolean }} [options]
+ * @param {{ anchorMask?: import('./mask.js').RasterMask | null, anchorBoundary?: boolean, connectivity?:4|8 }} [options]
  */
 export function analyzeConnectivity(mask, options = {}) {
   assertMask(mask);
   const anchorMask = options.anchorMask ?? null;
   if (anchorMask) assertSameSize(mask, anchorMask);
   const anchorBoundary = options.anchorBoundary ?? anchorMask === null;
+  const connectivity = options.connectivity ?? 4;
+  if (connectivity !== 4 && connectivity !== 8) {
+    throw new RangeError("connectivity must be 4 or 8");
+  }
 
   const labels = new Int32Array(mask.data.length);
   const queue = new Int32Array(mask.data.length);
@@ -54,6 +61,12 @@ export function analyzeConnectivity(mask, options = {}) {
       if (x + 1 < mask.width) tail = enqueue(index + 1, nextId, mask, labels, queue, tail);
       if (y > 0) tail = enqueue(index - mask.width, nextId, mask, labels, queue, tail);
       if (y + 1 < mask.height) tail = enqueue(index + mask.width, nextId, mask, labels, queue, tail);
+      if (connectivity === 8) {
+        if (x > 0 && y > 0) tail = enqueue(index - mask.width - 1, nextId, mask, labels, queue, tail);
+        if (x + 1 < mask.width && y > 0) tail = enqueue(index - mask.width + 1, nextId, mask, labels, queue, tail);
+        if (x > 0 && y + 1 < mask.height) tail = enqueue(index + mask.width - 1, nextId, mask, labels, queue, tail);
+        if (x + 1 < mask.width && y + 1 < mask.height) tail = enqueue(index + mask.width + 1, nextId, mask, labels, queue, tail);
+      }
     }
 
     components.push({
@@ -75,7 +88,7 @@ export function analyzeConnectivity(mask, options = {}) {
 
   const islands = components.filter((component) => !component.anchored);
   return {
-    connectivity: 4,
+    connectivity,
     labels,
     retainedPixels,
     componentCount: components.length,

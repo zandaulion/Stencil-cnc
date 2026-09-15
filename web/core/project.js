@@ -19,7 +19,7 @@ export const PROJECT_VERSION = 1;
  * @property {{kind:'none'|'image',name:string|null,mimeType:string|null,widthPx:number|null,heightPx:number|null,imageDataUrl:string|null}} source
  * @property {{sourceMask:EncodedMask|null,baseMask:EncodedMask|null}} raster
  * @property {Array<object>} bridges
- * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,painted:{keep:number[],remove:number[]},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean}|null} editor
+ * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,painted:{keep:number[],remove:number[]},manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean}|null} editor
  * @property {string|null} createdAt
  * @property {string|null} updatedAt
  */
@@ -338,6 +338,17 @@ function normalizeEditor(editor) {
     painted: {
       keep: normalizePaint(editor.painted?.keep),
       remove: normalizePaint(editor.painted?.remove),
+    },
+    manufacturingRepairs: {
+      keep: normalizePaint(editor.manufacturingRepairs?.keep),
+      remove: normalizePaint(editor.manufacturingRepairs?.remove),
+      enabled: editor.manufacturingRepairs?.enabled !== false,
+      stale: editor.manufacturingRepairs?.stale === true,
+      summary: editor.manufacturingRepairs?.summary &&
+        typeof editor.manufacturingRepairs.summary === "object" &&
+        !Array.isArray(editor.manufacturingRepairs.summary)
+        ? cloneJson(editor.manufacturingRepairs.summary)
+        : null,
     },
     candidates,
     selectedCandidateId: nullableString(editor.selectedCandidateId ?? null, "editor.selectedCandidateId"),

@@ -20,6 +20,24 @@ test("4-connectivity rejects a diagonal point contact", () => {
   });
 });
 
+test("8-connectivity groups diagonal raster cells into one cut path", () => {
+  const mask = maskFromAscii([
+    "#..",
+    ".#.",
+    "...",
+  ]);
+  const result = analyzeConnectivity(mask, { connectivity: 8 });
+
+  assert.equal(result.connectivity, 8);
+  assert.equal(result.componentCount, 1);
+  assert.equal(result.components[0].pixelCount, 2);
+});
+
+test("connectivity rejects unsupported neighbourhoods", () => {
+  const mask = maskFromAscii(["#"]);
+  assert.throws(() => analyzeConnectivity(mask, { connectivity: 6 }), /4 or 8/);
+});
+
 test("an explicit anchor mask defines support independently of the raster boundary", () => {
   const mask = maskFromAscii(["#.#"]);
   const anchor = createMask(3, 1);

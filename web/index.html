@@ -245,58 +245,111 @@
                 <span id="btn-restyle-home" hidden></span>
                 <button class="text-button" id="btn-restyle" type="button" hidden>Re-render</button>
               </div>
-              <p class="section-help">Choose how the uploaded image becomes cuttable geometry. The application selects the appropriate local or private-server processor automatically.</p>
+              <p class="section-help">Choose how the uploaded image becomes cuttable geometry. The selected filter’s controls appear below.</p>
 
-              <div class="stacked-options" id="style-choice">
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="line-art" checked>
-                  <span><strong>Line art</strong><small>Direct black-and-white thresholding for prepared drawings and logos.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="sablon">
-                  <span><strong>Poster stencil</strong><small>Bold light-and-dark regions. Add supports where retained features would fall out.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="icoana">
-                  <span><strong>Icon stencil</strong><small>Broad back-lit shapes, restrained carved detail, and an optional segmented halo in a solid plate.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="grafic">
-                  <span><strong>Graphic portrait</strong><small>Face-aware black shapes and expressive lines on a removed background, like the supplied reference.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="linii">
-                  <span><strong>Negative-space linework</strong><small>Facial features and folds become bright cut lines in a solid plate.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="gravura">
-                  <span><strong>Icon / Woodcut</strong><small>Tapered marks follow the local form and light of the photograph.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="silueta">
-                  <span><strong>Silhouette</strong><small>One clean back-lit subject shape with a simplified edge.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="contururi">
-                  <span><strong>Contour bands</strong><small>Topographic cut lines follow transitions between tonal levels.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="raze">
-                  <span><strong>Radial cuts</strong><small>Back-lit dashes radiate from a configurable focal point.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="ornament">
-                  <span><strong>Ornamental symmetry</strong><small>Mirrors extracted linework into a balanced decorative motif.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="lamele">
-                  <span><strong>Slats</strong><small>Angled parallel bars that thicken where the picture is dark. Always one piece.</small></span>
-                </label>
-                <label class="radio-card">
-                  <input type="radio" name="cutStyle" value="hasura">
-                  <span><strong>Hatch</strong><small>Light regions become openings; dark features remain metal for a back-lit panel.</small></span>
-                </label>
-              </div>
+              <button class="style-picker-trigger" id="style-picker-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="style-picker-dialog">
+                <span class="style-picker-selection">
+                  <span class="style-picker-category" id="style-picker-selected-category">Prepared artwork</span>
+                  <strong id="style-picker-selected-name">Line art</strong>
+                  <small id="style-picker-selected-description">Direct black-and-white thresholding for prepared drawings and logos.</small>
+                </span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
+              </button>
+
+              <dialog class="style-picker-dialog" id="style-picker-dialog" aria-labelledby="style-picker-title">
+                <header class="style-picker-header">
+                  <div>
+                    <span>Cut style</span>
+                    <h3 id="style-picker-title">Choose a visual language</h3>
+                  </div>
+                  <button class="icon-button compact-button" id="btn-close-style-picker" type="button" aria-label="Close cut-style picker">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+                  </button>
+                </header>
+                <div class="style-picker-body" id="style-choice">
+                  <section class="style-picker-group" aria-labelledby="style-group-prepared">
+                    <h4 id="style-group-prepared">Prepared artwork</h4>
+                    <div class="style-picker-grid">
+                      <label class="style-option" data-category="Prepared artwork">
+                        <input type="radio" name="cutStyle" value="line-art" checked>
+                        <span><strong>Line art</strong><small>Direct black-and-white thresholding for prepared drawings and logos.</small></span>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section class="style-picker-group" aria-labelledby="style-group-portrait">
+                    <h4 id="style-group-portrait">Portrait and stencil</h4>
+                    <div class="style-picker-grid">
+                      <label class="style-option" data-category="Portrait and stencil">
+                        <input type="radio" name="cutStyle" value="sablon">
+                        <span><strong>Poster stencil</strong><small>Bold light-and-dark regions with support-ready retained features.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Portrait and stencil">
+                        <input type="radio" name="cutStyle" value="icoana">
+                        <span><strong>Icon stencil</strong><small>Broad back-lit shapes, carved detail, and an optional segmented halo.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Portrait and stencil">
+                        <input type="radio" name="cutStyle" value="grafic">
+                        <span><strong>Graphic portrait</strong><small>Face-aware black shapes and expressive lines on a removed background.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Portrait and stencil">
+                        <input type="radio" name="cutStyle" value="silueta">
+                        <span><strong>Silhouette</strong><small>One clean back-lit subject shape with a simplified edge.</small></span>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section class="style-picker-group" aria-labelledby="style-group-lines">
+                    <h4 id="style-group-lines">Lines and engraving</h4>
+                    <div class="style-picker-grid">
+                      <label class="style-option" data-category="Lines and engraving">
+                        <input type="radio" name="cutStyle" value="linii">
+                        <span><strong>Negative-space linework</strong><small>Facial features and folds become bright cut lines in a solid plate.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Lines and engraving">
+                        <input type="radio" name="cutStyle" value="gravura">
+                        <span><strong>Icon / Woodcut</strong><small>Tapered marks follow the local form and light of the photograph.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Lines and engraving">
+                        <input type="radio" name="cutStyle" value="contururi">
+                        <span><strong>Contour bands</strong><small>Topographic cut lines follow transitions between tonal levels.</small></span>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section class="style-picker-group" aria-labelledby="style-group-patterns">
+                    <h4 id="style-group-patterns">Geometric patterns</h4>
+                    <div class="style-picker-grid">
+                      <label class="style-option" data-category="Geometric patterns">
+                        <input type="radio" name="cutStyle" value="lamele">
+                        <span><strong>Slats</strong><small>Angled parallel bars thicken where the picture is dark.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Geometric patterns">
+                        <input type="radio" name="cutStyle" value="hasura">
+                        <span><strong>Hatch</strong><small>Light regions become openings while dark features remain metal.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Geometric patterns">
+                        <input type="radio" name="cutStyle" value="raze">
+                        <span><strong>Radial cuts</strong><small>Back-lit dashes radiate from a configurable focal point.</small></span>
+                      </label>
+                      <label class="style-option" data-category="Geometric patterns">
+                        <input type="radio" name="cutStyle" value="puncte">
+                        <span><strong>Variable dots</strong><small>Circular openings grow with local light on a staggered grid.</small></span>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section class="style-picker-group" aria-labelledby="style-group-decorative">
+                    <h4 id="style-group-decorative">Decorative</h4>
+                    <div class="style-picker-grid">
+                      <label class="style-option" data-category="Decorative">
+                        <input type="radio" name="cutStyle" value="ornament">
+                        <span><strong>Ornamental symmetry</strong><small>Mirrors extracted linework into a balanced decorative motif.</small></span>
+                      </label>
+                    </div>
+                  </section>
+                </div>
+              </dialog>
 
               <div id="tone-controls">
                 <div class="section-title-row">
@@ -489,6 +542,26 @@
                 </label>
               </div>
 
+              <div id="style-dots" hidden>
+                <label class="field-row" for="style-dot-pitch">
+                  <span>Dot pitch <small>Centre-to-centre spacing</small></span>
+                  <span class="number-field compact"><input id="style-dot-pitch" name="styleDotPitch" type="number" min="5" max="80" step="0.5" value="41"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-dot-max">
+                  <span>Maximum dot diameter <small>Automatically limited by the required metal gap</small></span>
+                  <span class="number-field compact"><input id="style-dot-max" name="styleDotMax" type="number" min="2" max="70" step="0.1" value="33.8"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="style-dot-angle">
+                  <span>Grid angle</span>
+                  <span class="number-field compact"><input id="style-dot-angle" name="styleDotAngle" type="number" min="-90" max="90" step="5" value="10"><span>°</span></span>
+                </label>
+                <div class="range-control">
+                  <label for="style-dot-cutoff"><span>Dark-area cutoff <small>Suppresses dots in deep shadows</small></span><output id="style-dot-cutoff-value" for="style-dot-cutoff">42%</output></label>
+                  <input id="style-dot-cutoff" name="styleDotCutoff" type="range" min="0" max="60" step="1" value="42">
+                </div>
+                <p class="section-help">The plasma minimum opening sets the smallest dot. Every dot remains a complete circle.</p>
+              </div>
+
               <span id="style-photo-common-home" hidden></span>
               <div id="style-photo-common" hidden>
                 <div class="range-control">
@@ -594,7 +667,7 @@
                 <span class="number-field compact"><input id="frame-width" name="frameWidth" type="number" min="0" max="500" value="30"><span data-unit-label>mm</span></span>
               </label>
               <label class="toggle-row" for="fit-artwork">
-                <span>Fit artwork to frame<small>Scale up or down · preserve proportions</small></span>
+                <span>Fit artwork to frame<small>Preserve proportions · fill unused axis with metal</small></span>
                 <input class="switch" id="fit-artwork" name="fitArtwork" type="checkbox" checked>
               </label>
             </div>
@@ -635,7 +708,7 @@
               <span class="summary-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M8 12h8M6 8a4 4 0 1 0 0 8M18 8a4 4 0 1 1 0 8"></path></svg>
               </span>
-              <span><strong id="island-count">Not analysed</strong><small>Run support analysis after importing artwork.</small></span>
+              <span><strong id="island-count">Not analysed</strong><small id="connectivity-detail">Run support analysis after importing artwork.</small></span>
             </div>
 
             <div class="support-stale" id="automatic-support-stale" role="status" hidden>
@@ -800,6 +873,11 @@
                 <span><strong>Export DXF</strong><small>Closed contours, drawing units</small></span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"></path></svg>
               </button>
+              <button class="button button-secondary button-full" id="btn-export-png" type="button" disabled>
+                <span class="file-badge">PNG</span>
+                <span><strong>Export PNG</strong><small>Full-resolution black-and-white preview</small></span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"></path></svg>
+              </button>
             </div>
 
             <button class="text-button centered" id="btn-download-project" type="button">Download editable project file</button>
@@ -868,6 +946,7 @@
           </div>
           <div class="toolbar-separator" aria-hidden="true"></div>
           <div class="toolbar-group" role="group" aria-label="Zoom controls">
+            <button class="toolbar-button fit-toolbar-button" id="btn-fit-toolbar" type="button" aria-keyshortcuts="F" title="Fit and center panel in view (F)">Fit</button>
             <button class="icon-button compact-button" id="btn-zoom-out" type="button" aria-label="Zoom out" aria-keyshortcuts="-" title="Zoom out (−)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10"></path></svg>
             </button>
@@ -970,6 +1049,93 @@
           <button class="filter-chip" type="button" data-issue-filter="error" aria-pressed="false"><i class="severity-dot error"></i> Errors <span id="filter-count-error">0</span></button>
           <button class="filter-chip" type="button" data-issue-filter="warning" aria-pressed="false"><i class="severity-dot warning"></i> Warnings <span id="filter-count-warning">0</span></button>
         </div>
+
+        <section class="repair-panel" id="repair-panel" aria-labelledby="repair-title" hidden>
+          <div class="repair-heading">
+            <div>
+              <span class="eyebrow">Manufacturing repairs</span>
+              <h3 id="repair-title">Repair manufacturing issues</h3>
+            </div>
+            <span class="repair-count" id="repair-count">0</span>
+          </div>
+          <p class="repair-intro" id="repair-intro">Build one reversible repair layer for all selected manufacturing constraints.</p>
+
+          <div class="repair-layer" id="repair-layer-status" hidden>
+            <div><strong id="repair-layer-title">Repair layer active</strong><small id="repair-layer-detail">Generated changes are separate from manual edits.</small></div>
+            <div class="repair-layer-actions">
+              <button id="btn-toggle-repair-layer" type="button">Hide</button>
+              <button id="btn-clear-repair-layer" type="button">Remove</button>
+            </div>
+          </div>
+
+          <fieldset class="repair-fieldset repair-categories">
+            <legend>Repair categories</legend>
+            <label><input id="repair-category-slivers" type="checkbox" checked><span><strong>Clean raster slivers</strong><small>Remove detached specks and close uncuttable holes.</small></span></label>
+            <label><input id="repair-category-gaps" type="checkbox" checked><span><strong>Repair close cuts</strong><small>Widen the web, merge cuts, or close minor cuts.</small></span></label>
+            <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Strengthen weak webs</strong><small>Add minimal filter-aware ties that survive kerf.</small></span></label>
+          </fieldset>
+
+          <fieldset class="repair-fieldset">
+            <legend>Strategy</legend>
+            <div class="repair-strategies">
+              <label><input name="openingRepairStrategy" type="radio" value="preserve"><span>Preserve detail</span></label>
+              <label><input name="openingRepairStrategy" type="radio" value="balanced" checked><span>Balanced</span></label>
+              <label><input name="openingRepairStrategy" type="radio" value="durable"><span>Durable</span></label>
+            </div>
+            <p id="repair-strategy-description">Keeps recognizable details, but closes isolated specks that will not cut reliably.</p>
+          </fieldset>
+
+          <label class="repair-target" id="repair-target-control" for="repair-safety">
+            <span>Manufacturing target</span>
+            <select id="repair-safety">
+              <option value="safe" selected>Safe · add 0.4 mm allowance</option>
+              <option value="minimum">Exact configured minimum</option>
+            </select>
+          </label>
+
+          <button class="button button-primary button-full" id="btn-preview-repairs" type="button">Preview repairs</button>
+
+          <div class="repair-preview" id="repair-preview" hidden>
+            <div class="repair-plan-heading">
+              <strong>Proposed changes</strong>
+              <span id="repair-plan-strategy">Balanced</span>
+            </div>
+            <dl class="repair-plan-counts">
+              <div><dt id="repair-close-label">Close</dt><dd id="repair-close-count">0</dd></div>
+              <div><dt id="repair-enlarge-label">Enlarge</dt><dd id="repair-enlarge-count">0</dd></div>
+              <div><dt id="repair-merge-label">Merge</dt><dd id="repair-merge-count">0</dd></div>
+            </dl>
+
+            <dl class="repair-outcome" aria-label="Projected validation outcome">
+              <div><dt>Blocking locations</dt><dd><span id="repair-before-errors">0</span> → <strong id="repair-after-errors">0</strong></dd></div>
+              <div><dt>Warning locations</dt><dd><span id="repair-before-warnings">0</span> → <strong id="repair-after-warnings">0</strong></dd></div>
+            </dl>
+
+            <div class="repair-exception">
+              <div class="repair-exception-heading">
+                <strong>Highlighted exception</strong>
+                <button class="repair-next" id="btn-repair-next" type="button">1 / 1 · Next</button>
+              </div>
+              <p id="repair-current-description">Review the proposed change on the panel.</p>
+              <div class="repair-actions" role="group" aria-label="Repair the highlighted opening">
+                <button type="button" data-repair-action="close" aria-pressed="false">Close</button>
+                <button type="button" data-repair-action="enlarge" aria-pressed="false">Enlarge</button>
+                <button type="button" data-repair-action="merge" aria-pressed="false">Merge</button>
+              </div>
+              <label class="repair-similar"><input id="repair-similar" type="checkbox" checked><span>Use this choice for geometrically similar openings</span></label>
+            </div>
+
+            <div class="repair-commit-actions">
+              <button class="button button-quiet" id="btn-discard-repairs" type="button">Discard preview</button>
+              <button class="button button-primary" id="btn-apply-repairs" type="button">Apply repairs</button>
+            </div>
+          </div>
+
+          <div class="repair-applied" id="repair-applied" role="status" aria-live="polite" hidden>
+            <span id="repair-applied-message">Repairs applied and revalidated.</span>
+            <button id="btn-undo-repair" type="button">Undo</button>
+          </div>
+        </section>
 
         <ol class="issue-list" id="issue-list" aria-live="polite">
           <li class="issues-empty" data-empty>

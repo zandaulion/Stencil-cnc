@@ -28,6 +28,7 @@ from stiluri import (  # noqa: E402
     linii_negative,
     ornament,
     portret_grafic,
+    puncte_variabile,
     raze,
     sablon,
     sablon_icoana,
@@ -267,6 +268,75 @@ class TestHasura(unittest.TestCase):
                        fanta_min_mm=1, punte_min_mm=1.5, zona=zona)
         self.assertTrue(masca[10, 10])
         self.assertFalse(masca[40:120, 40:120].all())
+
+
+class TestPuncteVariabile(unittest.TestCase):
+    def test_un_pas_fara_loc_pentru_punct_si_punte_e_refuzat(self):
+        with self.assertRaises(ReglajImposibil):
+            puncte_variabile(
+                camp_uniform(160, 160, 0.0), MM_PE_PX,
+                pas_mm=4, diametru_max_mm=3,
+                fanta_min_mm=2, punte_min_mm=3,
+            )
+
+    def test_mai_multa_lumina_produce_puncte_mai_mari(self):
+        intunecat = puncte_variabile(
+            camp_uniform(240, 240, 0.82), MM_PE_PX,
+            pas_mm=12, diametru_max_mm=7,
+            fanta_min_mm=2, punte_min_mm=3,
+        )
+        luminos = puncte_variabile(
+            camp_uniform(240, 240, 0.0), MM_PE_PX,
+            pas_mm=12, diametru_max_mm=7,
+            fanta_min_mm=2, punte_min_mm=3,
+        )
+        self.assertGreater((~luminos).sum(), (~intunecat).sum() * 2)
+
+    def test_umbra_sub_prag_ramane_metal_plin(self):
+        masca = puncte_variabile(
+            camp_uniform(160, 160, 0.95), MM_PE_PX,
+            pas_mm=12, diametru_max_mm=7, prag=0.10,
+            fanta_min_mm=2, punte_min_mm=3,
+        )
+        self.assertTrue(masca.all())
+
+    def test_toate_deschiderile_sunt_cercuri_intregi_in_limitele_fizice(self):
+        masca = puncte_variabile(
+            camp_uniform(240, 240, 0.0), MM_PE_PX,
+            pas_mm=12, diametru_max_mm=7,
+            fanta_min_mm=2, punte_min_mm=3,
+        )
+        numar, _, statistici, _ = cv2.connectedComponentsWithStats((~masca).astype(np.uint8), 8)
+        self.assertGreater(numar, 5)
+        for index in range(1, numar):
+            latime = statistici[index, cv2.CC_STAT_WIDTH]
+            inaltime = statistici[index, cv2.CC_STAT_HEIGHT]
+            self.assertEqual(latime, inaltime, "each opening must remain a complete circle")
+            self.assertGreaterEqual(latime * MM_PE_PX, 2.0)
+            self.assertLessEqual(latime * MM_PE_PX, 7.0)
+
+    def test_fundalul_din_afara_subiectului_ramane_metal(self):
+        camp = camp_uniform(200, 200, 0.0)
+        zona = np.zeros((200, 200), dtype=bool)
+        zona[50:150, 50:150] = True
+        masca = puncte_variabile(
+            camp, MM_PE_PX, pas_mm=12, diametru_max_mm=7,
+            fanta_min_mm=2, punte_min_mm=3, zona=zona,
+        )
+        self.assertTrue(masca[10, 10])
+        self.assertFalse(masca[70:130, 70:130].all())
+
+    def test_unghiul_roteste_reteaua_fara_sa_schimbe_imaginea(self):
+        camp = camp_uniform(220, 180, 0.0)
+        drept = puncte_variabile(
+            camp, MM_PE_PX, pas_mm=12, diametru_max_mm=6,
+            fanta_min_mm=2, punte_min_mm=3, unghi=0,
+        )
+        inclinat = puncte_variabile(
+            camp, MM_PE_PX, pas_mm=12, diametru_max_mm=6,
+            fanta_min_mm=2, punte_min_mm=3, unghi=25,
+        )
+        self.assertGreater(float((drept != inclinat).mean()), 0.03)
 
 
 class TestSablon(unittest.TestCase):

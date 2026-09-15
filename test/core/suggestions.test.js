@@ -187,6 +187,27 @@ test("kerf-aware suggestions repair a neck that is connected only before cutting
   assert.equal(analyzeConnectivity(afterKerf).componentCount, 1);
 });
 
+test("manufacturing repair can target full minimum-web connectivity", () => {
+  const mask = narrowBridgeFixture();
+  const sheet = { widthMm: 15, heightMm: 15 };
+  const repair = suggestKerfAwareBridges(mask, {
+    sheet,
+    widthMm: 1,
+    minimumWebMm: 2,
+    kerfMm: 0,
+    targetMinimumWebConnectivity: true,
+    requireSingleComponent: true,
+    strategy: { mode: "smart", kind: "generic", level: 2 },
+  });
+  const repaired = applyCapsuleBridges(mask, repair.bridges, sheet);
+  const fullWidthCore = erodeMaskPhysical(repaired, 1, sheet);
+
+  assert.ok(repair.initialComponentCount > 1);
+  assert.ok(repair.bridges.length > 0);
+  assert.equal(repair.complete, true);
+  assert.equal(analyzeConnectivity(fullWidthCore).componentCount, 1);
+});
+
 test("the secure strategy adds a separated backup tie", () => {
   const mask = createMask(9, 13);
   for (let y = 0; y < mask.height; y += 1) {

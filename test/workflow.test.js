@@ -6,6 +6,7 @@ import test from 'node:test';
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const html = fs.readFileSync(path.join(projectRoot, 'web/index.html'), 'utf8');
 const editor = fs.readFileSync(path.join(projectRoot, 'web/editor.js'), 'utf8');
+const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
 
 test('the creative workflow exposes every preview and a candidate workspace', () => {
   for (const id of [
@@ -16,6 +17,15 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   }
   assert.match(editor, /const CANDIDATE_LIMIT = 8/);
   assert.match(editor, /baseMask: encodeMask\(state\.baseMask\)/);
+});
+
+test('validated final geometry can be exported as a shareable PNG', () => {
+  assert.match(html, /id="btn-export-png"[^>]*disabled/);
+  assert.match(html, /Full-resolution black-and-white preview/);
+  assert.match(editor, /\['btn-export-svg', 'btn-export-dxf', 'btn-export-png'\]/);
+  assert.match(editor, /const mask = geometryForExport\(\)/);
+  assert.match(editor, /downloadBlob\(`\$\{name\}\.png`, await pngBlob\(mask\)\)/);
+  assert.match(editor, /el\('btn-export-png'\)\?\.addEventListener\('click', \(\) => exportGeometry\('png'\)\)/);
 });
 
 test('automatic supports stay separate and advertise when artwork made them stale', () => {
@@ -31,6 +41,35 @@ test('grouped manufacturing errors retain locatable geometry', () => {
   assert.match(editor, /details\?\.locations/);
   assert.match(editor, /highlighted\?\.phase === 'opening'/);
   assert.match(editor, /Array\.isArray\(activeDetails\.points\)/);
+  assert.match(editor, /issue\.details\?\.locations\?\.length/);
+});
+
+test('manufacturing errors offer a combined reversible preview with per-occurrence overrides', () => {
+  for (const id of [
+    'repair-panel', 'btn-preview-repairs', 'repair-safety', 'repair-preview',
+    'btn-repair-next', 'repair-similar', 'btn-discard-repairs',
+    'btn-apply-repairs', 'btn-undo-repair', 'repair-category-slivers',
+    'repair-category-gaps', 'repair-category-webs', 'repair-layer-status',
+    'btn-toggle-repair-layer', 'btn-clear-repair-layer',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const strategy of ['preserve', 'balanced', 'durable']) {
+    assert.match(html, new RegExp(`name="openingRepairStrategy"[^>]*value="${strategy}"`), strategy);
+  }
+  for (const action of ['close', 'enlarge', 'merge']) {
+    assert.match(html, new RegExp(`data-repair-action="${action}"`), action);
+  }
+  assert.match(editor, /planSmallOpeningRepairs\(candidate, validation/);
+  assert.match(editor, /planCutGapRepairs\(candidate, validation/);
+  assert.match(editor, /planLoosePieceRepairs\(candidate, validation/);
+  assert.match(editor, /targetMinimumWebConnectivity: true/);
+  assert.match(editor, /manufacturingRepairs: \{/);
+  assert.match(editor, /state\.repairPreviewBaseMask/);
+  assert.match(editor, /setSmallOpeningRepairAction\(state\.repairPlan/);
+  assert.match(editor, /await runValidation\(\)/);
+  assert.match(editor, /function undoLastRepair\(\)/);
+  assert.match(editor, /Repair close cuts/);
+  assert.match(editor, /Remove tiny loose pieces/);
+  assert.match(html, /id="repair-enlarge-label"/);
 });
 
 test('manual geometry tools use physical gestures, previews, and snapping', () => {
@@ -49,6 +88,16 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /promoteBridgeToManual\(draggingBridge\.bridge\)/);
 });
 
+test('freehand material tools paint continuously but commit as one gesture', () => {
+  assert.match(editor, /state\.touchupLive = mode === 'freehand'/);
+  assert.match(editor, /scheduleLiveTouchupDraw\(\)/);
+  assert.match(editor, /requestAnimationFrame\(\(\) => \{/);
+  assert.match(editor, /paintSegment\(touchupStroke\.last, \{ x, y \}, \{/);
+  assert.match(editor, /liveStructureMask: touchupStroke\.liveStructureMask/);
+  assert.match(editor, /const kerf = !state\.touchupLive/);
+  assert.match(editor, /state\.touchupLive = false;[\s\S]*?refresh\(\{ immediate: true \}\);[\s\S]*?pushHistory\(\)/);
+});
+
 test('Tools remains available beside the canvas and becomes a mobile bottom bar', () => {
   const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
   assert.match(html, /id="tools-rail"[^>]*aria-labelledby="tools-title"/);
@@ -56,6 +105,7 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   for (const id of ['tool-pan', 'tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
+  assert.match(html, /id="btn-fit-toolbar"[^>]*>Fit<\/button>/);
   assert.match(html, /id="tool-icon-stencil"[^>]*aria-keyshortcuts="I"/);
   for (const id of ['tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support']) {
     assert.match(html, new RegExp(`id="${id}"[^>]*aria-controls="tool-options-panel"`));
@@ -71,6 +121,7 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   assert.match(editor, /el\('tool-icon-stencil'\)\?\.addEventListener\('click', activateIconStencil\)/);
   assert.doesNotMatch(html, /class="tool-grid"/);
   assert.match(editor, /state\.drawingBridge = tool === 'support'/);
+  assert.match(editor, /\['btn-fit', 'btn-fit-toolbar'\]/);
   assert.match(editor, /el\('btn-add-bridge'\)\?\.addEventListener\('click', activateSupportTool\)/);
   assert.doesNotMatch(editor, /stage !== 'prepare' && state\.tool !== 'pan'/);
   assert.match(css, /grid-template-columns: 318px 64px minmax\(480px, 1fr\) 296px/);
@@ -92,6 +143,10 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /Planning smart supports/);
   assert.match(editor, /suggestKerfAwareBridges\(base\.mask/);
   assert.match(editor, /supportSimulation\.postKerf\.componentCount === 1/);
+  assert.match(html, /id="connectivity-detail"/);
+  assert.match(editor, /Everything stays connected after kerf/);
+  assert.match(editor, /MIN_WEB_DISCONNECT/);
+  assert.match(editor, /Geometry must be repaired before export/);
 });
 
 test('slats add a configurable staggered structural stabilization pass', () => {
@@ -153,8 +208,10 @@ test('panel fitting uses visible generated artwork rather than empty source bord
   assert.match(editor, /trimMaskToContent\(mask, visibleContentValue\(\)\)/);
   assert.match(editor, /state\.contentBounds = trimmed\.bounds/);
   assert.match(editor, /bounds\.width \/ sourceSize\.width \* preview\.width/);
+  assert.match(editor, /fillLetterboxWithMetal: true/);
   assert.match(html, /id="panel-margin"[^>]*value="0"/);
   assert.match(html, /id="placement-fit-version"[^>]*value="2"/);
+  assert.match(html, /fill unused axis with metal/);
   assert.match(editor, /Number\(controls\['panel-margin'\]\) === 35/);
 });
 
@@ -186,6 +243,10 @@ test('photograph styles start from the benchmarked creative defaults', () => {
     'style-angle': '30',
     'style-row-pitch': '9',
     'style-cell': '12',
+    'style-dot-pitch': '41',
+    'style-dot-max': '33.8',
+    'style-dot-angle': '10',
+    'style-dot-cutoff': '42',
     'style-gain': '2.2',
     'style-smooth': '0.55',
     'style-curve': '1.4',
@@ -212,6 +273,28 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   assert.match(editor, /'style-curve': '0\.8'/);
   assert.match(editor, /'style-cutout': true/);
   assert.match(editor, /styleSettings: cloneStyleSettings\(state\.styleSettings\)/);
+  assert.match(html, /name="cutStyle" value="puncte"/);
+  assert.match(html, /<strong>Variable dots<\/strong>/);
+  assert.match(editor, /form\.set\('pas_puncte_mm'/);
+  assert.match(editor, /form\.set\('diametru_max_puncte_mm'/);
+  assert.match(editor, /puncte: Object\.freeze\(\{/);
+  assert.match(editor, /puncte: Object\.freeze\(\{[\s\S]*?'style-gain': '3\.3'[\s\S]*?'style-smooth': '0\.30'[\s\S]*?'style-curve': '1\.2'[\s\S]*?'style-cutout': true[\s\S]*?'style-clothes': false/);
+});
+
+test('cut styles use a compact categorized picker on desktop and mobile', () => {
+  assert.match(html, /id="style-picker-trigger"[^>]*aria-haspopup="dialog"[^>]*aria-controls="style-picker-dialog"/);
+  assert.match(html, /<dialog[^>]*id="style-picker-dialog"[^>]*aria-labelledby="style-picker-title"/);
+  for (const category of ['Prepared artwork', 'Portrait and stencil', 'Lines and engraving', 'Geometric patterns', 'Decorative']) {
+    assert.match(html, new RegExp(`>${category}<`), category);
+  }
+  assert.equal((html.match(/name="cutStyle"/g) || []).length, 13);
+  assert.match(editor, /function syncStylePicker\(\)/);
+  assert.match(editor, /function openStylePicker\(\)/);
+  assert.match(editor, /function positionStylePicker\(\)[\s\S]*?max-width: 720px/);
+  assert.match(editor, /closeStylePicker\(\{ returnFocus: true \}\);[\s\S]*?activateStyleSettings/);
+  assert.match(css, /\.style-picker-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.style-picker-dialog\s*\{[\s\S]*?inset: auto 0 0/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.style-picker-grid\s*\{[\s\S]*?grid-template-columns: 1fr/);
 });
 
 test('radial cuts automatically conceal their complete solid hub', () => {

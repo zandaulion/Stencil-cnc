@@ -35,6 +35,7 @@ from stiluri import (
     linii_negative,
     ornament,
     portret_grafic,
+    puncte_variabile,
     punte_inainte_de_kerf,
     raze,
     sablon,
@@ -203,6 +204,11 @@ async def analizeaza(
     unghi: float = Form(30.0),
     pas_rand_mm: float = Form(9.0),
     celula_mm: float = Form(12.0),
+    # puncte variabile
+    pas_puncte_mm: float = Form(41.0),
+    diametru_max_puncte_mm: float = Form(33.8),
+    unghi_puncte: float = Form(10.0),
+    prag_puncte: float = Form(0.42),
     # limite fizice
     punte_min_mm: float = Form(3.0),
     fanta_min_mm: float = Form(2.0),
@@ -253,7 +259,7 @@ async def analizeaza(
             )
         except FaraSubiect as e:
             raise HTTPException(422, str(e)) from e
-    if stil in {"sablon", "icoana", "grafic", "hasura", "linii", "gravura", "contururi", "raze", "ornament", "lamele"}:
+    if stil in {"sablon", "icoana", "grafic", "hasura", "puncte", "linii", "gravura", "contururi", "raze", "ornament", "lamele"}:
         camp = portret(mic, masca=masca_subiect, castig=castig, netezire=netezire)
         if stil == "lamele" and fara_fundal:
             camp = aplica(camp, masca_subiect)
@@ -306,6 +312,14 @@ async def analizeaza(
             masca = hasura(camp, mm_pe_px, unghi=unghi, pas_rand_mm=pas_rand_mm,
                            celula_mm=celula_mm, fanta_min_mm=fanta_min_mm,
                            punte_min_mm=punte_min_mm, gamma=gamma, zona=masca_subiect)
+        elif stil == "puncte":
+            masca = puncte_variabile(
+                camp, mm_pe_px, pas_mm=pas_puncte_mm,
+                diametru_max_mm=diametru_max_puncte_mm,
+                fanta_min_mm=fanta_min_mm, punte_min_mm=punte_min_mm,
+                gamma=gamma, prag=prag_puncte, unghi=unghi_puncte,
+                zona=masca_subiect,
+            )
         elif stil == "linii":
             masca = linii_negative(camp, masca_subiect, mm_pe_px,
                                     detaliu=detaliu_linii,

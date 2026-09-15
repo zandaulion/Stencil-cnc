@@ -24,12 +24,20 @@ export { hatchMask } from "./styles/hatch.js";
 export { analyzeConnectivity, findUnsupportedComponents } from "./connectivity.js";
 export { applyCapsuleBridge, applyCapsuleBridges, validateBridge } from "./bridges.js";
 export { connectedRegionIndices, physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
+export {
+  applySmallOpeningRepairPlan,
+  planCutGapRepairs,
+  planLoosePieceRepairs,
+  planSmallOpeningRepairs,
+  setSmallOpeningRepairAction,
+} from "./repairs.js";
 export { suggestBridges, suggestKerfAwareBridges, suggestSlatStabilizers } from "./suggestions.js";
 export { dilateMaskPhysical, erodeMaskPhysical } from "./morphology.js";
 export { validateDesign } from "./validation.js";
 export { zoomAroundPoint } from "./viewport.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";
+export { maskToRgba } from "./png.js";
 export {
   PROJECT_SCHEMA,
   PROJECT_VERSION,

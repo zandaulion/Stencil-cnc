@@ -937,3 +937,112 @@ def hasura(
             raise ValueError("Zona de haşură trebuie să aibă aceeaşi mărime ca tonul.")
         taiat &= zona.astype(bool)
     return ~taiat
+
+
+def puncte_variabile(
+    camp: np.ndarray,
+    mm_pe_px: float,
+    pas_mm: float = 41.0,
+    diametru_max_mm: float = 33.8,
+    fanta_min_mm: float = 2.0,
+    punte_min_mm: float = 3.0,
+    gamma: float = 1.2,
+    prag: float = 0.42,
+    unghi: float = 10.0,
+    zona: np.ndarray | None = None,
+) -> np.ndarray:
+    """Circular halftone openings whose diameter follows local light.
+
+    Centres sit on a staggered triangular lattice.  That gives the reference's
+    regular field without favouring vertical columns, and its nearest-neighbour
+    distance is exactly ``pas_mm``.  The largest circle is therefore bounded by
+    ``pas_mm - punte_min_mm`` before it is drawn; a small raster allowance keeps
+    rounding and grid rotation from stealing the promised web.
+
+    ``True`` remains retained metal.  Dark areas receive no (or small) holes,
+    while light areas receive larger openings and glow when the panel is lit
+    from behind.
+    """
+    if camp.ndim != 2:
+        raise ValueError("Câmpul de puncte trebuie să aibă două dimensiuni.")
+    if zona is not None and zona.shape != camp.shape:
+        raise ValueError("Zona de puncte trebuie să aibă aceeaşi mărime ca tonul.")
+    if pas_mm < fanta_min_mm + punte_min_mm:
+        raise ReglajImposibil(
+            f"Un pas de {pas_mm:g} mm nu poate ţine un punct de "
+            f"{fanta_min_mm:g} mm şi o punte de {punte_min_mm:g} mm; "
+            f"foloseşte cel puţin {fanta_min_mm + punte_min_mm:.2f} mm."
+        )
+    if diametru_max_mm < fanta_min_mm:
+        raise ReglajImposibil(
+            "Diametrul maxim al punctului trebuie să fie cel puţin cât deschiderea minimă."
+        )
+    if not np.isfinite(gamma) or gamma <= 0:
+        raise ReglajImposibil("Separarea tonurilor pentru puncte trebuie să fie pozitivă.")
+    if not 0.0 <= prag < 1.0:
+        raise ReglajImposibil("Pragul punctelor trebuie să fie între 0 şi 1.")
+    if not np.isfinite(unghi) or not -90.0 <= unghi <= 90.0:
+        raise ReglajImposibil("Unghiul reţelei de puncte trebuie să fie între -90 şi 90 de grade.")
+    _verifica_rezolutie(mm_pe_px, **{"Puntea": punte_min_mm, "Punctul": fanta_min_mm})
+
+    inaltime, latime = camp.shape
+    pas_px = pas_mm / mm_pe_px
+    fanta_px = fanta_min_mm / mm_pe_px
+    # Rounding each of two rotated centres to its destination pixel can reduce
+    # their separation by sqrt(2) pixels. Circles use integer radii, so compute
+    # the largest safe raster diameter directly instead of trusting a later
+    # morphology pass that would turn circles into irregular blobs.
+    diametru_sigur_px = pas_px - punte_min_mm / mm_pe_px - np.sqrt(2.0)
+    diametru_max_px = min(diametru_max_mm / mm_pe_px, diametru_sigur_px)
+    raza_min = max(1, int(np.ceil((fanta_px - 1.0) / 2.0)))
+    raza_max = int(np.floor((diametru_max_px - 1.0) / 2.0))
+    if raza_max < raza_min:
+        raise ReglajImposibil(
+            "Pasul punctelor nu lasă loc pentru deschiderea şi puntea configurate "
+            "la rezoluţia curentă; măreşte pasul punctelor."
+        )
+
+    # One sample represents one dot, so smooth at a fraction of the pitch. This
+    # prevents camera noise from making adjacent nominally equal circles jump a
+    # full raster diameter while preserving facial and silhouette transitions.
+    camp_netezit = cv2.GaussianBlur(
+        camp.astype(np.float32), (0, 0), sigmaX=max(0.6, pas_px * 0.22),
+        borderType=cv2.BORDER_REPLICATE,
+    )
+    lumina = np.clip(1.0 - camp_netezit, 0.0, 1.0)
+    zona_bool = np.ones(camp.shape, dtype=bool) if zona is None else zona.astype(bool)
+    taiat = np.zeros(camp.shape, dtype=np.uint8)
+
+    pas_rand_px = pas_px * np.sqrt(3.0) / 2.0
+    raza_camp = np.hypot(latime, inaltime) / 2.0 + pas_px * 2.0
+    rand_min = int(np.floor(-raza_camp / pas_rand_px))
+    rand_max = int(np.ceil(raza_camp / pas_rand_px))
+    coloana_min = int(np.floor(-raza_camp / pas_px)) - 1
+    coloana_max = int(np.ceil(raza_camp / pas_px)) + 1
+    rad = np.radians(unghi)
+    cosinus, sinus = float(np.cos(rad)), float(np.sin(rad))
+    cx, cy = (latime - 1) / 2.0, (inaltime - 1) / 2.0
+
+    for rand in range(rand_min, rand_max + 1):
+        v = rand * pas_rand_px
+        decalaj = pas_px / 2.0 if rand & 1 else 0.0
+        for coloana in range(coloana_min, coloana_max + 1):
+            u = coloana * pas_px + decalaj
+            x = int(round(cx + u * cosinus - v * sinus))
+            y = int(round(cy + u * sinus + v * cosinus))
+            if not (0 <= x < latime and 0 <= y < inaltime) or not zona_bool[y, x]:
+                continue
+            valoare = (float(lumina[y, x]) - prag) / (1.0 - prag)
+            if valoare <= 0.0:
+                continue
+            diametru = fanta_px + np.power(min(1.0, valoare), gamma) * (
+                diametru_max_px - fanta_px
+            )
+            raza = min(raza_max, max(raza_min, int(np.ceil((diametru - 1.0) / 2.0))))
+            # Do not create clipped semicircles at the artwork edge: they are no
+            # longer the chosen motif and may be too small for the cutter.
+            if x - raza < 0 or x + raza >= latime or y - raza < 0 or y + raza >= inaltime:
+                continue
+            cv2.circle(taiat, (x, y), raza, 1, thickness=-1, lineType=cv2.LINE_8)
+
+    return ~(taiat > 0)

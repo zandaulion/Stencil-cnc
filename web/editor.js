@@ -16,6 +16,8 @@
 
 import {
   analyzeConnectivity,
+  applyCapsuleBridges,
+  applySmallOpeningRepairPlan,
   buildDesignMask,
   calculateArtworkPlacement,
   connectedRegionIndices,
@@ -27,11 +29,16 @@ import {
   exportDxf,
   exportSvg,
   maskFromImageData,
+  maskToRgba,
   orientSheet,
   physicalDiscIndices,
   physicalStrokeIndices,
+  planCutGapRepairs,
+  planLoosePieceRepairs,
   placeMaskOnSheet,
+  planSmallOpeningRepairs,
   serializeProject,
+  setSmallOpeningRepairAction,
   suggestKerfAwareBridges,
   trimMaskToContent,
   validateDesign,
@@ -39,7 +46,7 @@ import {
   REMOVED,
   RETAINED,
 } from '/core/index.js';
-import { clearLastProject, downloadText, loadLastProject, saveProject } from '/storage.js';
+import { clearLastProject, downloadBlob, downloadText, loadLastProject, saveProject } from '/storage.js';
 
 /* ------------------------------------------------------------------ state */
 
@@ -80,6 +87,14 @@ const STYLE_DEFAULT_SETTINGS = Object.freeze({
     'style-clothes': true,
     polarity: 'black-retained',
   }),
+  puncte: Object.freeze({
+    'style-gain': '3.3',
+    'style-smooth': '0.30',
+    'style-curve': '1.2',
+    'style-cutout': true,
+    'style-clothes': false,
+    polarity: 'black-retained',
+  }),
 });
 const STYLE_SHARED_CONTROL_IDS = Object.freeze([
   'style-gain', 'style-smooth', 'style-curve', 'style-cutout', 'style-clothes',
@@ -118,6 +133,19 @@ const state = {
   // change of threshold instead of being silently overwritten by it.
   painted: { keep: new Set(), remove: new Set() },
   touchupPreview: null,
+  touchupLive: false,
+
+  // Machine-generated corrections are kept separate from both the filter and
+  // hand painting. They can be hidden, removed, or regenerated as one layer;
+  // an artwork/control change marks them stale instead of baking obsolete
+  // raster edits into the new image.
+  manufacturingRepairs: {
+    keep: new Set(),
+    remove: new Set(),
+    enabled: true,
+    stale: false,
+    summary: null,
+  },
 
   bridges: [],
   drawingBridge: false,
@@ -128,10 +156,17 @@ const state = {
   selectedCandidateId: null,
   analysis: null,
   validation: null,
+  supportAnalysis: null,
   issues: [],
   issueFilter: 'all',
   highlightedIssue: null,
   highlightedIssueLocation: 0,
+  repairPlan: null,
+  repairPreviewBaseMask: null,
+  repairPreviewMask: null,
+  repairPreviewKerfMask: null,
+  repairItemIndex: 0,
+  repairResult: null,
   validated: false,
   revision: 0,
   validatedRevision: -1,
@@ -275,6 +310,67 @@ function selectedCutStyle() {
   return document.querySelector('input[name="cutStyle"]:checked')?.value || 'line-art';
 }
 
+function syncStylePicker() {
+  const option = document.querySelector('input[name="cutStyle"]:checked')?.closest('.style-option');
+  if (!option) return;
+  const name = option.querySelector('strong')?.textContent?.trim() || 'Cut style';
+  const description = option.querySelector('small')?.textContent?.trim() || '';
+  const category = option.dataset.category || 'Cut style';
+  if (el('style-picker-selected-name')) el('style-picker-selected-name').textContent = name;
+  if (el('style-picker-selected-description')) el('style-picker-selected-description').textContent = description;
+  if (el('style-picker-selected-category')) el('style-picker-selected-category').textContent = category;
+}
+
+function positionStylePicker() {
+  const dialog = el('style-picker-dialog');
+  const trigger = el('style-picker-trigger');
+  if (!dialog?.open || !trigger) return;
+  if (window.matchMedia('(max-width: 720px)').matches) {
+    dialog.style.removeProperty('top');
+    dialog.style.removeProperty('left');
+    return;
+  }
+  const triggerBox = trigger.getBoundingClientRect();
+  const gutter = 12;
+  const width = dialog.offsetWidth;
+  const height = dialog.offsetHeight;
+  const left = Math.min(
+    Math.max(gutter, triggerBox.left),
+    Math.max(gutter, window.innerWidth - width - gutter),
+  );
+  const below = triggerBox.bottom + 8;
+  const top = below + height <= window.innerHeight - gutter
+    ? below
+    : Math.max(gutter, triggerBox.top - height - 8);
+  dialog.style.left = `${Math.round(left)}px`;
+  dialog.style.top = `${Math.round(top)}px`;
+}
+
+function openStylePicker() {
+  const dialog = el('style-picker-dialog');
+  const trigger = el('style-picker-trigger');
+  if (!dialog || dialog.open || trigger?.disabled) return;
+  syncStylePicker();
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  trigger?.setAttribute('aria-expanded', 'true');
+  requestAnimationFrame(() => {
+    positionStylePicker();
+    const selected = document.querySelector('input[name="cutStyle"]:checked');
+    selected?.closest('.style-option')?.scrollIntoView({ block: 'nearest' });
+    selected?.focus({ preventScroll: true });
+  });
+}
+
+function closeStylePicker({ returnFocus = false } = {}) {
+  const dialog = el('style-picker-dialog');
+  if (!dialog?.open) return;
+  if (typeof dialog.close === 'function') dialog.close();
+  else dialog.removeAttribute('open');
+  el('style-picker-trigger')?.setAttribute('aria-expanded', 'false');
+  if (returnFocus) el('style-picker-trigger')?.focus();
+}
+
 function cloneStyleSettings(settings = {}) {
   return Object.fromEntries(Object.entries(settings).map(([style, recipe]) => [
     style,
@@ -411,6 +507,7 @@ function rebuildSource() {
     frame: frameConfig(),
     marginMm: toMm(numberField('panel-margin', 0)),
     fitToFrame: el('fit-artwork')?.checked !== false,
+    fillLetterboxWithMetal: true,
     longEdgePx: Math.min(MAX_SHEET_LONG_EDGE, Math.max(mask.width, mask.height, requiredLongEdge)),
   });
   mask = placed.mask;
@@ -431,6 +528,14 @@ function rebuildSource() {
   if (state.paintedFor === rasterKey) {
     for (const index of state.painted.keep) mask.data[index] = RETAINED;
     for (const index of state.painted.remove) mask.data[index] = REMOVED;
+  }
+  if (state.manufacturingRepairs.enabled && !state.manufacturingRepairs.stale) {
+    for (const index of state.manufacturingRepairs.keep) {
+      if (index >= 0 && index < mask.data.length) mask.data[index] = RETAINED;
+    }
+    for (const index of state.manufacturingRepairs.remove) {
+      if (index >= 0 && index < mask.data.length) mask.data[index] = REMOVED;
+    }
   }
   state.sourceMask = mask;
 }
@@ -493,6 +598,11 @@ function styleParams(stil = selectedCutStyle()) {
     form.set('unghi', String(numberField('style-angle', 30)));
     form.set('pas_rand_mm', String(toMm(numberField('style-row-pitch', 9))));
     form.set('celula_mm', String(toMm(numberField('style-cell', 12))));
+  } else if (stil === 'puncte') {
+    form.set('pas_puncte_mm', String(toMm(numberField('style-dot-pitch', 41))));
+    form.set('diametru_max_puncte_mm', String(toMm(numberField('style-dot-max', 33.8))));
+    form.set('unghi_puncte', String(numberField('style-dot-angle', 10)));
+    form.set('prag_puncte', String(numberField('style-dot-cutoff', 42) / 100));
   } else if (stil === 'linii') {
     form.set('detaliu_linii', String(numberField('style-line-detail', 40) / 100));
     form.set('latime_linie_mm', String(toMm(numberField('style-line-width', 2))));
@@ -549,6 +659,8 @@ function enforceStyleSpacing() {
   }
   const spacingFields = style === 'hasura'
     ? [['style-row-pitch', 'row spacing'], ['style-cell', 'stroke cell']]
+    : style === 'puncte'
+      ? [['style-dot-pitch', 'dot pitch']]
     : style === 'gravura'
       ? [['style-wood-spacing', 'mark spacing']]
       : style === 'raze' ? [['style-ray-cell', 'radial cell']] : [];
@@ -559,6 +671,21 @@ function enforceStyleSpacing() {
     if (numberField(id, 3) < minim) {
       node.value = roundUnit(minim);
       ajustate.push(`${eticheta} to ${node.value} ${state.unit}`);
+    }
+  }
+  if (style === 'puncte') {
+    const node = el('style-dot-max');
+    const maximumDiameterMm = Math.max(slot, toMm(numberField('style-dot-pitch', 41)) - web);
+    const minimumDiameter = fromMm(slot);
+    const maximumDiameter = fromMm(maximumDiameterMm);
+    node.min = String(roundUnit(minimumDiameter));
+    node.max = String(roundUnit(maximumDiameter));
+    if (numberField('style-dot-max', 33.8) < minimumDiameter) {
+      node.value = roundUnit(minimumDiameter);
+      ajustate.push(`maximum dot diameter to ${node.value} ${state.unit}`);
+    } else if (numberField('style-dot-max', 33.8) > maximumDiameter) {
+      node.value = roundUnit(maximumDiameter);
+      ajustate.push(`maximum dot diameter to ${node.value} ${state.unit}`);
     }
   }
   const lineField = {
@@ -653,6 +780,13 @@ function invalidateStyleRender({ useLocalPreview = state.mode === 'line-art' } =
     renderCandidates();
   }
   markAutomaticSupportsStale();
+  const repairLayerWasActive = manufacturingRepairCount() > 0 &&
+    state.manufacturingRepairs.enabled && !state.manufacturingRepairs.stale;
+  markManufacturingRepairsStale();
+  if (repairLayerWasActive) {
+    rebuildSource();
+    rebuildDesign();
+  }
   invalidateValidation();
   if (state.source) {
     setStyleStatus(state.offline
@@ -738,6 +872,7 @@ function setStyleStatus(text) {
 
 function reflectModeControls() {
   const style = document.querySelector('input[name="cutStyle"]:checked')?.value || 'line-art';
+  syncStylePicker();
   const lineArt = style === 'line-art';
   if (style !== 'icoana' && toolOptionsKind === 'icon') closeToolOptions();
   syncToolRailState();
@@ -745,7 +880,7 @@ function reflectModeControls() {
   el('tone-controls')?.toggleAttribute('hidden', !lineArt);
   el('style-photo-common')?.toggleAttribute('hidden', lineArt);
   el('style-curve-control')?.toggleAttribute(
-    'hidden', !['lamele', 'hasura', 'gravura', 'raze'].includes(style),
+    'hidden', !['lamele', 'hasura', 'puncte', 'gravura', 'raze'].includes(style),
   );
   el('btn-restyle')?.toggleAttribute('hidden', lineArt);
   el('style-stencil')?.toggleAttribute('hidden', style !== 'sablon');
@@ -753,6 +888,7 @@ function reflectModeControls() {
   el('style-graphic')?.toggleAttribute('hidden', style !== 'grafic');
   el('style-slats')?.toggleAttribute('hidden', style !== 'lamele');
   el('style-hatch')?.toggleAttribute('hidden', style !== 'hasura');
+  el('style-dots')?.toggleAttribute('hidden', style !== 'puncte');
   el('style-linework')?.toggleAttribute('hidden', style !== 'linii');
   el('style-woodcut')?.toggleAttribute('hidden', style !== 'gravura');
   el('style-silhouette')?.toggleAttribute('hidden', style !== 'silueta');
@@ -852,6 +988,12 @@ function invalidateValidation({ clearAnalysis = false } = {}) {
   state.validation = null;
   state.highlightedIssue = null;
   state.highlightedIssueLocation = 0;
+  state.repairPlan = null;
+  state.repairPreviewBaseMask = null;
+  state.repairPreviewMask = null;
+  state.repairPreviewKerfMask = null;
+  state.repairItemIndex = 0;
+  state.repairResult = null;
   if (clearAnalysis) state.analysis = null;
   updateExportReadiness();
 }
@@ -864,7 +1006,12 @@ function invalidateValidation({ clearAnalysis = false } = {}) {
  * ever describing three different designs.
  */
 let rebuildTimer = null;
-function refresh({ immediate = false, reanalyse = true, rebuildSourceMask = true } = {}) {
+function refresh({
+  immediate = false,
+  reanalyse = true,
+  rebuildSourceMask = true,
+  preserveManufacturingRepairs = false,
+} = {}) {
   clearTimeout(rebuildTimer);
   const run = () => {
     rebuildTimer = null;
@@ -873,7 +1020,10 @@ function refresh({ immediate = false, reanalyse = true, rebuildSourceMask = true
       renderCandidates();
     }
     if (rebuildSourceMask) markAutomaticSupportsStale();
-    if (rebuildSourceMask) rebuildSource();
+    const repairLayerWasActive = manufacturingRepairCount() > 0 &&
+      state.manufacturingRepairs.enabled && !state.manufacturingRepairs.stale;
+    if (!preserveManufacturingRepairs) markManufacturingRepairsStale();
+    if (rebuildSourceMask || repairLayerWasActive) rebuildSource();
     rebuildDesign();
     updateCandidateAvailability();
     // Any rebuild changes the exact geometry. Expensive support analysis may
@@ -891,9 +1041,18 @@ function refresh({ immediate = false, reanalyse = true, rebuildSourceMask = true
 /* --------------------------------------------------------------- analysis */
 
 function analyse() {
-  if (!state.designMask) { state.analysis = null; renderIssues([]); return; }
+  if (!state.designMask) {
+    state.analysis = null;
+    state.supportAnalysis = null;
+    updateConnectivityCard();
+    renderIssues([]);
+    return;
+  }
   state.analysis = analyzeConnectivity(state.designMask, {
     anchorMask: state.frameMask,
+    anchorBoundary: false,
+  });
+  state.supportAnalysis = analyzeConnectivity(state.kerfPreviewMask ?? state.designMask, {
     anchorBoundary: false,
   });
   updateConnectivityCard();
@@ -920,17 +1079,39 @@ function issuesFromAnalysis() {
 function updateConnectivityCard() {
   const card = el('connectivity-summary');
   const count = el('island-count');
-  if (!card || !count) return;
+  const detail = el('connectivity-detail');
+  if (!card || !count || !detail) return;
   if (!state.analysis) {
     card.dataset.state = 'pending';
     count.textContent = 'Not analysed';
+    detail.textContent = 'Run support analysis after importing artwork.';
     return;
   }
-  const separate = Math.max(0, state.analysis.componentCount - 1);
-  card.dataset.state = separate === 0 ? 'ok' : 'warn';
-  count.textContent = separate === 0
-    ? 'Everything is one connected piece'
-    : `${separate} unsupported ${separate === 1 ? 'piece' : 'pieces'}`;
+  const preCutSeparate = Math.max(0, state.analysis.componentCount - 1);
+  const afterKerfSeparate = Math.max(0, (state.supportAnalysis?.componentCount ?? state.analysis.componentCount) - 1);
+  const currentValidation = state.validatedRevision === state.revision ? state.validation : null;
+  const narrowWebIssue = currentValidation?.issues?.find((issue) => issue.code === 'MIN_WEB_DISCONNECT');
+  const narrowRegions = narrowWebIssue?.details?.componentCount ?? 0;
+
+  if (preCutSeparate > 0) {
+    card.dataset.state = 'error';
+    count.textContent = `${preCutSeparate} disconnected ${preCutSeparate === 1 ? 'piece' : 'pieces'}`;
+    detail.textContent = 'These pieces are separate even before kerf. Add supports to retain them.';
+  } else if (afterKerfSeparate > 0) {
+    card.dataset.state = 'error';
+    count.textContent = `${afterKerfSeparate} ${afterKerfSeparate === 1 ? 'piece separates' : 'pieces separate'} after kerf`;
+    detail.textContent = 'The drawn connections are too narrow to survive the configured cutter.';
+  } else if (narrowRegions > 0) {
+    card.dataset.state = 'warn';
+    count.textContent = `Connected, with ${narrowRegions} narrow-web ${narrowRegions === 1 ? 'region' : 'regions'}`;
+    detail.textContent = `Metal remains connected after kerf, but these regions rely on connections narrower than ${narrowWebIssue.details.minimumWebMm} mm.`;
+  } else {
+    card.dataset.state = 'ok';
+    count.textContent = 'Everything stays connected after kerf';
+    detail.textContent = currentValidation
+      ? 'The full-width material core also remains connected.'
+      : 'Run validation to check the configured minimum web width.';
+  }
 }
 
 function geometryForExport() {
@@ -967,6 +1148,7 @@ async function runValidation() {
   state.validated = state.validation.valid;
   state.validatedRevision = state.revision;
   renderIssues(state.validation.issues ?? []);
+  updateConnectivityCard();
   updateExportReadiness();
   draw();
   toast(state.validation.valid
@@ -985,10 +1167,16 @@ function renderIssues(issues) {
   const list = el('issue-list');
   if (!list) return;
 
-  const errors = issues.filter((issue) => issue.severity === 'error').length;
-  const warnings = issues.filter((issue) => issue.severity === 'warning').length;
-  el('issue-total').textContent = String(issues.length);
-  el('filter-count-all').textContent = String(issues.length);
+  const occurrenceCount = (issue) => Math.max(1, issue.details?.locations?.length ?? 1);
+  const errors = issues
+    .filter((issue) => issue.severity === 'error')
+    .reduce((sum, issue) => sum + occurrenceCount(issue), 0);
+  const warnings = issues
+    .filter((issue) => issue.severity === 'warning')
+    .reduce((sum, issue) => sum + occurrenceCount(issue), 0);
+  const total = errors + warnings;
+  el('issue-total').textContent = String(total);
+  el('filter-count-all').textContent = String(total);
   el('filter-count-error').textContent = String(errors);
   el('filter-count-warning').textContent = String(warnings);
 
@@ -1003,17 +1191,27 @@ function renderIssues(issues) {
     } else if (errors > 0) {
       health.dataset.state = 'error';
       if (ring) ring.textContent = String(errors);
-      if (text) text.innerHTML = `<strong>${errors} blocking ${errors === 1 ? 'issue' : 'issues'}</strong><small>Pieces would fall out of the panel.</small>`;
+      const fallingPiece = issues.some((issue) => [
+        'DISCONNECTED_RETAINED_MATERIAL',
+        'UNSUPPORTED_COMPONENT',
+        'KERF_DISCONNECTED_RETAINED_MATERIAL',
+        'KERF_UNSUPPORTED_COMPONENT',
+      ].includes(issue.code));
+      if (text) text.innerHTML = `<strong>${errors} blocking ${errors === 1 ? 'issue' : 'locations'}</strong><small>${
+        fallingPiece ? 'One or more pieces could separate from the panel.' : 'Geometry must be repaired before export.'
+      }</small>`;
     } else if (warnings > 0) {
       health.dataset.state = 'warning';
       if (ring) ring.textContent = String(warnings);
-      if (text) text.innerHTML = `<strong>${warnings} to review</strong><small>Thin or fragile, but it holds together.</small>`;
+      if (text) text.innerHTML = `<strong>${warnings} ${warnings === 1 ? 'location' : 'locations'} to review</strong><small>Thin or fragile, but it holds together.</small>`;
     } else {
       health.dataset.state = 'ok';
       if (ring) ring.textContent = '✓';
       if (text) text.innerHTML = '<strong>Ready to cut</strong><small>One connected piece, within the limits given.</small>';
     }
   }
+
+  renderRepairPanel();
 
   const shown = issues
     .map((issue, index) => ({ issue, index }))
@@ -1064,6 +1262,522 @@ function detailText(issue) {
     .join(' · ');
 }
 
+/* ----------------------------------------------------- small-feature repair */
+
+const REPAIR_STRATEGY_COPY = Object.freeze({
+  manufacturing: Object.freeze({
+    preserve: 'Keeps the most image detail: cleans only raster noise, prefers merging cuts, and adds the fewest structural ties.',
+    balanced: 'Balances recognizable detail with reliable plasma geometry and adds a sparse filter-aware support network.',
+    durable: 'Prefers stronger metal: closes marginal cuts, removes more slivers, and accepts broader structural corrections.',
+  }),
+  'small-openings': Object.freeze({
+    preserve: 'Enlarges more recognizable marks and closes only clearly insignificant specks.',
+    balanced: 'Keeps recognizable details, but closes isolated specks that will not cut reliably.',
+    durable: 'Favors strong metal and closes nearly every marginal feature.',
+  }),
+  'cut-gaps': Object.freeze({
+    preserve: 'Joins nearby cuts into one opening, retaining the negative-space detail while removing the undersized web.',
+    balanced: 'Adds a small local metal pad so both cuts remain separate with a manufacturing-safe gap.',
+    durable: 'Closes the smaller conflicting cut. This preserves the most metal but removes fine detail.',
+  }),
+  'loose-pieces': Object.freeze({
+    preserve: 'Removes only isolated one-cell specks and leaves every larger piece for support.',
+    balanced: 'Also removes compact loose pieces smaller than the configured minimum web.',
+    durable: 'Removes loose fragments up to twice the minimum web; larger artwork still requires support.',
+  }),
+});
+
+function repairKindForIssue(issue) {
+  if (['KERF_DISCONNECTED_RETAINED_MATERIAL', 'MIN_WEB_DISCONNECT', 'MIN_WEB_THIN_AREAS']
+    .includes(issue?.code)) return 'manufacturing';
+  if (issue?.code === 'DISCONNECTED_RETAINED_MATERIAL') return 'loose-pieces';
+  if (issue?.code === 'MIN_OPENING_UNCUTTABLE') return 'small-openings';
+  if (issue?.code === 'MIN_CUT_GAP') return 'cut-gaps';
+  return null;
+}
+
+function repairableIssue(kind = null) {
+  const codes = kind === 'small-openings'
+    ? ['MIN_OPENING_UNCUTTABLE']
+    : kind === 'cut-gaps'
+      ? ['MIN_CUT_GAP']
+      : kind === 'loose-pieces'
+        ? ['DISCONNECTED_RETAINED_MATERIAL']
+        : [
+            'DISCONNECTED_RETAINED_MATERIAL',
+            'KERF_DISCONNECTED_RETAINED_MATERIAL',
+            'MIN_OPENING_UNCUTTABLE',
+            'MIN_CUT_GAP',
+            'MIN_WEB_DISCONNECT',
+            'MIN_WEB_THIN_AREAS',
+          ];
+  return state.validation?.issues?.find((issue) => codes.includes(issue.code)) ?? null;
+}
+
+function repairIssueCount(issue) {
+  return issue?.details?.componentCount ?? issue?.details?.violationCount ?? issue?.details?.locations?.length ?? 0;
+}
+
+function selectedRepairStrategy() {
+  return document.querySelector('input[name="openingRepairStrategy"]:checked')?.value || 'balanced';
+}
+
+function repairAllowanceMm() {
+  return el('repair-safety')?.value === 'minimum' ? 0 : 0.4;
+}
+
+function repairProtectedMask(mask) {
+  if (!state.sourceMask || state.sourceMask.width !== mask.width || state.sourceMask.height !== mask.height) return null;
+  const protectedMask = { width: mask.width, height: mask.height, data: new Uint8Array(mask.data.length) };
+  for (let index = 0; index < mask.data.length; index += 1) {
+    // Material introduced by the frame or a support is structural. A repair
+    // may join it, but never silently carve it away.
+    if (mask.data[index] === RETAINED && state.sourceMask.data[index] !== RETAINED) {
+      protectedMask.data[index] = RETAINED;
+    }
+  }
+  return protectedMask;
+}
+
+function repairValidation(mask) {
+  return validateDesign(mask, {
+    sheet: sheet(),
+    kerfMm: toMm(numberField('kerf', 1.2)),
+    minimumWebMm: toMm(numberField('min-web', 3)),
+    minimumOpeningMm: toMm(numberField('min-opening', 2)),
+    anchorBoundary: false,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+}
+
+function validationLocationCount(validation, severity) {
+  return (validation?.issues ?? [])
+    .filter((issue) => issue.severity === severity)
+    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+}
+
+function selectedRepairCategories() {
+  return {
+    slivers: el('repair-category-slivers')?.checked !== false,
+    gaps: el('repair-category-gaps')?.checked !== false,
+    webs: el('repair-category-webs')?.checked !== false,
+  };
+}
+
+function cloneCurrentGeometryWithoutRepairLayer() {
+  const layerWasEnabled = state.manufacturingRepairs.enabled;
+  const layerWasStale = state.manufacturingRepairs.stale;
+  if (manufacturingRepairCount() && layerWasEnabled && !layerWasStale) {
+    state.manufacturingRepairs.enabled = false;
+    rebuildSource();
+    rebuildDesign();
+  }
+  const current = geometryForExport();
+  const result = current ? { ...current, data: Uint8Array.from(current.data) } : null;
+  if (manufacturingRepairCount() && layerWasEnabled && !layerWasStale) {
+    state.manufacturingRepairs.enabled = true;
+    rebuildSource();
+    rebuildDesign();
+  }
+  return result;
+}
+
+function repairPlanItems(plan, category, issueCode, pass = 1) {
+  return (plan?.items ?? []).map((item) => ({
+    ...item,
+    id: `${category}-${pass}-${item.id}`,
+    category,
+    issueCode,
+  }));
+}
+
+async function buildRepairPreview({ focus = true } = {}) {
+  const mask = cloneCurrentGeometryWithoutRepairLayer();
+  if (!mask) {
+    toast('Import artwork before planning manufacturing repairs.');
+    return false;
+  }
+  const categories = selectedRepairCategories();
+  if (!categories.slivers && !categories.gaps && !categories.webs) {
+    toast('Select at least one repair category.');
+    return false;
+  }
+
+  const button = el('btn-preview-repairs');
+  button?.setAttribute('aria-busy', 'true');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Planning combined repairs…';
+  }
+  toast('Planning all selected manufacturing repairs…');
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+  try {
+    const allowance = repairAllowanceMm();
+    const strategy = selectedRepairStrategy();
+    const minimumWebMm = toMm(numberField('min-web', 3));
+    const minimumOpeningMm = toMm(numberField('min-opening', 2));
+    const kerfMm = toMm(numberField('kerf', 1.2));
+    const targetWebMm = minimumWebMm + allowance;
+    const targetOpeningMm = minimumOpeningMm + allowance;
+    const protectedMask = repairProtectedMask(mask);
+    const before = repairValidation(mask);
+    let candidate = { ...mask, data: Uint8Array.from(mask.data) };
+    let validation = before;
+    const items = [];
+    let supportCount = 0;
+
+    const applyStage = (plan, category, issueCode, pass = 1) => {
+      const stageItems = repairPlanItems(plan, category, issueCode, pass);
+      if (!stageItems.length) return;
+      candidate = applySmallOpeningRepairPlan(candidate, { items: stageItems });
+      items.push(...stageItems);
+      validation = repairValidation(candidate);
+    };
+
+    if (categories.slivers) {
+      applyStage(planLoosePieceRepairs(candidate, validation, {
+        sheet: sheet(), strategy, minimumWebMm: targetWebMm, protectedMask,
+      }), 'sliver', 'DISCONNECTED_RETAINED_MATERIAL');
+      applyStage(planSmallOpeningRepairs(candidate, validation, {
+        sheet: sheet(), strategy, targetOpeningMm, minimumWebMm: targetWebMm, protectedMask,
+      }), 'opening', 'MIN_OPENING_UNCUTTABLE');
+    }
+
+    if (categories.gaps) {
+      // A batch can reveal a second near-neighbour after two cuts merge. A
+      // small bounded loop catches those cascades without chasing morphology
+      // indefinitely.
+      for (let pass = 1; pass <= 3; pass += 1) {
+        const gapPlan = planCutGapRepairs(candidate, validation, {
+          sheet: sheet(), strategy, targetGapMm: targetWebMm,
+          targetOpeningMm, protectedMask,
+        });
+        if (!gapPlan.items.length) break;
+        applyStage(gapPlan, 'gap', 'MIN_CUT_GAP', pass);
+      }
+    }
+
+    if (categories.webs && validation.issues.some((issue) =>
+      issue.code === 'MIN_WEB_DISCONNECT' ||
+      issue.code === 'KERF_DISCONNECTED_RETAINED_MATERIAL' ||
+      issue.code === 'DISCONNECTED_RETAINED_MATERIAL')) {
+      const requestedWidthMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6)));
+      const widthMm = Math.max(requestedWidthMm, targetWebMm + kerfMm);
+      const supportPlan = suggestKerfAwareBridges(candidate, {
+        sheet: sheet(),
+        widthMm,
+        anchorBoundary: false,
+        requireSingleComponent: true,
+        minimumWebMm: targetWebMm,
+        kerfMm,
+        targetMinimumWebConnectivity: true,
+        maxPasses: 4,
+        strategy: smartBridgeStrategy(),
+      });
+      if (supportPlan.bridges.length) {
+        const supported = applyCapsuleBridges(candidate, supportPlan.bridges, sheet());
+        const keep = [];
+        for (let index = 0; index < supported.data.length; index += 1) {
+          if (supported.data[index] === RETAINED && candidate.data[index] !== RETAINED) keep.push(index);
+        }
+        supportCount = supportPlan.bridges.length;
+        if (keep.length) {
+          const bounds = { minX: 0, minY: 0, maxX: candidate.width - 1, maxY: candidate.height - 1,
+            width: candidate.width, height: candidate.height };
+          const supportItem = {
+            id: 'web-1-filter-aware-supports', category: 'web', issueCode: 'MIN_WEB_DISCONNECT',
+            bounds, pixelCount: keep.length, supportCount,
+            similarityKey: 'filter-aware-supports', action: 'enlarge', recommended: 'enlarge',
+            availableActions: { close: false, enlarge: true, merge: false },
+            edits: { close: null, enlarge: { keep, remove: [] }, merge: null },
+          };
+          candidate = supported;
+          items.push(supportItem);
+          validation = repairValidation(candidate);
+        }
+      }
+    }
+
+    const after = validation;
+    if (!items.length) {
+      state.repairPlan = null;
+      state.repairPreviewBaseMask = null;
+      state.repairPreviewMask = null;
+      state.repairPreviewKerfMask = null;
+      toast('The selected categories found no safe automatic changes. The refreshed validator may already have removed raster-only false positives.');
+      renderRepairPanel();
+      draw();
+      return false;
+    }
+
+    const counts = { close: 0, enlarge: 0, merge: 0 };
+    for (const item of items) counts[item.action] += item.supportCount ?? 1;
+    state.repairPlan = {
+      kind: 'manufacturing', strategy, categories, items, counts, supportCount,
+      outcome: {
+        beforeErrors: validationLocationCount(before, 'error'),
+        afterErrors: validationLocationCount(after, 'error'),
+        beforeWarnings: validationLocationCount(before, 'warning'),
+        afterWarnings: validationLocationCount(after, 'warning'),
+      },
+    };
+    state.repairPreviewBaseMask = mask;
+    state.repairPreviewMask = candidate;
+    const previewKerfMm = toMm(numberField('kerf', 1.2));
+    state.repairPreviewKerfMask = previewKerfMm > 0
+      ? erodeMaskPhysical(candidate, previewKerfMm / 2, sheet())
+      : { ...candidate, data: Uint8Array.from(candidate.data) };
+    state.repairItemIndex = Math.min(state.repairItemIndex, items.length - 1);
+    state.repairResult = null;
+    renderRepairPanel();
+    if (focus) focusRepairItem(state.repairItemIndex);
+    else draw();
+    return true;
+  } finally {
+    button?.removeAttribute('aria-busy');
+    if (button) button.disabled = false;
+    renderRepairPanel();
+  }
+}
+
+function updateRepairPreviewMasks() {
+  const mask = state.repairPreviewBaseMask ?? geometryForExport();
+  if (!mask || !state.repairPlan) {
+    state.repairPreviewMask = null;
+    state.repairPreviewKerfMask = null;
+    return;
+  }
+  state.repairPreviewMask = applySmallOpeningRepairPlan(mask, state.repairPlan);
+  if (state.repairPlan.kind === 'manufacturing') {
+    const validation = repairValidation(state.repairPreviewMask);
+    state.repairPlan.outcome.afterErrors = validationLocationCount(validation, 'error');
+    state.repairPlan.outcome.afterWarnings = validationLocationCount(validation, 'warning');
+  }
+  const kerfMm = toMm(numberField('kerf', 1.2));
+  state.repairPreviewKerfMask = kerfMm > 0
+    ? erodeMaskPhysical(state.repairPreviewMask, kerfMm / 2, sheet())
+    : { ...state.repairPreviewMask, data: Uint8Array.from(state.repairPreviewMask.data) };
+}
+
+function discardRepairPreview() {
+  state.repairPlan = null;
+  state.repairPreviewBaseMask = null;
+  state.repairPreviewMask = null;
+  state.repairPreviewKerfMask = null;
+  state.repairItemIndex = 0;
+  renderRepairPanel();
+  draw();
+}
+
+function focusRepairItem(index) {
+  if (!state.repairPlan?.items.length) return;
+  state.repairItemIndex = (index + state.repairPlan.items.length) % state.repairPlan.items.length;
+  const item = state.repairPlan.items[state.repairItemIndex];
+  const issue = state.validation?.issues?.find((candidate) => candidate.code === item.issueCode) ??
+    repairableIssue(state.repairPlan?.kind);
+  if (!issue) {
+    focusIssue({ details: { bounds: item.bounds } });
+    draw();
+    return;
+  }
+  state.highlightedIssue = issue;
+  const locations = issue.details?.locations ?? [];
+  const matchingLocation = locations.findIndex((location) =>
+    (item.componentId && location.componentId === item.componentId) ||
+    (item.componentIds && item.componentIds.every((id) => location.componentIds?.includes(id))));
+  state.highlightedIssueLocation = matchingLocation >= 0 ? matchingLocation : 0;
+  setSidePanel('issues');
+  setView('issues');
+  renderIssues(state.issues);
+  focusIssue(issue);
+  draw();
+}
+
+function renderRepairPanel() {
+  const panel = el('repair-panel');
+  if (!panel) return;
+  const result = state.repairResult;
+  const issue = repairableIssue(state.repairPlan?.kind ?? result?.kind);
+  const kind = state.repairPlan?.kind ?? result?.kind ?? 'manufacturing';
+  const manufacturing = kind === 'manufacturing';
+  const cutGaps = kind === 'cut-gaps';
+  const loosePieces = kind === 'loose-pieces';
+  panel.hidden = !issue && !result && manufacturingRepairCount() === 0;
+  if (panel.hidden) return;
+  updateManufacturingRepairState();
+
+  const complete = !issue && Boolean(result);
+  panel.classList.toggle('is-complete', complete);
+  el('repair-title').textContent = complete
+    ? manufacturing ? 'Manufacturing repairs applied' : loosePieces ? 'Tiny loose pieces removed' : cutGaps ? 'Close cut gaps repaired' : 'Small openings repaired'
+    : manufacturing ? 'Repair manufacturing issues' : loosePieces ? 'Remove tiny loose pieces' : cutGaps ? 'Repair close cuts' : 'Repair small openings';
+  el('repair-intro').textContent = manufacturing
+    ? 'Plan cleanup, cut-gap corrections, and filter-aware structural ties together as one reversible layer.'
+    : loosePieces
+    ? 'Remove only sub-manufacturing specks in one batch. Larger detached artwork remains available for smart supports.'
+    : cutGaps
+      ? 'Repair every undersized cut gap as a batch, preview the result, then override important exceptions.'
+      : 'Repair this repeated problem as a batch, then override important exceptions.';
+  el('repair-count').textContent = complete ? '✓' : String(manufacturing
+    ? (state.repairPlan?.items.length ?? repairIssueCount(issue))
+    : repairIssueCount(issue));
+  const applied = el('repair-applied');
+  applied.hidden = !result;
+  if (result) {
+    const remaining = result.remaining ?? repairIssueCount(issue);
+    const noun = result.kind === 'manufacturing'
+      ? 'manufacturing repair groups'
+      : result.kind === 'loose-pieces'
+      ? 'loose pieces removed'
+      : result.kind === 'cut-gaps' ? 'gap repairs' : 'opening repairs';
+    el('repair-applied-message').textContent = result.running
+      ? `${result.count} ${noun} applied · validating…`
+      : remaining > 0
+        ? `${result.count} repairs applied · ${remaining} still need review.`
+        : `${result.count} repairs applied and validation passed.`;
+  }
+  if (!issue && !state.repairPlan) return;
+
+  const strategy = selectedRepairStrategy();
+  el('repair-strategy-description').textContent = REPAIR_STRATEGY_COPY[kind][strategy];
+  el('btn-preview-repairs').textContent = manufacturing ? 'Regenerate combined preview' : 'Preview manufacturing repairs';
+  el('repair-target-control').hidden = loosePieces;
+  const preview = el('repair-preview');
+  preview.hidden = !state.repairPlan;
+  if (!state.repairPlan) return;
+
+  const { counts, items } = state.repairPlan;
+  const strategyName = { preserve: 'Preserve detail', balanced: 'Balanced', durable: 'Durable' }[state.repairPlan.strategy];
+  el('repair-plan-strategy').textContent = strategyName;
+  el('repair-close-label').textContent = manufacturing ? 'Clean / close' : loosePieces ? 'Remove' : cutGaps ? 'Close cut' : 'Close';
+  el('repair-enlarge-label').textContent = manufacturing ? 'Widen / support' : cutGaps ? 'Widen web' : 'Enlarge';
+  el('repair-merge-label').textContent = manufacturing ? 'Merge cuts' : cutGaps ? 'Merge cuts' : 'Merge';
+  el('repair-enlarge-label').closest('div').hidden = loosePieces;
+  el('repair-merge-label').closest('div').hidden = loosePieces;
+  el('repair-close-count').textContent = String(counts.close);
+  el('repair-enlarge-count').textContent = String(counts.enlarge);
+  el('repair-merge-count').textContent = String(counts.merge);
+  el('btn-apply-repairs').textContent = manufacturing
+    ? `Apply repair layer`
+    : `Apply ${items.length} repairs`;
+  const outcome = state.repairPlan.outcome;
+  el('repair-before-errors').textContent = String(outcome?.beforeErrors ?? '—');
+  el('repair-after-errors').textContent = String(outcome?.afterErrors ?? '—');
+  el('repair-before-warnings').textContent = String(outcome?.beforeWarnings ?? '—');
+  el('repair-after-warnings').textContent = String(outcome?.afterWarnings ?? '—');
+
+  state.repairItemIndex = Math.min(state.repairItemIndex, items.length - 1);
+  const item = items[state.repairItemIndex];
+  el('btn-repair-next').textContent = `${state.repairItemIndex + 1} / ${items.length} · Next`;
+  const actionCopy = {
+    close: loosePieces || item.category === 'sliver' ? 'remove this unmanufacturable metal speck' : cutGaps || item.category === 'gap' ? 'close the smaller cut' : 'close it as an insignificant speck',
+    enlarge: cutGaps || item.category === 'gap' ? 'add metal locally to widen the web' : 'enlarge it into a cuttable opening',
+    merge: cutGaps || item.category === 'gap' ? 'merge the cuts into one opening' : 'merge it with the nearby cut',
+  }[item.action];
+  const measured = loosePieces || item.category === 'sliver'
+    ? item.pixelCount
+    : Math.round(((cutGaps || item.category === 'gap') ? item.gapMm : item.equivalentDiameterMm) * 10) / 10;
+  el('repair-current-description').textContent = manufacturing && item.category === 'web'
+    ? `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie' : 'ties'}; the generated layer strengthens the full-width metal core.`
+    : manufacturing && item.category === 'sliver'
+      ? `${item.pixelCount} raster ${item.pixelCount === 1 ? 'cell' : 'cells'}; this detached sliver will be removed.`
+      : manufacturing && item.category === 'gap'
+        ? `${measured} mm gap; the batch plan will ${actionCopy}.`
+        : manufacturing && item.category === 'opening'
+          ? `About ${measured} mm across; the batch plan will ${actionCopy}.`
+      : loosePieces
+    ? `${measured} raster ${measured === 1 ? 'cell' : 'cells'}; the batch plan will ${actionCopy}.`
+    : cutGaps
+      ? `${measured} mm gap; the batch plan will ${actionCopy}.`
+      : `About ${measured} mm across; the batch plan will ${actionCopy}.`;
+  const actionLabels = loosePieces || item.category === 'sliver'
+    ? { close: 'Remove speck', enlarge: 'Enlarge', merge: 'Merge' }
+    : cutGaps || item.category === 'gap'
+      ? { close: 'Close cut', enlarge: 'Widen web', merge: 'Merge cuts' }
+      : { close: 'Close', enlarge: 'Enlarge', merge: 'Merge' };
+  for (const button of all('[data-repair-action]')) {
+    const action = button.dataset.repairAction;
+    button.textContent = actionLabels[action];
+    button.hidden = (loosePieces || item.category === 'sliver') && action !== 'close';
+    button.disabled = item.availableActions[action] !== true;
+    button.setAttribute('aria-pressed', String(item.action === action));
+  }
+}
+
+function overrideRepairAction(action) {
+  const item = state.repairPlan?.items[state.repairItemIndex];
+  if (!item) return;
+  const changed = setSmallOpeningRepairAction(state.repairPlan, item.id, action, {
+    similar: el('repair-similar')?.checked === true,
+  });
+  if (!changed) return;
+  updateRepairPreviewMasks();
+  renderRepairPanel();
+  draw();
+}
+
+async function applyRepairPlan() {
+  if (!state.sourceMask || !state.repairPlan?.items.length ||
+      !state.repairPreviewBaseMask || !state.repairPreviewMask) return;
+  const keep = new Set();
+  const remove = new Set();
+  for (let index = 0; index < state.repairPreviewMask.data.length; index += 1) {
+    const before = state.repairPreviewBaseMask.data[index];
+    const after = state.repairPreviewMask.data[index];
+    if (before === after) continue;
+    if (after === RETAINED) keep.add(index);
+    else remove.add(index);
+  }
+  if (keep.size + remove.size === 0) {
+    toast('The proposed repairs do not change the editable artwork.');
+    return;
+  }
+
+  const repairCount = state.repairPlan.items.length;
+  const repairKind = state.repairPlan.kind;
+  const repairSummary = {
+    ...state.repairPlan.outcome,
+    repairCount,
+    supportCount: state.repairPlan.supportCount ?? 0,
+    strategy: state.repairPlan.strategy,
+    categories: state.repairPlan.categories,
+  };
+  state.manufacturingRepairs = {
+    keep,
+    remove,
+    enabled: true,
+    stale: false,
+    summary: repairSummary,
+  };
+  state.repairPlan = null;
+  state.repairPreviewBaseMask = null;
+  state.repairPreviewMask = null;
+  state.repairPreviewKerfMask = null;
+  refresh({ immediate: true, preserveManufacturingRepairs: true });
+  state.repairResult = { kind: repairKind, count: repairCount, running: true, remaining: null };
+  updateManufacturingRepairState();
+  pushHistory();
+  renderRepairPanel();
+  await runValidation();
+  const remaining = validationLocationCount(state.validation, 'error');
+  state.repairResult = { kind: repairKind, count: repairCount, running: false, remaining };
+  renderRepairPanel();
+  toast(remaining > 0
+    ? `Repair layer applied; ${remaining} blocking locations still need review.`
+    : `Manufacturing repair layer applied and checked.`);
+}
+
+function undoLastRepair() {
+  if (!state.repairResult || state.undo.length === 0) return;
+  state.repairResult = null;
+  undo();
+  setSidePanel('issues');
+  setView('issues');
+  toast('Automatic repairs undone.');
+}
+
 function activeIssueDetails(issue) {
   const details = issue?.details;
   const locations = details?.locations;
@@ -1105,6 +1819,9 @@ function toggleIssueHighlight(index) {
   } else {
     state.highlightedIssue = issue;
     state.highlightedIssueLocation = 0;
+  }
+  if (issue.code === 'MIN_OPENING_UNCUTTABLE') {
+    state.repairItemIndex = state.highlightedIssueLocation;
   }
   renderIssues(state.issues);
   if (state.highlightedIssue) {
@@ -1179,9 +1896,17 @@ function draw() {
   const source = state.view === 'source' && state.sourceMask ? state.sourceMask : mask;
   // Kerf simulation shows what survives the cutter, which is the honest
   // preview of the finished part rather than the ideal geometry.
-  const kerf = el('simulate-kerf')?.checked && state.kerfPreviewMask;
-  const shown = (state.view === 'material' || state.view === 'backlit') && kerf
-    ? state.kerfPreviewMask : source;
+  // While a freehand stroke is moving, show its lightweight pre-kerf geometry.
+  // Rebuilding the kerf simulation for every pointer event makes the brush lag
+  // behind the cursor; the exact post-kerf result is restored on pointer-up.
+  const kerf = !state.touchupLive && el('simulate-kerf')?.checked && state.kerfPreviewMask;
+  const repairPreviewVisible = Boolean(
+    state.repairPreviewMask && ['material', 'backlit', 'issues'].includes(state.view),
+  );
+  const shown = repairPreviewVisible
+    ? kerf ? state.repairPreviewKerfMask : state.repairPreviewMask
+    : (state.view === 'material' || state.view === 'backlit') && kerf
+      ? state.kerfPreviewMask : source;
 
   const labels = state.view === 'issues' ? state.analysis?.labels : null;
   const disconnectedIds = new Set((state.analysis?.components ?? [])
@@ -1194,6 +1919,7 @@ function draw() {
   if (highlighted?.phase === 'analysis') highlightedLabels = state.analysis?.labels;
   else if (highlighted?.phase === 'postKerf') highlightedLabels = state.validation?.postKerf?.labels;
   else if (highlighted?.phase === 'minimumWeb') highlightedLabels = state.validation?.minimumWebCore?.labels;
+  else if (highlighted?.phase === 'thinArea') highlightedLabels = state.validation?.thinAreaZones?.labels;
   else if (highlighted?.phase === 'opening') highlightedLabels = state.validation?.removed?.labels;
   else if (highlighted) highlightedLabels = state.validation?.initial?.labels;
 
@@ -1450,7 +2176,9 @@ function updateExportReadiness() {
       ? '<strong>Ready to export</strong><small>Checks passed for the current geometry.</small>'
       : '<strong>Validation required</strong><small>Run all checks before exporting geometry.</small>';
   }
-  for (const id of ['btn-export-svg', 'btn-export-dxf']) el(id)?.toggleAttribute('disabled', !ready);
+  for (const id of ['btn-export-svg', 'btn-export-dxf', 'btn-export-png']) {
+    el(id)?.toggleAttribute('disabled', !ready);
+  }
   all('[data-next-stage="export"]').forEach((button) => button.toggleAttribute('disabled', !ready));
 }
 
@@ -1463,6 +2191,13 @@ function snapshot() {
     styleSettings: cloneStyleSettings(state.styleSettings),
     bridges: state.bridges,
     painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
+    manufacturingRepairs: {
+      keep: [...state.manufacturingRepairs.keep],
+      remove: [...state.manufacturingRepairs.remove],
+      enabled: state.manufacturingRepairs.enabled,
+      stale: state.manufacturingRepairs.stale,
+      summary: state.manufacturingRepairs.summary,
+    },
     automaticSupportsStale: state.automaticSupportsStale,
   });
 }
@@ -1576,13 +2311,20 @@ function restore(serialised) {
   applyControls(data.controls);
   state.bridges = cloneBridges(data.bridges);
   state.painted = { keep: new Set(data.painted.keep), remove: new Set(data.painted.remove) };
+  state.manufacturingRepairs = {
+    keep: new Set(data.manufacturingRepairs?.keep ?? []),
+    remove: new Set(data.manufacturingRepairs?.remove ?? []),
+    enabled: data.manufacturingRepairs?.enabled !== false,
+    stale: data.manufacturingRepairs?.stale === true,
+    summary: data.manufacturingRepairs?.summary ?? null,
+  };
   state.selectedBridge = null;
   if (state.source) {
     invalidateStyleRender({
       useLocalPreview: state.mode === 'line-art' || previousStyle !== selectedCutStyle(),
     });
   }
-  refresh({ immediate: true });
+  refresh({ immediate: true, preserveManufacturingRepairs: true });
   state.automaticSupportsStale = automaticSupportsStale;
   updateAutomaticSupportState();
   if (state.source && !state.offline) void renderStyle();
@@ -1685,6 +2427,13 @@ function projectFromState() {
       controls: readControls(),
       styleSettings: cloneStyleSettings(state.styleSettings),
       painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
+      manufacturingRepairs: {
+        keep: [...state.manufacturingRepairs.keep],
+        remove: [...state.manufacturingRepairs.remove],
+        enabled: state.manufacturingRepairs.enabled,
+        stale: state.manufacturingRepairs.stale,
+        summary: state.manufacturingRepairs.summary,
+      },
       candidates: state.candidates,
       selectedCandidateId: state.selectedCandidateId,
       automaticSupportsStale: state.automaticSupportsStale,
@@ -1824,6 +2573,13 @@ async function loadProjectState(project, { imported = false } = {}) {
     keep: new Set(project.editor?.painted?.keep ?? []),
     remove: new Set(project.editor?.painted?.remove ?? []),
   };
+  state.manufacturingRepairs = {
+    keep: new Set(project.editor?.manufacturingRepairs?.keep ?? []),
+    remove: new Set(project.editor?.manufacturingRepairs?.remove ?? []),
+    enabled: project.editor?.manufacturingRepairs?.enabled !== false,
+    stale: project.editor?.manufacturingRepairs?.stale === true,
+    summary: project.editor?.manufacturingRepairs?.summary ?? null,
+  };
   state.paintedFor = state.sourceMask ? `${state.sourceMask.width}x${state.sourceMask.height}` : null;
   state.selectedBridge = null;
   state.validation = null;
@@ -1852,6 +2608,7 @@ async function loadProjectState(project, { imported = false } = {}) {
   updateReadouts();
   updateViewAvailability();
   updateAutomaticSupportState();
+  updateManufacturingRepairState();
   renderCandidates();
   selectBridge(null);
   resetHistory();
@@ -1904,6 +2661,7 @@ async function importFile(file) {
     state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
     state.paintedFor = null;
+    resetManufacturingRepairs();
     state.bridges = [];
     state.automaticSupportsStale = false;
     state.candidates = [];
@@ -1966,6 +2724,7 @@ const CUT_STYLE_NAMES = {
   ornament: 'Ornamental symmetry',
   lamele: 'Slats',
   hasura: 'Hatch',
+  puncte: 'Variable dots',
 };
 
 function cloneBridges(bridges = state.bridges) {
@@ -2075,6 +2834,7 @@ function restoreCandidate(id) {
     remove: new Set(candidate.painted?.remove ?? []),
   };
   state.paintedFor = null;
+  resetManufacturingRepairs();
   state.bridges = cloneBridges(candidate.bridges ?? []);
   state.selectedBridge = null;
   state.automaticSupportsStale = candidate.automaticSupportsStale === true;
@@ -2171,6 +2931,66 @@ const escapeAttribute = (value) => escapeHtml(value)
 
 function automaticSupportCount() {
   return state.bridges.filter((bridge) => bridge.source === 'automatic').length;
+}
+
+function manufacturingRepairCount() {
+  return state.manufacturingRepairs.keep.size + state.manufacturingRepairs.remove.size;
+}
+
+function resetManufacturingRepairs() {
+  state.manufacturingRepairs = {
+    keep: new Set(),
+    remove: new Set(),
+    enabled: true,
+    stale: false,
+    summary: null,
+  };
+  updateManufacturingRepairState();
+}
+
+function markManufacturingRepairsStale() {
+  if (!manufacturingRepairCount() || state.manufacturingRepairs.stale) return false;
+  state.manufacturingRepairs.stale = true;
+  state.manufacturingRepairs.enabled = false;
+  updateManufacturingRepairState();
+  return true;
+}
+
+function updateManufacturingRepairState() {
+  const status = el('repair-layer-status');
+  if (!status) return;
+  const count = manufacturingRepairCount();
+  status.hidden = count === 0;
+  if (count === 0) return;
+  const stale = state.manufacturingRepairs.stale;
+  const enabled = state.manufacturingRepairs.enabled && !stale;
+  el('repair-layer-title').textContent = stale
+    ? 'Repair layer needs regeneration'
+    : enabled ? 'Manufacturing repair layer active' : 'Manufacturing repair layer hidden';
+  el('repair-layer-detail').textContent = stale
+    ? 'Artwork or machine settings changed. The old repairs are hidden so they cannot alter the new geometry.'
+    : `${count.toLocaleString()} generated raster edits · separate from manual painting.`;
+  const toggle = el('btn-toggle-repair-layer');
+  if (toggle) {
+    toggle.hidden = stale;
+    toggle.textContent = enabled ? 'Hide' : 'Show';
+  }
+}
+
+function toggleManufacturingRepairLayer() {
+  if (!manufacturingRepairCount() || state.manufacturingRepairs.stale) return;
+  state.manufacturingRepairs.enabled = !state.manufacturingRepairs.enabled;
+  refresh({ immediate: true, preserveManufacturingRepairs: true });
+  updateManufacturingRepairState();
+  pushHistory();
+}
+
+function clearManufacturingRepairLayer() {
+  if (!manufacturingRepairCount()) return;
+  resetManufacturingRepairs();
+  refresh({ immediate: true, preserveManufacturingRepairs: true });
+  pushHistory();
+  toast('Manufacturing repair layer removed. Manual edits were preserved.');
 }
 
 function markAutomaticSupportsStale() {
@@ -2551,7 +3371,25 @@ function bridgeHandleAtPointer(event) {
 
 /* ----------------------------------------------------------------- export */
 
-function exportGeometry(kind) {
+function pngBlob(mask) {
+  const raster = maskToRgba(mask);
+  const canvas = document.createElement('canvas');
+  canvas.width = raster.width;
+  canvas.height = raster.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas rendering is unavailable');
+  const image = context.createImageData(raster.width, raster.height);
+  image.data.set(raster.data);
+  context.putImageData(image, 0, 0);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('The browser could not encode the PNG'));
+    }, 'image/png');
+  });
+}
+
+async function exportGeometry(kind) {
   if (!state.designMask || !state.validated || state.validatedRevision !== state.revision) {
     toast('Run the checks again for the current geometry.');
     return;
@@ -2564,8 +3402,12 @@ function exportGeometry(kind) {
     const units = el('export-units')?.value === 'in' ? 'in' : 'mm';
     if (kind === 'svg') {
       downloadText(`${name}.svg`, exportSvg(mask, sheet(), { title: state.name, units }), 'image/svg+xml');
-    } else {
+    } else if (kind === 'dxf') {
       downloadText(`${name}.dxf`, exportDxf(mask, sheet(), { units }), 'application/dxf');
+    } else if (kind === 'png') {
+      downloadBlob(`${name}.png`, await pngBlob(mask));
+    } else {
+      throw new Error(`Unsupported export format: ${kind}`);
     }
     toast(`${kind.toUpperCase()} written.`);
   } catch (error) {
@@ -2834,32 +3676,57 @@ function pointerToMask(event) {
   return { x, y, inside: x >= 0 && y >= 0 && x < canvas.width && y < canvas.height };
 }
 
-function paintIndex(index) {
+function paintIndex(index, { liveStructureMask = null } = {}) {
   if (!state.sourceMask || index < 0 || index >= state.sourceMask.data.length) return false;
   const target = state.tool === 'keep' ? state.painted.keep : state.painted.remove;
   const other = state.tool === 'keep' ? state.painted.remove : state.painted.keep;
   if (target.has(index) && !other.has(index)) return false;
   target.add(index);
   other.delete(index);
+  if (liveStructureMask) {
+    const value = state.tool === 'keep' ? RETAINED : REMOVED;
+    state.sourceMask.data[index] = value;
+    if (state.designMask) {
+      // Frames and supports remain retained even when the artwork beneath them
+      // is removed, matching the full design rebuild performed on release.
+      state.designMask.data[index] = value === RETAINED || liveStructureMask.data[index] === RETAINED
+        ? RETAINED
+        : REMOVED;
+    }
+  }
   return true;
 }
 
-function paintDisc(point, diameterMm = touchupSizeMm()) {
+function paintDisc(point, diameterMm = touchupSizeMm(), { liveStructureMask = null } = {}) {
   if (!state.sourceMask) return false;
   let changed = false;
   for (const index of physicalDiscIndices(state.sourceMask, point, diameterMm, sheet())) {
-    changed = paintIndex(index) || changed;
+    changed = paintIndex(index, { liveStructureMask }) || changed;
   }
   return changed;
 }
 
-function paintSegment(start, end) {
+function paintSegment(start, end, { liveStructureMask = null } = {}) {
   if (!state.sourceMask) return false;
   let changed = false;
   for (const index of physicalStrokeIndices(state.sourceMask, start, end, touchupSizeMm(), sheet())) {
-    changed = paintIndex(index) || changed;
+    changed = paintIndex(index, { liveStructureMask }) || changed;
   }
   return changed;
+}
+
+function touchupStructureMask() {
+  if (!state.sourceMask) return null;
+  const emptyArtwork = {
+    width: state.sourceMask.width,
+    height: state.sourceMask.height,
+    data: new Uint8Array(state.sourceMask.data.length),
+  };
+  return buildDesignMask(emptyArtwork, {
+    sheet: sheet(),
+    frame: frameConfig(),
+    bridges: state.bridges.filter((bridge) => bridge.enabled !== false),
+  }).mask;
 }
 
 function paintConnectedRegion(point) {
@@ -2915,6 +3782,19 @@ function wire() {
   });
 
   // --- import
+  el('style-picker-trigger')?.addEventListener('click', openStylePicker);
+  el('btn-close-style-picker')?.addEventListener('click', () => closeStylePicker({ returnFocus: true }));
+  el('style-picker-dialog')?.addEventListener('close', () => {
+    el('style-picker-trigger')?.setAttribute('aria-expanded', 'false');
+  });
+  el('style-picker-dialog')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeStylePicker({ returnFocus: true });
+    if (event.target.matches?.('input[name="cutStyle"]') && event.target.checked) {
+      closeStylePicker({ returnFocus: true });
+    }
+  });
+  window.addEventListener('resize', positionStylePicker);
+
   el('file-input')?.addEventListener('change', (event) => importFile(event.target.files?.[0]));
   el('btn-empty-import')?.addEventListener('click', () => el('file-input')?.click());
   const zone = el('drop-zone');
@@ -2933,6 +3813,7 @@ function wire() {
     state.sourceMask = null; state.designMask = null; state.frameMask = null; state.kerfPreviewMask = null;
     state.placement = null; state.contentBounds = null; state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
+    resetManufacturingRepairs();
     state.paintedFor = null; state.bridges = []; state.automaticSupportsStale = false;
     state.candidates = []; state.selectedCandidateId = null; state.validation = null;
     state.projectId = null; state.createdAt = null; state.dirty = false;
@@ -3034,6 +3915,8 @@ function wire() {
   }
   for (const node of all('input[name="cutStyle"]')) {
     node.addEventListener('change', (event) => {
+      syncStylePicker();
+      closeStylePicker({ returnFocus: true });
       activateStyleSettings(event.target.value);
       const mode = event.target.value === 'line-art' ? 'line-art' : 'photo';
       clearTimeout(styleTimer);
@@ -3046,6 +3929,7 @@ function wire() {
   for (const id of ['style-threshold', 'style-outline', 'style-icon-balance', 'style-icon-detail',
     'style-icon-line-width', 'style-icon-simplify', 'style-icon-halo', 'style-icon-halo-scale',
     'style-pitch', 'style-slat-angle', 'style-angle',
+    'style-dot-pitch', 'style-dot-max', 'style-dot-angle', 'style-dot-cutoff',
     'style-row-pitch', 'style-cell', 'style-gain', 'style-smooth', 'style-curve',
     'style-line-detail', 'style-line-width', 'style-wood-spacing', 'style-wood-length',
     'style-graphic-balance', 'style-graphic-detail', 'style-graphic-simplify',
@@ -3103,7 +3987,8 @@ function wire() {
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
-      'style-contour-width', 'style-ray-cell', 'style-ornament-width']) {
+      'style-contour-width', 'style-ray-cell', 'style-ornament-width',
+      'style-dot-pitch', 'style-dot-max']) {
       const node = el(id);
       if (!node) continue;
       const mm = previous === 'in' ? Number(node.value) * MM_PER_INCH : Number(node.value);
@@ -3238,8 +4123,34 @@ function wire() {
   // --- validation and export
   el('btn-validate')?.addEventListener('click', runValidation);
   el('btn-validate-sidebar')?.addEventListener('click', runValidation);
+  el('btn-preview-repairs')?.addEventListener('click', () => void buildRepairPreview());
+  for (const node of all('input[name="openingRepairStrategy"]')) {
+    node.addEventListener('change', () => {
+      const kind = state.repairPlan?.kind ?? 'manufacturing';
+      el('repair-strategy-description').textContent = REPAIR_STRATEGY_COPY[kind][selectedRepairStrategy()];
+      if (state.repairPlan) void buildRepairPreview({ focus: false });
+    });
+  }
+  el('repair-safety')?.addEventListener('change', () => {
+    if (state.repairPlan) void buildRepairPreview({ focus: false });
+  });
+  for (const id of ['repair-category-slivers', 'repair-category-gaps', 'repair-category-webs']) {
+    el(id)?.addEventListener('change', () => {
+      if (state.repairPlan) void buildRepairPreview({ focus: false });
+    });
+  }
+  el('btn-repair-next')?.addEventListener('click', () => focusRepairItem(state.repairItemIndex + 1));
+  for (const button of all('[data-repair-action]')) {
+    button.addEventListener('click', () => overrideRepairAction(button.dataset.repairAction));
+  }
+  el('btn-discard-repairs')?.addEventListener('click', discardRepairPreview);
+  el('btn-apply-repairs')?.addEventListener('click', () => void applyRepairPlan());
+  el('btn-undo-repair')?.addEventListener('click', undoLastRepair);
+  el('btn-toggle-repair-layer')?.addEventListener('click', toggleManufacturingRepairLayer);
+  el('btn-clear-repair-layer')?.addEventListener('click', clearManufacturingRepairLayer);
   el('btn-export-svg')?.addEventListener('click', () => exportGeometry('svg'));
   el('btn-export-dxf')?.addEventListener('click', () => exportGeometry('dxf'));
+  el('btn-export-png')?.addEventListener('click', () => exportGeometry('png'));
   el('btn-download-project')?.addEventListener('click', async () => {
     if (!state.sourceMask) { toast('Import an image first.'); return; }
     await persist();
@@ -3290,6 +4201,21 @@ function wire() {
   let drawingFrom = null;
   let draggingBridge = null;
   let touchupStroke = null;
+  let touchupDrawFrame = null;
+
+  const scheduleLiveTouchupDraw = () => {
+    if (touchupDrawFrame !== null) return;
+    touchupDrawFrame = requestAnimationFrame(() => {
+      touchupDrawFrame = null;
+      draw();
+    });
+  };
+
+  const cancelLiveTouchupDraw = () => {
+    if (touchupDrawFrame === null) return;
+    cancelAnimationFrame(touchupDrawFrame);
+    touchupDrawFrame = null;
+  };
 
   viewport?.addEventListener('pointerdown', (event) => {
     const { x, y, inside } = pointerToMask(event);
@@ -3304,17 +4230,25 @@ function wire() {
     if (state.tool === 'keep' || state.tool === 'remove') {
       if (!inside) return;
       const mode = touchupMode();
+      const liveStructureMask = mode === 'freehand' ? touchupStructureMask() : null;
       touchupStroke = {
         mode,
         start: { x, y },
         last: { x, y },
-        changed: mode === 'region' ? paintConnectedRegion({ x, y }) : mode === 'freehand' ? paintDisc({ x, y }) : false,
+        liveStructureMask,
+        changed: mode === 'region'
+          ? paintConnectedRegion({ x, y })
+          : mode === 'freehand'
+            ? paintDisc({ x, y }, touchupSizeMm(), { liveStructureMask })
+            : false,
       };
+      state.touchupLive = mode === 'freehand';
       state.touchupPreview = mode === 'straight'
         ? { mode: 'straight', start: { x, y }, end: { x, y }, diameterMm: touchupSizeMm() }
         : { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
       viewport.setPointerCapture(event.pointerId);
-      if (touchupStroke.changed) refresh({ reanalyse: false });
+      if (touchupStroke.changed && mode === 'freehand') scheduleLiveTouchupDraw();
+      else if (touchupStroke.changed) refresh({ reanalyse: false });
       else draw();
       return;
     }
@@ -3368,10 +4302,12 @@ function wire() {
     } else if (touchupStroke) {
       if (!inside) return;
       if (touchupStroke.mode === 'freehand') {
-        touchupStroke.changed = paintSegment(touchupStroke.last, { x, y }) || touchupStroke.changed;
+        touchupStroke.changed = paintSegment(touchupStroke.last, { x, y }, {
+          liveStructureMask: touchupStroke.liveStructureMask,
+        }) || touchupStroke.changed;
         touchupStroke.last = { x, y };
         state.touchupPreview = { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
-        refresh({ reanalyse: false });
+        scheduleLiveTouchupDraw();
       } else if (touchupStroke.mode === 'straight') {
         touchupStroke.last = { x, y };
         state.touchupPreview = {
@@ -3452,10 +4388,14 @@ function wire() {
       if (touchupStroke.mode === 'straight' && inside) {
         touchupStroke.changed = paintSegment(touchupStroke.start, releasePoint) || touchupStroke.changed;
       } else if (touchupStroke.mode === 'freehand' && inside) {
-        touchupStroke.changed = paintSegment(touchupStroke.last, releasePoint) || touchupStroke.changed;
+        touchupStroke.changed = paintSegment(touchupStroke.last, releasePoint, {
+          liveStructureMask: touchupStroke.liveStructureMask,
+        }) || touchupStroke.changed;
       }
       const changed = touchupStroke.changed;
       touchupStroke = null;
+      state.touchupLive = false;
+      cancelLiveTouchupDraw();
       state.touchupPreview = inside
         ? { mode: 'cursor', point: releasePoint, diameterMm: touchupSizeMm() }
         : null;
@@ -3482,6 +4422,8 @@ function wire() {
     const painted = touchupStroke?.changed === true;
     const movedBridge = Boolean(draggingBridge);
     touchupStroke = null;
+    state.touchupLive = false;
+    cancelLiveTouchupDraw();
     drawingFrom = null;
     draggingBridge = null;
     panning = null;
@@ -3519,7 +4461,7 @@ function wire() {
   el('btn-zoom-in')?.addEventListener('click', () => zoomAt(state.zoom * 1.35));
   el('btn-zoom-out')?.addEventListener('click', () => zoomAt(state.zoom / 1.35));
   el('btn-zoom-reset')?.addEventListener('click', () => zoomAt(1));
-  el('btn-fit')?.addEventListener('click', fitToView);
+  for (const id of ['btn-fit', 'btn-fit-toolbar']) el(id)?.addEventListener('click', fitToView);
 
   document.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey) {
@@ -3579,6 +4521,7 @@ function updateRangeOutputs() {
   set('style-ray-center-x-value', `${numberField('style-ray-center-x', 25)}%`);
   set('style-ray-center-y-value', `${numberField('style-ray-center-y', 50)}%`);
   set('style-ray-cutoff-value', `${numberField('style-ray-cutoff', 12)}%`);
+  set('style-dot-cutoff-value', `${numberField('style-dot-cutoff', 42)}%`);
   set('style-ornament-detail-value', `${numberField('style-ornament-detail', 40)}%`);
 }
 

@@ -103,6 +103,33 @@ test("portable project files never include the browser-local source photograph",
   assert.doesNotMatch(serialized, /localSource|private-photo-bytes/);
 });
 
+test("manufacturing repair intent round-trips as a removable editor layer", () => {
+  const project = createProject({
+    editor: {
+      controls: {},
+      styleSettings: {},
+      painted: { keep: [1], remove: [] },
+      manufacturingRepairs: {
+        keep: [2, 3],
+        remove: [4],
+        enabled: false,
+        stale: true,
+        summary: { strategy: "balanced", supportCount: 2 },
+      },
+      candidates: [],
+    },
+  });
+  const restored = deserializeProject(serializeProject(project));
+
+  assert.deepEqual(restored.editor.manufacturingRepairs, {
+    keep: [2, 3],
+    remove: [4],
+    enabled: false,
+    stale: true,
+    summary: { strategy: "balanced", supportCount: 2 },
+  });
+});
+
 test("creative candidates round-trip as processed recipes without source photographs", () => {
   const candidateMask = maskFromAscii([
     "##.",
