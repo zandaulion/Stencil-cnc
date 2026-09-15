@@ -57,6 +57,7 @@ test("a versioned project round-trips without typed-array leakage", () => {
       detailPenalty: 0.1,
       visibilityPenalty: 0.2,
       featureAlignmentPenalty: 0.05,
+      portraitPenalty: 0.4,
       followsFeatures: true,
       rank: 1,
       fallback: true,
@@ -76,6 +77,7 @@ test("a versioned project round-trips without typed-array leakage", () => {
   assert.equal(restored.bridges[0].fallback, true);
   assert.equal(restored.bridges[0].visibilityPenalty, 0.2);
   assert.equal(restored.bridges[0].featureAlignmentPenalty, 0.05);
+  assert.equal(restored.bridges[0].portraitPenalty, 0.4);
   assert.equal(restored.bridges[0].followsFeatures, true);
 });
 

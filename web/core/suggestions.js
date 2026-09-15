@@ -245,22 +245,32 @@ export function suggestSlatStabilizers(mask, config) {
   const extent = orientedMaterialExtent(mask, config.anchorMask, pixel, along, across);
   if (!extent || extent.maximumAlong - extent.minimumAlong <= config.maximumUnsupportedSpanMm) return [];
 
-  const desiredJitter = Math.min(
+  const organicJitter = Math.min(
     config.slatPitchMm * 0.65,
     config.maximumUnsupportedSpanMm * 0.22,
   ) * organicVariation;
+  // A single mathematically sufficient row may land straight through a face.
+  // Feature-following reserves enough travel for a second, less conspicuous
+  // row in hair or shadow, while the maximum-span constraint remains binding.
+  const featureTravel = config.featureAt
+    ? Math.min(config.slatPitchMm * 2.25, config.maximumUnsupportedSpanMm * 0.30)
+    : 0;
+  const desiredJitter = Math.max(organicJitter, featureTravel);
   const targetSpacing = Math.min(
     config.maximumUnsupportedSpanMm,
-    Math.max(config.widthMm * 3, config.maximumUnsupportedSpanMm - desiredJitter * 1.5),
+    Math.max(config.widthMm * 3, config.maximumUnsupportedSpanMm - organicJitter * 1.5),
   );
   const span = extent.maximumAlong - extent.minimumAlong;
-  const segmentCount = Math.max(1, Math.ceil(span / targetSpacing));
+  const structuralSegmentCount = Math.max(1, Math.ceil(span / targetSpacing));
+  // One additional segment gives feature-following room to route around a
+  // face without multiplying support density on large panels.
+  const segmentCount = structuralSegmentCount + (config.featureAt ? 1 : 0);
   const stationCount = Math.max(0, segmentCount - 1);
   if (stationCount === 0) return [];
   const stationSpacing = span / segmentCount;
   const jitter = Math.max(0, Math.min(
     desiredJitter,
-    (config.maximumUnsupportedSpanMm - stationSpacing) / 1.5,
+    (config.maximumUnsupportedSpanMm - stationSpacing) / 2,
   ));
   const maximumNeighbourGapMm = config.slatPitchMm * 1.35;
   const sampleStepMm = Math.max(0.1, Math.min(pixel.x, pixel.y) * 0.55);
@@ -351,6 +361,7 @@ export function suggestSlatStabilizers(mask, config) {
         detailPenalty: roundMetric(visualMetrics.detailPenalty),
         visibilityPenalty: roundMetric(visualMetrics.visibilityPenalty),
         featureAlignmentPenalty: roundMetric(visualMetrics.featureAlignmentPenalty),
+        portraitPenalty: roundMetric(visualMetrics.portraitPenalty),
         strategy: "lamele",
         role: "stabilizer",
         stabilizer: true,
@@ -441,8 +452,8 @@ function chooseOrganicGap(base, sections, nominal, jitter, stationIndex,
     const actualOffset = projectedMidpoint(nearest, along) - nominal;
     const offsetError = Math.abs(actualOffset - targetOffset) / Math.max(jitter, Number.EPSILON);
     const score = acrossDistance / slatPitchMm * 4
-      + bridgeVisualPenalty(nearest, detailAt, featureAt) * 0.25
-      + offsetError * 1.8;
+      + bridgeVisualPenalty(nearest, detailAt, featureAt) * (featureAt ? 1.4 : 0.25)
+      + offsetError * (featureAt ? 0.35 : 1.8);
     alternatives.push({ gap: nearest, score, offsetError, acrossDistance });
   }
   alternatives.sort((first, second) =>
@@ -559,14 +570,15 @@ function bridgeVisualMetrics(bridge, detailAt, featureAt) {
   ) * 180 / Math.PI;
   const featureMetrics = featureAt
     ? sampleBridgeFeatures(bridge, angleDeg, featureAt)
-    : { visibilityPenalty: 0, featureAlignmentPenalty: 0, detailPenalty: 0 };
+    : { visibilityPenalty: 0, featureAlignmentPenalty: 0, detailPenalty: 0, portraitPenalty: 0 };
   const detailPenalty = detailAt ? bridgeDetail(bridge, detailAt) : featureMetrics.detailPenalty;
   return {
     ...featureMetrics,
     detailPenalty,
     scorePenalty: detailPenalty * 3.5
       + featureMetrics.visibilityPenalty * 9
-      + featureMetrics.featureAlignmentPenalty * 2.5,
+      + featureMetrics.featureAlignmentPenalty * 2.5
+      + featureMetrics.portraitPenalty * 12,
   };
 }
 
@@ -690,7 +702,7 @@ function suggestNearestBridges(mask, config) {
  *     preferredAngleDeg?:number,
  *     radialCenter?:{x:number,y:number},
  *     detailAt?:(point:{x:number,y:number})=>number,
- *     featureAt?:(point:{x:number,y:number})=>{lightness:number,strength?:number,tangentAngleDeg?:number,detail?:number},
+ *     featureAt?:(point:{x:number,y:number})=>{lightness:number,strength?:number,tangentAngleDeg?:number,detail?:number,portraitRisk?:number},
  *     barAngleDeg?:number,
  *     slatPitchMm?:number,
  *     maximumUnsupportedSpanMm?:number,
@@ -905,7 +917,7 @@ function scoreVisualCandidate(candidate, widthMm, strategy) {
   const alignmentPenalty = Math.sin(angleErrorDeg * Math.PI / 180) ** 2;
   const featureMetrics = strategy.featureAt
     ? sampleBridgeFeatures(candidate, actual, strategy.featureAt)
-    : { visibilityPenalty: 0, featureAlignmentPenalty: 0, detailPenalty: 0 };
+    : { visibilityPenalty: 0, featureAlignmentPenalty: 0, detailPenalty: 0, portraitPenalty: 0 };
   const detailPenalty = strategy.detailAt
     ? sampleBridgeDetail(candidate, strategy.detailAt)
     : featureMetrics.detailPenalty;
@@ -916,13 +928,15 @@ function scoreVisualCandidate(candidate, widthMm, strategy) {
   // equivalent choices exist, dark hair, brows, folds and shadows should win.
   const visibilityWeight = strategy.level === 1 ? 4.5 : strategy.level === 2 ? 9 : 7;
   const featureAlignmentWeight = strategy.level === 1 ? 1 : strategy.level === 2 ? 2.5 : 2;
+  const portraitWeight = strategy.level === 1 ? 7 : strategy.level === 2 ? 12 : 9;
   const addedAreaMm2 = candidate.lengthMm * widthMm;
   return {
     score: addedAreaMm2 * (1
       + alignmentWeight * alignmentPenalty
       + detailWeight * detailPenalty
       + visibilityWeight * featureMetrics.visibilityPenalty
-      + featureAlignmentWeight * featureMetrics.featureAlignmentPenalty),
+      + featureAlignmentWeight * featureMetrics.featureAlignmentPenalty
+      + portraitWeight * featureMetrics.portraitPenalty),
     addedAreaMm2,
     angleErrorDeg,
     ...featureMetrics,
@@ -954,6 +968,8 @@ function sampleBridgeFeatures(candidate, bridgeAngleDeg, featureAt) {
   let featureAlignmentPenalty = 0;
   let totalDetail = 0;
   let maximumDetail = 0;
+  let totalPortraitRisk = 0;
+  let maximumPortraitRisk = 0;
   const samples = 11;
   for (let index = 0; index < samples; index += 1) {
     const t = (index + 0.5) / samples;
@@ -968,6 +984,8 @@ function sampleBridgeFeatures(candidate, bridgeAngleDeg, featureAt) {
     const tangentAngleDeg = Number(sample.tangentAngleDeg);
     const rawDetail = Number(sample.detail);
     const detail = Number.isFinite(rawDetail) ? clamp01(rawDetail) : 0;
+    const rawPortraitRisk = Number(sample.portraitRisk);
+    const portraitRisk = Number.isFinite(rawPortraitRisk) ? clamp01(rawPortraitRisk) : 0;
     const localAlignment = Number.isFinite(tangentAngleDeg)
       ? Math.sin(angleDistance180(bridgeAngleDeg, tangentAngleDeg) * Math.PI / 180) ** 2
       : 0;
@@ -976,6 +994,8 @@ function sampleBridgeFeatures(candidate, bridgeAngleDeg, featureAt) {
     featureAlignmentPenalty += localAlignment * strength;
     totalDetail += detail;
     maximumDetail = Math.max(maximumDetail, detail);
+    totalPortraitRisk += portraitRisk;
+    maximumPortraitRisk = Math.max(maximumPortraitRisk, portraitRisk);
   }
   return {
     // Sharing the maximum with the average rejects a bridge that is mostly in
@@ -983,6 +1003,7 @@ function sampleBridgeFeatures(candidate, bridgeAngleDeg, featureAt) {
     visibilityPenalty: (totalLightness / samples + maximumLightness) / 2,
     featureAlignmentPenalty: featureAlignmentPenalty / samples,
     detailPenalty: (totalDetail / samples + maximumDetail) / 2,
+    portraitPenalty: (totalPortraitRisk / samples + maximumPortraitRisk) / 2,
   };
 }
 
@@ -1095,6 +1116,7 @@ function bridgeFromSmartCandidate(candidate, index, widthMm, strategy, roots) {
     detailPenalty: roundMetric(candidate.detailPenalty),
     visibilityPenalty: roundMetric(candidate.visibilityPenalty ?? 0),
     featureAlignmentPenalty: roundMetric(candidate.featureAlignmentPenalty ?? 0),
+    portraitPenalty: roundMetric(candidate.portraitPenalty ?? 0),
     strategy: strategy.kind,
     followsFeatures: Boolean(strategy.featureAt),
     redundant: candidate.redundant === true,

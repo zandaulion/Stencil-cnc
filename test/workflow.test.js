@@ -165,6 +165,7 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /function smartBridgeStrategy\(/);
   assert.match(editor, /function bridgeImageSamplers\(\)/);
   assert.match(editor, /const analysisMaximumDimension = 768/);
+  assert.match(editor, /const portraitRisk = faceInterior \* lightSkinLikelihood/);
   assert.match(editor, /featureAt: imageSamplers\.featureAt/);
   assert.match(editor, /el\('support-follow-features'\)\?\.addEventListener\('change', supportPlanChanged\)/);
   assert.match(editor, /strategy\.preferredAngleDeg = barAngleDeg \+ 90/);

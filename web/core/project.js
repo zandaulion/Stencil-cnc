@@ -285,6 +285,7 @@ function normalizeProjectBridge(bridge, index) {
     ...(Number.isFinite(bridge.detailPenalty) ? { detailPenalty: bridge.detailPenalty } : {}),
     ...(Number.isFinite(bridge.visibilityPenalty) ? { visibilityPenalty: bridge.visibilityPenalty } : {}),
     ...(Number.isFinite(bridge.featureAlignmentPenalty) ? { featureAlignmentPenalty: bridge.featureAlignmentPenalty } : {}),
+    ...(Number.isFinite(bridge.portraitPenalty) ? { portraitPenalty: bridge.portraitPenalty } : {}),
     ...(bridge.followsFeatures === true ? { followsFeatures: true } : {}),
     ...(Number.isInteger(bridge.rank) && bridge.rank > 0 ? { rank: bridge.rank } : {}),
     ...(bridge.redundant === true ? { redundant: true } : {}),

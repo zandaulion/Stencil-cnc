@@ -189,6 +189,38 @@ test("follow-features planning aligns ties with a strong local feature when poss
   assert.equal(suggestions[0].featureAlignmentPenalty, 0);
 });
 
+test("follow-features planning prefers dark hair over an equally dark central face feature", () => {
+  const mask = createMask(7, 11);
+  for (let y = 0; y < mask.height; y += 1) {
+    mask.data[y * mask.width] = 1;
+    mask.data[y * mask.width + 6] = 1;
+  }
+  const anchorMask = createMask(mask.width, mask.height);
+  anchorMask.data[0] = 1;
+  const suggestions = suggestBridges(mask, {
+    sheet: { widthMm: 7, heightMm: 11 },
+    anchorMask,
+    widthMm: 1,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      featureAt: ({ y }) => ({
+        lightness: 0.2,
+        strength: 1,
+        tangentAngleDeg: 0,
+        portraitRisk: y >= 3 && y <= 7 ? 1 : 0,
+      }),
+    },
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.ok(suggestions[0].start.y < 3 || suggestions[0].start.y > 7);
+  assert.equal(suggestions[0].portraitPenalty, 0);
+});
+
 test("smart bridge width includes material lost to kerf", () => {
   const mask = maskFromAscii(["#...#"]);
   const suggestions = suggestBridges(mask, {
@@ -409,6 +441,58 @@ test("slat stabilizers also move into dark feature bands", () => {
   assert.ok(suggestions.every((bridge) => bridge.visibilityPenalty === 0),
     "every feasible stabilizer should avoid the bright band");
   assert.ok(suggestions.every((bridge) => bridge.stationMm >= 7));
+});
+
+test("feature-aware slats add a second sparse station rather than crossing a bright face", () => {
+  const mask = createMask(21, 21);
+  const anchorMask = createMask(21, 21);
+  for (const x of [1, 5, 9, 13, 17]) {
+    for (let y = 0; y < mask.height; y += 1) mask.data[y * mask.width + x] = 1;
+  }
+  for (let x = 0; x < mask.width; x += 1) {
+    mask.data[x] = 1;
+    mask.data[(mask.height - 1) * mask.width + x] = 1;
+    anchorMask.data[x] = 1;
+    anchorMask.data[(mask.height - 1) * mask.width + x] = 1;
+  }
+  const suggestions = suggestBridges(mask, {
+    sheet: { widthMm: 21, heightMm: 21 },
+    anchorMask,
+    widthMm: 2,
+    minimumWebMm: 1,
+    kerfMm: 0,
+    requireSingleComponent: true,
+    strategy: {
+      mode: "smart",
+      kind: "lamele",
+      level: 2,
+      preferredAngleDeg: 0,
+      barAngleDeg: 90,
+      slatPitchMm: 4,
+      maximumUnsupportedSpanMm: 11,
+      organicVariation: 0,
+      featureAt: ({ y }) => ({
+        lightness: y >= 7 && y <= 14 ? 1 : 0,
+        strength: 0,
+        tangentAngleDeg: 0,
+        portraitRisk: y >= 7 && y <= 14 ? 1 : 0,
+      }),
+    },
+  });
+
+  const stations = [...new Set(suggestions.map((bridge) => bridge.stationMm))];
+  assert.ok(stations.length >= 2, "a second sparse row creates room to avoid the face");
+  assert.ok(suggestions.every((bridge) => bridge.stationMm < 7 || bridge.stationMm > 14));
+  assert.ok(suggestions.every((bridge) => bridge.portraitPenalty === 0));
+  for (const slatCenter of [1.5, 5.5, 9.5, 13.5, 17.5]) {
+    const positions = [1.5, 19.5, ...suggestions.flatMap((bridge) => [bridge.start, bridge.end])
+      .filter((point) => Math.abs(point.x - slatCenter) <= 1.1)
+      .map((point) => point.y)].sort((a, b) => a - b);
+    for (let index = 1; index < positions.length; index += 1) {
+      assert.ok(positions[index] - positions[index - 1] <= 11 + 1e-9,
+        `slat at ${slatCenter} must still respect its maximum span`);
+    }
+  }
 });
 
 test("organic slat stabilizers vary independently without exceeding the span target", () => {

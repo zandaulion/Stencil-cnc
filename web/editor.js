@@ -3312,11 +3312,20 @@ function bridgeImageSamplers() {
     const dx = (fullX - 0.5) / 0.42;
     const dy = (fullY - 0.43) / 0.48;
     const portraitFocus = Math.max(0, 1 - Math.hypot(dx, dy));
+    // Protect light central face tissue separately from dark hair. Edge
+    // strength alone cannot make that distinction: an eyebrow and a cheek
+    // boundary are both detailed, but only the former can conceal a tie.
+    const faceX = (fullX - 0.5) / 0.35;
+    const faceY = (fullY - 0.43) / 0.34;
+    const faceInterior = Math.max(0, 1 - Math.hypot(faceX, faceY));
+    const lightSkinLikelihood = Math.max(0, Math.min(1, (lightness - 0.30) / 0.42));
+    const portraitRisk = faceInterior * lightSkinLikelihood;
     return {
       lightness,
       strength,
       tangentAngleDeg: Math.atan2(gy, gx) * 180 / Math.PI + 90,
       portraitFocus,
+      portraitRisk,
     };
   };
 
@@ -3337,6 +3346,7 @@ function bridgeImageSamplers() {
       return {
         ...sample,
         detail: protectDetail ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0,
+        portraitRisk: protectDetail ? sample.portraitRisk : 0,
       };
     } : null,
   };
