@@ -3120,6 +3120,29 @@ select:focus {
   font-size: 0.55rem;
 }
 
+.repair-plan-status {
+  margin: 8px 0 0;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: #17695f;
+  background: var(--teal-soft);
+  font-size: 0.53rem;
+  font-weight: 720;
+  line-height: 1.4;
+}
+
+.repair-plan-status[data-state="unsafe"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.repair-plan-note {
+  margin: 6px 1px 0;
+  color: var(--muted);
+  font-size: 0.5rem;
+  line-height: 1.45;
+}
+
 .repair-plan-counts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

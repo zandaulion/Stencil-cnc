@@ -208,6 +208,26 @@ test("manufacturing repair can target full minimum-web connectivity", () => {
   assert.equal(analyzeConnectivity(fullWidthCore).componentCount, 1);
 });
 
+test("kerf-aware repair stops at its explicit bridge budget", () => {
+  const mask = createMask(25, 7);
+  for (const x of [1, 5, 9, 13, 17, 21]) {
+    for (let y = 1; y < 6; y += 1) mask.data[y * mask.width + x] = 1;
+  }
+  const repair = suggestKerfAwareBridges(mask, {
+    sheet: { widthMm: 25, heightMm: 7 },
+    widthMm: 1,
+    kerfMm: 0,
+    minimumWebMm: 0,
+    requireSingleComponent: true,
+    maximumBridges: 2,
+    strategy: { mode: "smart", kind: "generic", level: 1 },
+  });
+
+  assert.equal(repair.bridges.length, 2);
+  assert.equal(repair.capped, true);
+  assert.equal(repair.complete, false);
+});
+
 test("the secure strategy adds a separated backup tie", () => {
   const mask = createMask(9, 13);
   for (let y = 0; y < mask.height; y += 1) {

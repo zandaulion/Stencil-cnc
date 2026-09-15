@@ -50,7 +50,8 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
     'btn-repair-next', 'repair-similar', 'btn-discard-repairs',
     'btn-apply-repairs', 'btn-undo-repair', 'repair-category-slivers',
     'repair-category-gaps', 'repair-category-webs', 'repair-layer-status',
-    'btn-toggle-repair-layer', 'btn-clear-repair-layer',
+    'btn-toggle-repair-layer', 'btn-clear-repair-layer', 'repair-plan-status',
+    'repair-plan-note',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   for (const strategy of ['preserve', 'balanced', 'durable']) {
     assert.match(html, new RegExp(`name="openingRepairStrategy"[^>]*value="${strategy}"`), strategy);
@@ -58,10 +59,10 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
   for (const action of ['close', 'enlarge', 'merge']) {
     assert.match(html, new RegExp(`data-repair-action="${action}"`), action);
   }
-  assert.match(editor, /planSmallOpeningRepairs\(candidate, validation/);
-  assert.match(editor, /planCutGapRepairs\(candidate, validation/);
-  assert.match(editor, /planLoosePieceRepairs\(candidate, validation/);
-  assert.match(editor, /targetMinimumWebConnectivity: true/);
+  assert.match(editor, /planManufacturingRepairs\(mask/);
+  assert.match(editor, /maximumBridges: 192/);
+  assert.match(editor, /plan\.outcome\.safeToApply/);
+  assert.match(editor, /state\.repairPlan\.outcome\?\.safeToApply !== true/);
   assert.match(editor, /manufacturingRepairs: \{/);
   assert.match(editor, /state\.repairPreviewBaseMask/);
   assert.match(editor, /setSmallOpeningRepairAction\(state\.repairPlan/);

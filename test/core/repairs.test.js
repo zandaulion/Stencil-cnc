@@ -7,6 +7,7 @@ import {
   createMask,
   planCutGapRepairs,
   planLoosePieceRepairs,
+  planManufacturingRepairs,
   planSmallOpeningRepairs,
   setSmallOpeningRepairAction,
   validateDesign,
@@ -198,4 +199,62 @@ test("preserve cleanup removes one-cell loose specks but leaves larger artwork f
   const repaired = applySmallOpeningRepairPlan(mask, plan);
   assert.equal(repaired.data[2 * mask.width + 3], 0);
   assert.equal(repaired.data[3 * mask.width + 6], RETAINED);
+});
+
+test("manufacturing repair connects blockers without increasing the complete error count", () => {
+  const mask = maskFromAscii([
+    "####....####",
+    "####....####",
+    "####....####",
+    "####....####",
+    "####....####",
+  ]);
+  const plan = planManufacturingRepairs(mask, {
+    sheet: { widthMm: 12, heightMm: 5 },
+    kerfMm: 0,
+    minimumWebMm: 0,
+    minimumOpeningMm: 0,
+    targetWebMm: 1,
+    targetOpeningMm: 1,
+    strategy: "balanced",
+    categories: { slivers: false, gaps: false, webs: true },
+    bridgeWidthMm: 1,
+    bridgeStrategy: { mode: "smart", kind: "generic", level: 1 },
+    maximumBridges: 8,
+  });
+
+  assert.ok(plan.items.length > 0);
+  assert.ok(plan.supportCount > 0);
+  assert.equal(plan.outcome.beforeConnectivityErrors, 1);
+  assert.equal(plan.outcome.afterConnectivityErrors, 0);
+  assert.ok(plan.outcome.afterErrors < plan.outcome.beforeErrors);
+  assert.equal(plan.outcome.safeToApply, true);
+  assert.equal(plan.outcome.complete, true);
+});
+
+test("manufacturing repair never accepts a proposal that worsens blockers", () => {
+  const mask = maskFromAscii([
+    "#####################",
+    "#.#.#.#.#.#.#.#.#.#.#",
+    "#####################",
+    "#.#.#.#.#.#.#.#.#.#.#",
+    "#####################",
+  ]);
+  const plan = planManufacturingRepairs(mask, {
+    sheet: { widthMm: 21, heightMm: 5 },
+    kerfMm: 0.5,
+    minimumWebMm: 3,
+    minimumOpeningMm: 2,
+    targetWebMm: 3.4,
+    targetOpeningMm: 2.4,
+    strategy: "balanced",
+    categories: { slivers: true, gaps: true, webs: true },
+    bridgeWidthMm: 4,
+    bridgeStrategy: { mode: "smart", kind: "generic", level: 2 },
+    maximumBridges: 4,
+  });
+
+  assert.ok(plan.outcome.afterErrors <= plan.outcome.beforeErrors);
+  assert.ok(plan.supportCount <= 4);
+  assert.equal(plan.outcome.safeToApply, plan.items.length > 0 && plan.outcome.improved);
 });

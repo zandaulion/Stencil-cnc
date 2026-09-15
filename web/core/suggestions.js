@@ -76,6 +76,7 @@ export function suggestBridges(mask, config) {
  *   targetMinimumWebConnectivity?:boolean,
  *   outsideIsRemoved?:boolean,
  *   maxPasses?:number,
+ *   maximumBridges?:number,
  *   strategy?:object,
  * }} config
  */
@@ -91,6 +92,11 @@ export function suggestKerfAwareBridges(mask, config) {
   const maxPasses = config.maxPasses ?? 4;
   if (!Number.isInteger(maxPasses) || maxPasses < 1 || maxPasses > 12) {
     throw new RangeError("maxPasses must be an integer between 1 and 12");
+  }
+  const maximumBridges = config.maximumBridges ?? Number.POSITIVE_INFINITY;
+  if (maximumBridges !== Number.POSITIVE_INFINITY &&
+      (!Number.isInteger(maximumBridges) || maximumBridges < 1 || maximumBridges > 10_000)) {
+    throw new RangeError("maximumBridges must be an integer between 1 and 10000");
   }
 
   // Ordinary support planning asks whether metal remains connected after the
@@ -126,12 +132,13 @@ export function suggestKerfAwareBridges(mask, config) {
     ? { ...config.strategy, maximumUnsupportedSpanMm: undefined }
     : undefined;
 
-  while (componentCount > 1 && passes < maxPasses) {
+  while (componentCount > 1 && passes < maxPasses && bridges.length < maximumBridges) {
+    const remaining = maximumBridges - bridges.length;
     const proposed = suggestBridges(postKerfMask, {
       ...config,
       anchorMask: planningAnchor,
       strategy: repairStrategy,
-    }).filter((bridge) => !bridge.stabilizer);
+    }).filter((bridge) => !bridge.stabilizer).slice(0, remaining);
     if (!proposed.length) break;
 
     const numbered = proposed.map((bridge, index) => ({
@@ -158,7 +165,9 @@ export function suggestKerfAwareBridges(mask, config) {
   }
 
   const maximumSpanMm = config.strategy?.maximumUnsupportedSpanMm;
-  if (config.strategy?.kind === "lamele" && Number.isFinite(maximumSpanMm)) {
+  if (bridges.length < maximumBridges &&
+      config.strategy?.kind === "lamele" && Number.isFinite(maximumSpanMm)) {
+    const remaining = maximumBridges - bridges.length;
     const stabilizers = suggestSlatStabilizers(postKerfMask, {
       sheet: config.sheet,
       anchorMask: planningAnchor,
@@ -169,7 +178,7 @@ export function suggestKerfAwareBridges(mask, config) {
       organicVariation: config.strategy.organicVariation,
       detailAt: config.strategy.detailAt,
       idOffset: bridges.length,
-    }).map((bridge, index) => ({
+    }).slice(0, remaining).map((bridge, index) => ({
       ...bridge,
       id: `stabilizer-${index + 1}`,
     }));
@@ -191,6 +200,7 @@ export function suggestKerfAwareBridges(mask, config) {
     finalComponentCount: componentCount,
     passes,
     complete: componentCount === 1,
+    capped: bridges.length >= maximumBridges && componentCount > 1,
   };
 }
 

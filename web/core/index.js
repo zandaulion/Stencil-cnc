@@ -28,6 +28,7 @@ export {
   applySmallOpeningRepairPlan,
   planCutGapRepairs,
   planLoosePieceRepairs,
+  planManufacturingRepairs,
   planSmallOpeningRepairs,
   setSmallOpeningRepairAction,
 } from "./repairs.js";

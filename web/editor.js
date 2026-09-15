@@ -33,10 +33,8 @@ import {
   orientSheet,
   physicalDiscIndices,
   physicalStrokeIndices,
-  planCutGapRepairs,
-  planLoosePieceRepairs,
+  planManufacturingRepairs,
   placeMaskOnSheet,
-  planSmallOpeningRepairs,
   serializeProject,
   setSmallOpeningRepairAction,
   suggestKerfAwareBridges,
@@ -1318,6 +1316,20 @@ function repairIssueCount(issue) {
   return issue?.details?.componentCount ?? issue?.details?.violationCount ?? issue?.details?.locations?.length ?? 0;
 }
 
+function repairableValidationLocationCount(validation, severity = 'error') {
+  const codes = new Set([
+    'DISCONNECTED_RETAINED_MATERIAL',
+    'KERF_DISCONNECTED_RETAINED_MATERIAL',
+    'MIN_OPENING_UNCUTTABLE',
+    'MIN_CUT_GAP',
+    'MIN_WEB_DISCONNECT',
+    'MIN_WEB_THIN_AREAS',
+  ]);
+  return (validation?.issues ?? [])
+    .filter((issue) => issue.severity === severity && codes.has(issue.code))
+    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+}
+
 function selectedRepairStrategy() {
   return document.querySelector('input[name="openingRepairStrategy"]:checked')?.value || 'balanced';
 }
@@ -1383,15 +1395,6 @@ function cloneCurrentGeometryWithoutRepairLayer() {
   return result;
 }
 
-function repairPlanItems(plan, category, issueCode, pass = 1) {
-  return (plan?.items ?? []).map((item) => ({
-    ...item,
-    id: `${category}-${pass}-${item.id}`,
-    category,
-    issueCode,
-  }));
-}
-
 async function buildRepairPreview({ focus = true } = {}) {
   const mask = cloneCurrentGeometryWithoutRepairLayer();
   if (!mask) {
@@ -1421,108 +1424,44 @@ async function buildRepairPreview({ focus = true } = {}) {
     const kerfMm = toMm(numberField('kerf', 1.2));
     const targetWebMm = minimumWebMm + allowance;
     const targetOpeningMm = minimumOpeningMm + allowance;
-    const protectedMask = repairProtectedMask(mask);
-    const before = repairValidation(mask);
-    let candidate = { ...mask, data: Uint8Array.from(mask.data) };
-    let validation = before;
-    const items = [];
-    let supportCount = 0;
-
-    const applyStage = (plan, category, issueCode, pass = 1) => {
-      const stageItems = repairPlanItems(plan, category, issueCode, pass);
-      if (!stageItems.length) return;
-      candidate = applySmallOpeningRepairPlan(candidate, { items: stageItems });
-      items.push(...stageItems);
-      validation = repairValidation(candidate);
+    const requestedWidthMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6)));
+    const proposal = planManufacturingRepairs(mask, {
+      sheet: sheet(),
+      strategy,
+      categories,
+      kerfMm,
+      minimumWebMm,
+      minimumOpeningMm,
+      targetWebMm,
+      targetOpeningMm,
+      protectedMask: repairProtectedMask(mask),
+      bridgeWidthMm: Math.max(requestedWidthMm, targetWebMm + kerfMm),
+      bridgeStrategy: smartBridgeStrategy(),
+      maximumBridges: 192,
+    });
+    const candidate = proposal.mask;
+    const plan = {
+      kind: proposal.kind,
+      strategy: proposal.strategy,
+      categories: proposal.categories,
+      items: proposal.items,
+      counts: proposal.counts,
+      supportCount: proposal.supportCount,
+      outcome: proposal.outcome,
     };
-
-    if (categories.slivers) {
-      applyStage(planLoosePieceRepairs(candidate, validation, {
-        sheet: sheet(), strategy, minimumWebMm: targetWebMm, protectedMask,
-      }), 'sliver', 'DISCONNECTED_RETAINED_MATERIAL');
-      applyStage(planSmallOpeningRepairs(candidate, validation, {
-        sheet: sheet(), strategy, targetOpeningMm, minimumWebMm: targetWebMm, protectedMask,
-      }), 'opening', 'MIN_OPENING_UNCUTTABLE');
-    }
-
-    if (categories.gaps) {
-      // A batch can reveal a second near-neighbour after two cuts merge. A
-      // small bounded loop catches those cascades without chasing morphology
-      // indefinitely.
-      for (let pass = 1; pass <= 3; pass += 1) {
-        const gapPlan = planCutGapRepairs(candidate, validation, {
-          sheet: sheet(), strategy, targetGapMm: targetWebMm,
-          targetOpeningMm, protectedMask,
-        });
-        if (!gapPlan.items.length) break;
-        applyStage(gapPlan, 'gap', 'MIN_CUT_GAP', pass);
-      }
-    }
-
-    if (categories.webs && validation.issues.some((issue) =>
-      issue.code === 'MIN_WEB_DISCONNECT' ||
-      issue.code === 'KERF_DISCONNECTED_RETAINED_MATERIAL' ||
-      issue.code === 'DISCONNECTED_RETAINED_MATERIAL')) {
-      const requestedWidthMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6)));
-      const widthMm = Math.max(requestedWidthMm, targetWebMm + kerfMm);
-      const supportPlan = suggestKerfAwareBridges(candidate, {
-        sheet: sheet(),
-        widthMm,
-        anchorBoundary: false,
-        requireSingleComponent: true,
-        minimumWebMm: targetWebMm,
-        kerfMm,
-        targetMinimumWebConnectivity: true,
-        maxPasses: 4,
-        strategy: smartBridgeStrategy(),
-      });
-      if (supportPlan.bridges.length) {
-        const supported = applyCapsuleBridges(candidate, supportPlan.bridges, sheet());
-        const keep = [];
-        for (let index = 0; index < supported.data.length; index += 1) {
-          if (supported.data[index] === RETAINED && candidate.data[index] !== RETAINED) keep.push(index);
-        }
-        supportCount = supportPlan.bridges.length;
-        if (keep.length) {
-          const bounds = { minX: 0, minY: 0, maxX: candidate.width - 1, maxY: candidate.height - 1,
-            width: candidate.width, height: candidate.height };
-          const supportItem = {
-            id: 'web-1-filter-aware-supports', category: 'web', issueCode: 'MIN_WEB_DISCONNECT',
-            bounds, pixelCount: keep.length, supportCount,
-            similarityKey: 'filter-aware-supports', action: 'enlarge', recommended: 'enlarge',
-            availableActions: { close: false, enlarge: true, merge: false },
-            edits: { close: null, enlarge: { keep, remove: [] }, merge: null },
-          };
-          candidate = supported;
-          items.push(supportItem);
-          validation = repairValidation(candidate);
-        }
-      }
-    }
-
-    const after = validation;
-    if (!items.length) {
+    if (!plan.items.length || !plan.outcome.safeToApply) {
       state.repairPlan = null;
       state.repairPreviewBaseMask = null;
       state.repairPreviewMask = null;
       state.repairPreviewKerfMask = null;
-      toast('The selected categories found no safe automatic changes. The refreshed validator may already have removed raster-only false positives.');
+      const explanation = plan.outcome.notes[0] ??
+        'The selected categories found no change that reduced blocking defects without creating new ones.';
+      toast(`No safe automatic changes were kept. ${explanation}`);
       renderRepairPanel();
       draw();
       return false;
     }
-
-    const counts = { close: 0, enlarge: 0, merge: 0 };
-    for (const item of items) counts[item.action] += item.supportCount ?? 1;
-    state.repairPlan = {
-      kind: 'manufacturing', strategy, categories, items, counts, supportCount,
-      outcome: {
-        beforeErrors: validationLocationCount(before, 'error'),
-        afterErrors: validationLocationCount(after, 'error'),
-        beforeWarnings: validationLocationCount(before, 'warning'),
-        afterWarnings: validationLocationCount(after, 'warning'),
-      },
-    };
+    state.repairPlan = plan;
     state.repairPreviewBaseMask = mask;
     state.repairPreviewMask = candidate;
     const previewKerfMm = toMm(numberField('kerf', 1.2));
@@ -1535,6 +1474,14 @@ async function buildRepairPreview({ focus = true } = {}) {
     if (focus) focusRepairItem(state.repairItemIndex);
     else draw();
     return true;
+  } catch (error) {
+    console.error(error);
+    state.repairPlan = null;
+    state.repairPreviewBaseMask = null;
+    state.repairPreviewMask = null;
+    state.repairPreviewKerfMask = null;
+    toast('Automatic repair planning failed; the geometry was not changed.');
+    return false;
   } finally {
     button?.removeAttribute('aria-busy');
     if (button) button.disabled = false;
@@ -1552,8 +1499,24 @@ function updateRepairPreviewMasks() {
   state.repairPreviewMask = applySmallOpeningRepairPlan(mask, state.repairPlan);
   if (state.repairPlan.kind === 'manufacturing') {
     const validation = repairValidation(state.repairPreviewMask);
-    state.repairPlan.outcome.afterErrors = validationLocationCount(validation, 'error');
-    state.repairPlan.outcome.afterWarnings = validationLocationCount(validation, 'warning');
+    const outcome = state.repairPlan.outcome;
+    outcome.afterErrors = validationLocationCount(validation, 'error');
+    outcome.afterWarnings = validationLocationCount(validation, 'warning');
+    outcome.afterConnectivityErrors = (validation.issues ?? [])
+      .filter((issue) => issue.severity === 'error' && [
+        'DISCONNECTED_RETAINED_MATERIAL', 'KERF_DISCONNECTED_RETAINED_MATERIAL',
+      ].includes(issue.code))
+      .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+    outcome.afterWeakWebs = (validation.issues ?? [])
+      .filter((issue) => issue.severity === 'warning' && [
+        'MIN_WEB_NO_SURVIVING_CORE', 'MIN_WEB_DISCONNECT',
+      ].includes(issue.code))
+      .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+    outcome.improved = outcome.afterErrors < outcome.beforeErrors ||
+      (outcome.beforeErrors === 0 && outcome.afterErrors === 0 &&
+        outcome.afterWarnings < outcome.beforeWarnings);
+    outcome.safeToApply = outcome.afterErrors <= outcome.beforeErrors && outcome.improved;
+    outcome.complete = outcome.afterErrors === 0;
   }
   const kerfMm = toMm(numberField('kerf', 1.2));
   state.repairPreviewKerfMask = kerfMm > 0
@@ -1621,7 +1584,7 @@ function renderRepairPanel() {
       ? 'Repair every undersized cut gap as a batch, preview the result, then override important exceptions.'
       : 'Repair this repeated problem as a batch, then override important exceptions.';
   el('repair-count').textContent = complete ? '✓' : String(manufacturing
-    ? (state.repairPlan?.items.length ?? repairIssueCount(issue))
+    ? (state.repairPlan?.outcome.beforeErrors ?? repairableValidationLocationCount(state.validation))
     : repairIssueCount(issue));
   const applied = el('repair-applied');
   applied.hidden = !result;
@@ -1642,7 +1605,9 @@ function renderRepairPanel() {
 
   const strategy = selectedRepairStrategy();
   el('repair-strategy-description').textContent = REPAIR_STRATEGY_COPY[kind][strategy];
-  el('btn-preview-repairs').textContent = manufacturing ? 'Regenerate combined preview' : 'Preview manufacturing repairs';
+  el('btn-preview-repairs').textContent = manufacturing && state.repairPlan
+    ? 'Regenerate repair preview'
+    : 'Generate repair preview';
   el('repair-target-control').hidden = loosePieces;
   const preview = el('repair-preview');
   preview.hidden = !state.repairPlan;
@@ -1667,6 +1632,20 @@ function renderRepairPanel() {
   el('repair-after-errors').textContent = String(outcome?.afterErrors ?? '—');
   el('repair-before-warnings').textContent = String(outcome?.beforeWarnings ?? '—');
   el('repair-after-warnings').textContent = String(outcome?.afterWarnings ?? '—');
+  const status = el('repair-plan-status');
+  const note = el('repair-plan-note');
+  const safe = outcome?.safeToApply === true;
+  const fullyRepaired = safe && outcome.complete;
+  status.dataset.state = safe ? 'safe' : 'unsafe';
+  status.textContent = fullyRepaired
+    ? 'Safe preview · all blocking locations are resolved.'
+    : safe
+      ? `Safe partial improvement · ${outcome.afterErrors} blocking ${outcome.afterErrors === 1 ? 'location remains' : 'locations remain'} for review.`
+      : 'Unsafe preview · this proposal will not be applied.';
+  const notes = outcome?.notes ?? [];
+  note.hidden = notes.length === 0;
+  note.textContent = notes.join(' ');
+  el('btn-apply-repairs').disabled = !safe;
 
   state.repairItemIndex = Math.min(state.repairItemIndex, items.length - 1);
   const item = items[state.repairItemIndex];
@@ -1680,7 +1659,9 @@ function renderRepairPanel() {
     ? item.pixelCount
     : Math.round(((cutGaps || item.category === 'gap') ? item.gapMm : item.equivalentDiameterMm) * 10) / 10;
   el('repair-current-description').textContent = manufacturing && item.category === 'web'
-    ? `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie' : 'ties'}; the generated layer strengthens the full-width metal core.`
+    ? item.similarityKey === 'connectivity-supports'
+      ? `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie connects' : 'ties connect'} detached material and survives the kerf simulation.`
+      : `${item.supportCount} staggered ${item.supportCount === 1 ? 'tie supports' : 'ties support'} long slats without forming a regular rail.`
     : manufacturing && item.category === 'sliver'
       ? `${item.pixelCount} raster ${item.pixelCount === 1 ? 'cell' : 'cells'}; this detached sliver will be removed.`
       : manufacturing && item.category === 'gap'
@@ -1721,6 +1702,10 @@ function overrideRepairAction(action) {
 async function applyRepairPlan() {
   if (!state.sourceMask || !state.repairPlan?.items.length ||
       !state.repairPreviewBaseMask || !state.repairPreviewMask) return;
+  if (state.repairPlan.outcome?.safeToApply !== true) {
+    toast('This preview does not safely improve the complete validation result, so it cannot be applied.');
+    return;
+  }
   const keep = new Set();
   const remove = new Set();
   for (let index = 0; index < state.repairPreviewMask.data.length; index += 1) {

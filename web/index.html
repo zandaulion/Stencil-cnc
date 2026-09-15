@@ -1072,7 +1072,7 @@
             <legend>Repair categories</legend>
             <label><input id="repair-category-slivers" type="checkbox" checked><span><strong>Clean raster slivers</strong><small>Remove detached specks and close uncuttable holes.</small></span></label>
             <label><input id="repair-category-gaps" type="checkbox" checked><span><strong>Repair close cuts</strong><small>Widen the web, merge cuts, or close minor cuts.</small></span></label>
-            <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Strengthen weak webs</strong><small>Add minimal filter-aware ties that survive kerf.</small></span></label>
+            <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect and strengthen material</strong><small>Repair detached pieces first, then add bounded filter-aware reinforcement when it is safe.</small></span></label>
           </fieldset>
 
           <fieldset class="repair-fieldset">
@@ -1100,6 +1100,8 @@
               <strong>Proposed changes</strong>
               <span id="repair-plan-strategy">Balanced</span>
             </div>
+            <p class="repair-plan-status" id="repair-plan-status" data-state="safe" role="status">Safe preview</p>
+            <p class="repair-plan-note" id="repair-plan-note" hidden></p>
             <dl class="repair-plan-counts">
               <div><dt id="repair-close-label">Close</dt><dd id="repair-close-count">0</dd></div>
               <div><dt id="repair-enlarge-label">Enlarge</dt><dd id="repair-enlarge-count">0</dd></div>

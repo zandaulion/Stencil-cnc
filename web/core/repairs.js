@@ -1,4 +1,7 @@
 import { physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
+import { applyCapsuleBridges } from "./bridges.js";
+import { suggestKerfAwareBridges, suggestSlatStabilizers } from "./suggestions.js";
+import { validateDesign } from "./validation.js";
 import {
   REMOVED,
   RETAINED,
@@ -334,6 +337,273 @@ export function planLoosePieceRepairs(mask, validation, options) {
   };
 }
 
+const CONNECTIVITY_ERROR_CODES = new Set([
+  "DISCONNECTED_RETAINED_MATERIAL",
+  "KERF_DISCONNECTED_RETAINED_MATERIAL",
+]);
+
+/**
+ * Plans manufacturing repairs as a sequence of independently checked stages.
+ *
+ * The old workflow applied every available morphology and support suggestion
+ * in one pass. A bridge could therefore split a cut into new undersized
+ * openings, while strict minimum-web morphology could generate thousands of
+ * ties for raster fragments. This planner instead repairs true export blockers
+ * first, validates after each stage, and rolls back any stage that does not
+ * improve the complete blocking-error result. Warning-only reinforcement is
+ * attempted only after the blockers are gone and is bounded by the same bridge
+ * budget.
+ *
+ * @param {import('./mask.js').RasterMask} mask
+ * @param {{
+ *   sheet:{widthMm:number,heightMm:number},
+ *   kerfMm:number,
+ *   minimumWebMm:number,
+ *   minimumOpeningMm:number,
+ *   targetWebMm:number,
+ *   targetOpeningMm:number,
+ *   strategy?:"preserve"|"balanced"|"durable",
+ *   categories?:{slivers?:boolean,gaps?:boolean,webs?:boolean},
+ *   protectedMask?:import('./mask.js').RasterMask|null,
+ *   bridgeWidthMm:number,
+ *   bridgeStrategy?:object,
+ *   maximumBridges?:number,
+ * }} options
+ */
+export function planManufacturingRepairs(mask, options) {
+  assertMask(mask);
+  assertSheet(options?.sheet);
+  const strategy = options.strategy ?? "balanced";
+  if (!STRATEGIES.has(strategy)) throw new RangeError("Unknown repair strategy");
+  const kerfMm = nonNegative(options.kerfMm, "kerfMm");
+  const minimumWebMm = nonNegative(options.minimumWebMm, "minimumWebMm");
+  const minimumOpeningMm = nonNegative(options.minimumOpeningMm, "minimumOpeningMm");
+  const targetWebMm = positive(options.targetWebMm, "targetWebMm");
+  const targetOpeningMm = positive(options.targetOpeningMm, "targetOpeningMm");
+  const bridgeWidthMm = positive(options.bridgeWidthMm, "bridgeWidthMm");
+  const maximumBridges = options.maximumBridges ?? 192;
+  if (!Number.isInteger(maximumBridges) || maximumBridges < 1 || maximumBridges > 10_000) {
+    throw new RangeError("maximumBridges must be an integer between 1 and 10000");
+  }
+  const categories = {
+    slivers: options.categories?.slivers !== false,
+    gaps: options.categories?.gaps !== false,
+    webs: options.categories?.webs !== false,
+  };
+  let protectedMask = options.protectedMask
+    ? cloneMask(options.protectedMask)
+    : { width: mask.width, height: mask.height, data: new Uint8Array(mask.data.length) };
+  assertSameSize(mask, protectedMask);
+
+  const validate = (candidate) => validateDesign(candidate, {
+    sheet: options.sheet,
+    kerfMm,
+    minimumWebMm,
+    minimumOpeningMm,
+    anchorBoundary: false,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const beforeValidation = validate(mask);
+  let candidate = cloneMask(mask);
+  let validation = beforeValidation;
+  const items = [];
+  const notes = [];
+  const durableFallbackCategories = new Set();
+  let supportCount = 0;
+  let cleanupRound = 0;
+
+  const applyRawPlan = (plan, category, issueCode, pass) => {
+    const stageItems = repairPlanItems(plan, category, issueCode, pass);
+    if (!stageItems.length) return [];
+    candidate = applySmallOpeningRepairPlan(candidate, { items: stageItems });
+    validation = validate(candidate);
+    return stageItems;
+  };
+  const tryCleanupPlan = (plan, category, issueCode, pass) => {
+    const previousMask = candidate;
+    const previousValidation = validation;
+    const previousErrors = validationLocationCount(previousValidation, "error");
+    const stageItems = applyRawPlan(plan, category, issueCode, pass);
+    if (!stageItems.length) return false;
+    if (validationLocationCount(validation, "error") < previousErrors) {
+      items.push(...stageItems);
+      return true;
+    }
+    candidate = previousMask;
+    validation = previousValidation;
+    return false;
+  };
+  const tryCleanupPlanner = (planner, category, issueCode, pass) => {
+    if (tryCleanupPlan(planner(strategy), category, issueCode, pass)) return true;
+    // Preserve-detail is a contract, not merely a preference. Only Balanced
+    // may escalate a rejected local choice to the metal-preserving Durable
+    // action, and the UI reports that fallback explicitly.
+    if (strategy !== "balanced") return false;
+    const accepted = tryCleanupPlan(planner("durable"), category, issueCode, pass);
+    if (accepted) durableFallbackCategories.add(category);
+    return accepted;
+  };
+  const runCheckedCleanup = () => {
+    const beforeErrors = validationLocationCount(validation, "error");
+    cleanupRound += 1;
+    const stagePass = cleanupRound * 10;
+    if (categories.slivers) {
+      tryCleanupPlanner((attemptStrategy) => planLoosePieceRepairs(candidate, validation, {
+        sheet: options.sheet, strategy: attemptStrategy, minimumWebMm: targetWebMm, protectedMask,
+      }), "sliver", "DISCONNECTED_RETAINED_MATERIAL", stagePass + 1);
+      tryCleanupPlanner((attemptStrategy) => planSmallOpeningRepairs(candidate, validation, {
+        sheet: options.sheet, strategy: attemptStrategy,
+        targetOpeningMm, minimumWebMm: targetWebMm, protectedMask,
+      }), "opening", "MIN_OPENING_UNCUTTABLE", stagePass + 2);
+    }
+    if (categories.gaps) {
+      for (let pass = 1; pass <= 3; pass += 1) {
+        const accepted = tryCleanupPlanner((attemptStrategy) => planCutGapRepairs(candidate, validation, {
+          sheet: options.sheet, strategy: attemptStrategy,
+          targetGapMm: targetWebMm, targetOpeningMm, protectedMask,
+        }), "gap", "MIN_CUT_GAP", stagePass + 2 + pass);
+        if (!accepted) break;
+      }
+    }
+    return validationLocationCount(validation, "error") < beforeErrors;
+  };
+  const runCleanupRounds = () => {
+    for (let round = 0; round < 3; round += 1) {
+      if (!runCheckedCleanup()) break;
+    }
+  };
+
+  // Cheap deterministic cleanup reduces the graph before support planning.
+  runCleanupRounds();
+
+  if (categories.webs && connectivityErrorCount(validation) > 0) {
+    const previousMask = candidate;
+    const previousValidation = validation;
+    const previousItemsLength = items.length;
+    const previousProtectedMask = protectedMask;
+    const previousErrors = validationLocationCount(validation, "error");
+    const previousConnectivityErrors = connectivityErrorCount(validation);
+    const supportPlan = suggestKerfAwareBridges(candidate, {
+      sheet: options.sheet,
+      widthMm: Math.max(bridgeWidthMm, targetWebMm + kerfMm),
+      anchorBoundary: false,
+      requireSingleComponent: true,
+      minimumWebMm: targetWebMm,
+      kerfMm,
+      targetMinimumWebConnectivity: false,
+      maxPasses: 8,
+      maximumBridges,
+      strategy: options.bridgeStrategy
+        ? { ...options.bridgeStrategy, maximumUnsupportedSpanMm: undefined }
+        : undefined,
+    });
+    const supportItem = supportRepairItem(candidate, supportPlan.bridges, options.sheet, "connectivity");
+    if (supportItem) {
+      candidate = applyCapsuleBridges(candidate, supportPlan.bridges, options.sheet);
+      validation = validate(candidate);
+      protectedMask = withProtectedEdits(protectedMask, supportItem.edits.enlarge.keep);
+      items.push(supportItem);
+      supportCount += supportPlan.bridges.length;
+      runCleanupRounds();
+    }
+    const improved = supportItem &&
+      connectivityErrorCount(validation) < previousConnectivityErrors &&
+      validationLocationCount(validation, "error") < previousErrors;
+    if (!improved) {
+      candidate = previousMask;
+      validation = previousValidation;
+      protectedMask = previousProtectedMask;
+      items.length = previousItemsLength;
+      supportCount = 0;
+      notes.push("No support package was kept because it did not reduce the complete blocking-error result.");
+    } else if (!supportPlan.complete) {
+      notes.push(`Support planning stopped at its ${maximumBridges}-tie safety limit; remaining blockers stay visible for review.`);
+    }
+  }
+
+  // Weak-web findings are warnings, not thousands of independent blockers.
+  // Slats have a meaningful reinforcement vocabulary, so try bounded,
+  // staggered rungs only after all hard constraints have passed.
+  if (categories.webs && validationLocationCount(validation, "error") === 0 &&
+      options.bridgeStrategy?.kind === "lamele" &&
+      Number.isFinite(options.bridgeStrategy.maximumUnsupportedSpanMm) &&
+      weakWebCount(validation) > 0 && supportCount < maximumBridges) {
+    const available = maximumBridges - supportCount;
+    const stabilizers = suggestSlatStabilizers(validation.postKerfMask, {
+      sheet: options.sheet,
+      widthMm: Math.max(bridgeWidthMm, targetWebMm + kerfMm),
+      barAngleDeg: options.bridgeStrategy.barAngleDeg,
+      slatPitchMm: options.bridgeStrategy.slatPitchMm,
+      maximumUnsupportedSpanMm: options.bridgeStrategy.maximumUnsupportedSpanMm,
+      organicVariation: options.bridgeStrategy.organicVariation,
+      detailAt: options.bridgeStrategy.detailAt,
+    }).slice(0, available);
+    const supportItem = supportRepairItem(candidate, stabilizers, options.sheet, "stabilizer");
+    if (supportItem) {
+      const previousMask = candidate;
+      const previousValidation = validation;
+      const previousWeakWebs = weakWebCount(validation);
+      candidate = applyCapsuleBridges(candidate, stabilizers, options.sheet);
+      validation = validate(candidate);
+      const safeImprovement = validationLocationCount(validation, "error") === 0 &&
+        weakWebCount(validation) < previousWeakWebs;
+      if (safeImprovement) {
+        items.push(supportItem);
+        supportCount += stabilizers.length;
+      } else {
+        candidate = previousMask;
+        validation = previousValidation;
+        notes.push("Weak-web stabilizers were rolled back because they did not improve validation safely.");
+      }
+    }
+  } else if (categories.webs && weakWebCount(validation) > 0 &&
+      validationLocationCount(validation, "error") === 0) {
+    notes.push("Weak-web regions remain warnings; automatic reinforcement is limited to filters with a safe structural direction.");
+  }
+
+  const afterValidation = validation;
+  const beforeErrors = validationLocationCount(beforeValidation, "error");
+  const afterErrors = validationLocationCount(afterValidation, "error");
+  const beforeWarnings = validationLocationCount(beforeValidation, "warning");
+  const afterWarnings = validationLocationCount(afterValidation, "warning");
+  const improved = afterErrors < beforeErrors ||
+    (beforeErrors === 0 && afterErrors === 0 && afterWarnings < beforeWarnings);
+  const safeToApply = items.length > 0 && afterErrors <= beforeErrors && improved;
+  const counts = countRepairActions(items);
+  if (durableFallbackCategories.size > 0) {
+    notes.unshift(
+      `Used the durable fallback for ${[...durableFallbackCategories].join(", ")} only where the selected strategy failed its safety check.`,
+    );
+  }
+
+  return {
+    kind: "manufacturing",
+    strategy,
+    categories,
+    items,
+    counts,
+    supportCount,
+    mask: candidate,
+    beforeValidation,
+    afterValidation,
+    outcome: {
+      beforeErrors,
+      afterErrors,
+      beforeWarnings,
+      afterWarnings,
+      beforeConnectivityErrors: connectivityErrorCount(beforeValidation),
+      afterConnectivityErrors: connectivityErrorCount(afterValidation),
+      beforeWeakWebs: weakWebCount(beforeValidation),
+      afterWeakWebs: weakWebCount(afterValidation),
+      improved,
+      safeToApply,
+      complete: afterErrors === 0,
+      notes,
+    },
+  };
+}
+
 /** Applies the selected action of every item to a cloned mask. */
 export function applySmallOpeningRepairPlan(mask, plan) {
   assertMask(mask);
@@ -363,7 +633,7 @@ export function setSmallOpeningRepairAction(plan, itemId, action, { similar = fa
     ? plan.items.filter((item) => item.similarityKey === selected.similarityKey && item.availableActions[action])
     : [selected];
   for (const item of targets) item.action = action;
-  plan.counts = countActions(plan.items);
+  plan.counts = countRepairActions(plan.items);
   return targets.length > 0;
 }
 
@@ -423,6 +693,81 @@ function countActions(items) {
   const counts = { close: 0, enlarge: 0, merge: 0 };
   for (const item of items) counts[item.action] += 1;
   return counts;
+}
+
+function repairPlanItems(plan, category, issueCode, pass = 1) {
+  return (plan?.items ?? []).map((item) => ({
+    ...item,
+    id: `${category}-${pass}-${item.id}`,
+    category,
+    issueCode,
+  }));
+}
+
+function countRepairActions(items) {
+  const counts = { close: 0, enlarge: 0, merge: 0 };
+  for (const item of items) counts[item.action] += item.supportCount ?? 1;
+  return counts;
+}
+
+function validationLocationCount(validation, severity, codes = null) {
+  return (validation?.issues ?? [])
+    .filter((issue) => issue.severity === severity && (!codes || codes.has(issue.code)))
+    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+}
+
+function connectivityErrorCount(validation) {
+  return validationLocationCount(validation, "error", CONNECTIVITY_ERROR_CODES);
+}
+
+function weakWebCount(validation) {
+  const codes = new Set(["MIN_WEB_NO_SURVIVING_CORE", "MIN_WEB_DISCONNECT"]);
+  return validationLocationCount(validation, "warning", codes);
+}
+
+function supportRepairItem(mask, bridges, sheet, role) {
+  if (!bridges?.length) return null;
+  const supported = applyCapsuleBridges(mask, bridges, sheet);
+  const keep = [];
+  for (let index = 0; index < supported.data.length; index += 1) {
+    if (supported.data[index] === RETAINED && mask.data[index] !== RETAINED) keep.push(index);
+  }
+  if (!keep.length) return null;
+  return {
+    id: `web-1-${role}-supports`,
+    category: "web",
+    issueCode: role === "connectivity" ? "KERF_DISCONNECTED_RETAINED_MATERIAL" : "MIN_WEB_DISCONNECT",
+    bounds: boundsForIndices(mask, keep),
+    pixelCount: keep.length,
+    supportCount: bridges.length,
+    similarityKey: `${role}-supports`,
+    action: "enlarge",
+    recommended: "enlarge",
+    availableActions: { close: false, enlarge: true, merge: false },
+    edits: { close: null, enlarge: { keep, remove: [] }, merge: null },
+  };
+}
+
+function boundsForIndices(mask, indices) {
+  let minX = mask.width;
+  let minY = mask.height;
+  let maxX = 0;
+  let maxY = 0;
+  for (const index of indices) {
+    const x = index % mask.width;
+    const y = Math.floor(index / mask.width);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+function withProtectedEdits(mask, indices) {
+  const output = cloneMask(mask);
+  for (const index of indices) output.data[index] = RETAINED;
+  return output;
 }
 
 function nearestOtherOpening(mask, labels, componentId, indices, sheet, maximumGapMm) {
