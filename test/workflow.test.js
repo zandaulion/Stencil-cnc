@@ -103,6 +103,8 @@ test('freehand material tools paint continuously but commit as one gesture', () 
   assert.match(editor, /requestAnimationFrame\(\(\) => \{/);
   assert.match(editor, /paintSegment\(touchupStroke\.last, \{ x, y \}, \{/);
   assert.match(editor, /liveStructureMask: touchupStroke\.liveStructureMask/);
+  assert.doesNotMatch(editor, /else if \(touchupStroke\) \{\s*if \(!inside\) return/);
+  assert.match(editor, /touchupStroke\.mode === 'freehand'\) \{\s*touchupStroke\.changed = paintSegment\(touchupStroke\.last, releasePoint/);
   assert.match(editor, /const kerf = !state\.touchupLive/);
   assert.match(editor, /state\.touchupLive = false;[\s\S]*?refresh\(\{ immediate: true \}\);[\s\S]*?pushHistory\(\)/);
 });

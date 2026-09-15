@@ -34,6 +34,26 @@ test("a sparse pointer gesture produces a continuous stroke", () => {
   for (let x = 2; x <= 18; x += 1) assert.ok(indices.has(3 * mask.width + x));
 });
 
+test("a brush centred outside the sheet still edits its overlapping edge", () => {
+  const mask = createMask(9, 5);
+  const disc = new Set(physicalDiscIndices(
+    mask,
+    { x: -1, y: 2 },
+    4,
+    { widthMm: 9, heightMm: 5 },
+  ));
+  const stroke = new Set(physicalStrokeIndices(
+    mask,
+    { x: 3, y: 2 },
+    { x: -3, y: 2 },
+    2,
+    { widthMm: 9, heightMm: 5 },
+  ));
+
+  assert.ok(disc.has(2 * mask.width), "the overlapping half-disc reaches the left edge");
+  assert.ok(stroke.has(2 * mask.width), "the stroke remains continuous through the sheet edge");
+});
+
 test("connected-region selection stops at other material and honours its cap", () => {
   const mask = maskFromAscii([
     "##..#",

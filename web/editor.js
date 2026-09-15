@@ -4379,7 +4379,6 @@ function wire() {
       state.bridgePreview = { start: drawingFrom, end, width: safeBridgeWidthMm() };
       draw();
     } else if (touchupStroke) {
-      if (!inside) return;
       if (touchupStroke.mode === 'freehand') {
         touchupStroke.changed = paintSegment(touchupStroke.last, { x, y }, {
           liveStructureMask: touchupStroke.liveStructureMask,
@@ -4423,9 +4422,10 @@ function wire() {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
       applyTransform();
     } else if (state.tool === 'keep' || state.tool === 'remove') {
-      state.touchupPreview = inside
-        ? { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() }
-        : null;
+      // The stencil centre may sit outside the sheet while its physical disc
+      // still overlaps the edge. Keeping the raw point makes edge work precise
+      // instead of freezing the cursor at the drawing boundary.
+      state.touchupPreview = { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
       draw();
     }
   });
@@ -4464,9 +4464,9 @@ function wire() {
       state.bridgePreview = null;
     }
     if (touchupStroke) {
-      if (touchupStroke.mode === 'straight' && inside) {
+      if (touchupStroke.mode === 'straight') {
         touchupStroke.changed = paintSegment(touchupStroke.start, releasePoint) || touchupStroke.changed;
-      } else if (touchupStroke.mode === 'freehand' && inside) {
+      } else if (touchupStroke.mode === 'freehand') {
         touchupStroke.changed = paintSegment(touchupStroke.last, releasePoint, {
           liveStructureMask: touchupStroke.liveStructureMask,
         }) || touchupStroke.changed;
@@ -4475,9 +4475,9 @@ function wire() {
       touchupStroke = null;
       state.touchupLive = false;
       cancelLiveTouchupDraw();
-      state.touchupPreview = inside
-        ? { mode: 'cursor', point: releasePoint, diameterMm: touchupSizeMm() }
-        : null;
+      state.touchupPreview = {
+        mode: 'cursor', point: releasePoint, diameterMm: touchupSizeMm(),
+      };
       if (changed) {
         refresh({ immediate: true });
         pushHistory();
