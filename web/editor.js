@@ -2601,8 +2601,12 @@ function pushHistory() {
 }
 
 function updateHistoryButtons() {
-  el('btn-undo')?.toggleAttribute('disabled', state.undo.length === 0);
-  el('btn-redo')?.toggleAttribute('disabled', state.redo.length === 0);
+  for (const id of ['btn-undo', 'btn-undo-mobile']) {
+    el(id)?.toggleAttribute('disabled', state.undo.length === 0);
+  }
+  for (const id of ['btn-redo', 'btn-redo-mobile']) {
+    el(id)?.toggleAttribute('disabled', state.redo.length === 0);
+  }
 }
 
 function undo() {
@@ -5630,8 +5634,8 @@ function wire() {
   });
 
   // --- history and project
-  el('btn-undo')?.addEventListener('click', undo);
-  el('btn-redo')?.addEventListener('click', redo);
+  for (const id of ['btn-undo', 'btn-undo-mobile']) el(id)?.addEventListener('click', undo);
+  for (const id of ['btn-redo', 'btn-redo-mobile']) el(id)?.addEventListener('click', redo);
   el('btn-new-project')?.addEventListener('click', () => void startNewProject());
   el('btn-library-new-project')?.addEventListener('click', () => void startNewProject());
   el('save-state')?.addEventListener('click', () => {
