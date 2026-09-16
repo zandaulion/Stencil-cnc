@@ -63,10 +63,19 @@ async function syncHarness() {
     };
     export const acknowledgeProjectSync = async (id, operationId, metadata) => {
       const local = state.projects.get(id);
-      if (local) state.projects.set(id, {
-        ...local, serverRevision: Number(metadata.revision) || 0, serverSha256: metadata.sha256 || null,
-      });
       const pending = state.sync.get(id);
+      const exact = pending?.operationId === operationId;
+      const acknowledgesCurrentChange = exact && (
+        !pending?.localChangeId || pending.localChangeId === local?.localChangeId
+      );
+      if (local) state.projects.set(id, {
+        ...local,
+        serverRevision: Number(metadata.revision) || 0,
+        serverSha256: metadata.sha256 || null,
+        localSyncPending: acknowledgesCurrentChange
+          ? false
+          : Boolean(local.localSyncPending || (pending && !exact)),
+      });
       if (pending?.operationId === operationId) {
         state.sync.delete(id);
         return { exact: true, superseded: false, project: state.projects.get(id), pending: null };
@@ -150,6 +159,54 @@ test('an older upload acknowledgement cannot remove a newer queued edit', async 
     assert.equal(JSON.parse(requests[1].body).project.name, 'B');
     assert.equal(storage.state.sync.size, 0);
     assert.equal(storage.state.projects.get('project-1').serverRevision, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('an upload acknowledgement cannot clear a newer locally cached edit that is not queued yet', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  let releaseUpload;
+  let markUploadStarted;
+  const uploadStarted = new Promise((resolve) => { markUploadStarted = resolve; });
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  globalThis.fetch = async () => {
+    markUploadStarted();
+    return new Promise((resolve) => {
+      releaseUpload = () => resolve(response({ revision: 2, sha256: 'first' }));
+    });
+  };
+
+  try {
+    const first = {
+      id: 'project-1', name: 'First edit', serverRevision: 1,
+      localChangeId: 'change-a', localSyncPending: true,
+    };
+    storage.state.projects.set(first.id, first);
+    const uploading = sync.syncProject(first);
+    await uploadStarted;
+    storage.state.projects.set(first.id, {
+      ...first,
+      name: 'Newer local edit',
+      localChangeId: 'change-b',
+      localSyncPending: true,
+    });
+
+    releaseUpload();
+    assert.equal((await uploading).status, 'synced');
+    assert.equal(storage.state.sync.has(first.id), false);
+    assert.equal(storage.state.projects.get(first.id).name, 'Newer local edit');
+    assert.equal(storage.state.projects.get(first.id).localSyncPending, true);
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'navigator', {
@@ -518,6 +575,51 @@ test('a downloaded bundle records the response revision instead of stale list me
   }
 });
 
+test('startup recovers a locally saved edit whose upload was never queued', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  const local = {
+    id: 'project-1',
+    name: 'Backgrounded edit',
+    serverRevision: 1,
+    localChangeId: 'change-after-background',
+    localSyncPending: true,
+  };
+  storage.state.projects.set(local.id, local);
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({
+        projects: [{ id: local.id, name: 'Older server copy', revision: 1, sha256: 'old' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return response({ revision: 2, sha256: 'recovered' });
+  };
+
+  try {
+    const result = await sync.synchronizeProjectLibrary();
+    assert.equal(result.status, 'synced');
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].options.method, 'PUT');
+    assert.equal(JSON.parse(requests[1].options.body).project.name, local.name);
+    assert.equal(storage.state.projects.get(local.id).localSyncPending, false);
+    assert.equal(storage.state.projects.get(local.id).serverRevision, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('a malformed downloaded asset cannot replace the last complete local revision', async () => {
   const originalFetch = globalThis.fetch;
   const originalNavigator = globalThis.navigator;
@@ -647,7 +749,11 @@ test('a conflict copy that cannot upload remains queued instead of claiming serv
     assert.equal(result.status, 'conflict-queued');
     assert.notEqual(result.projectId, record.id);
     assert.match(result.message, /waiting for the server/i);
-    assert.equal(storage.state.sync.get(result.projectId)?.kind, 'put');
+    const conflict = storage.state.projects.get(result.projectId);
+    const pending = storage.state.sync.get(result.projectId);
+    assert.equal(pending?.kind, 'put');
+    assert.equal(conflict.localSyncPending, true);
+    assert.equal(pending.localChangeId, conflict.localChangeId);
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'navigator', {

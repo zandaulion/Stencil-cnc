@@ -60,6 +60,12 @@ test('server-backed project management is searchable, recoverable, and offline s
     assert.match(editor, new RegExp(`projectAction\\([^\\n]+['"]${action}['"]`), action);
   }
   assert.match(editor, /async function flushPendingSave\(\)/);
+  assert.match(editor, /const LOCAL_SAVE_DELAY_MS = 160/);
+  assert.match(editor, /const SERVER_SYNC_DELAY_MS = 1200/);
+  assert.match(editor, /setTimeout\(\(\) => void persistLocally\(\), delay\)/);
+  assert.match(editor, /setTimeout\(\(\) => void syncPendingSave\(\), delay\)/);
+  assert.match(editor, /visibilityState === 'hidden'[\s\S]*flushLocalForLifecycle\(\)/);
+  assert.match(editor, /addEventListener\('pagehide', flushLocalForLifecycle\)/);
   assert.match(editor, /Local cache failed — Retry/);
   assert.match(editor, /Server sync failed — Retry/);
   assert.match(editor, /await flushPendingSave\(\)/);
@@ -71,7 +77,11 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(storage, /const CHECKPOINT_LIMIT = 10/);
   assert.match(storage, /const SYNC_STORE = 'projectSync'/);
   assert.match(storage, /export async function putProjectSync/);
+  assert.match(storage, /localSyncPending: record\.localSyncPending !== false/);
+  assert.match(storage, /pending\.localChangeId === local\?\.localChangeId/);
   assert.match(projectSync, /export async function buildProjectBundle/);
+  assert.match(projectSync, /record\.localSyncPending && !pending\.has\(record\.id\)/);
+  assert.match(projectSync, /!cached\?\.localSyncPending/);
   assert.match(projectSync, /export async function synchronizeProjectLibrary/);
   assert.match(projectSync, /'If-Match': `"\$\{operation\.expectedRevision\}"`/);
   assert.match(projectSync, /status: 'conflict'/);

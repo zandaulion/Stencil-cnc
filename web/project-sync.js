@@ -156,6 +156,7 @@ async function cacheBundle(metadata, bundle) {
     ...artifact,
     blob: dataUrlToBlob(artifact?.dataUrl),
   }));
+  const localSyncPending = metadata.localSyncPending === true;
   const cached = {
     ...project,
     id,
@@ -164,6 +165,8 @@ async function cacheBundle(metadata, bundle) {
     serverRevision: Number(metadata.revision) || 0,
     serverSyncedAt: new Date().toISOString(),
     serverSha256: metadata.sha256 || null,
+    localSyncPending,
+    localChangeId: localSyncPending ? metadata.localChangeId || crypto.randomUUID() : null,
   };
   return replaceProjectCache(cached, { checkpoints, artifacts });
 }
@@ -196,6 +199,7 @@ export async function queueProjectSync(record) {
     kind: 'put',
     expectedRevision: Number(record.serverRevision) || 0,
     payload: JSON.stringify(bundle),
+    localChangeId: record.localChangeId || null,
     workspaceId: storageWorkspaceId(),
     queuedAt: new Date().toISOString(),
   });
@@ -207,6 +211,7 @@ export async function queueProjectDeletion(record) {
     projectId: record.id,
     kind: 'delete',
     expectedRevision: Number(record.serverRevision) || 0,
+    localChangeId: record.localChangeId || null,
     workspaceId: storageWorkspaceId(),
     queuedAt: new Date().toISOString(),
   });
@@ -226,13 +231,21 @@ async function forkConflict(operation, details) {
   bundle.project.createdAt = timestamp.toISOString();
   bundle.project.updatedAt = timestamp.toISOString();
 
-  await cacheBundle({ id: newId, revision: 0, trashedAt: bundle.trashedAt }, bundle);
+  const localChangeId = crypto.randomUUID();
+  await cacheBundle({
+    id: newId,
+    revision: 0,
+    trashedAt: bundle.trashedAt,
+    localSyncPending: true,
+    localChangeId,
+  }, bundle);
   await deleteProjectSync(operation.projectId, operation.operationId, { workspaceId: operation.workspaceId });
   const replacement = await putProjectSync({
     projectId: newId,
     kind: 'put',
     expectedRevision: 0,
     payload: JSON.stringify(bundle),
+    localChangeId,
     workspaceId: operation.workspaceId,
     queuedAt: timestamp.toISOString(),
   });
@@ -404,6 +417,13 @@ async function flushProjectOperation(operation, options = {}) {
   return withProjectOperationLock(operation, (current) => performProjectOperation(current, options));
 }
 
+export async function flushQueuedProjectSync(projectId) {
+  const operation = await loadProjectSync(projectId);
+  if (!operation) return { status: 'idle', projectId };
+  if (!navigator.onLine) return { status: 'queued', projectId };
+  return flushProjectOperation(operation);
+}
+
 export async function syncProject(record) {
   const operation = await queueProjectSync(record);
   if (!navigator.onLine) return { status: 'queued', projectId: record.id };
@@ -428,9 +448,10 @@ export async function synchronizeProjectLibrary(onProgress = null) {
   const progress = (message) => onProgress?.({ completed, total, message });
 
   for (const metadata of remote) {
+    const cached = local.find((record) => record.id === metadata.id);
     if (metadata.deletedAt) {
       const queuedOperation = pending.get(metadata.id);
-      if (queuedOperation?.kind === 'put') {
+      if (queuedOperation?.kind === 'put' || cached?.localSyncPending) {
         // Let the normal revision-conflict path preserve the offline edit as
         // a separate project instead of discarding it for the tombstone.
       } else {
@@ -442,8 +463,9 @@ export async function synchronizeProjectLibrary(onProgress = null) {
       completed += 1;
       continue;
     }
-    const cached = local.find((record) => record.id === metadata.id);
-    if (!pending.has(metadata.id) && (!cached || Number(cached.serverRevision) < metadata.revision)) {
+    if (!pending.has(metadata.id) && !cached?.localSyncPending && (
+      !cached || Number(cached.serverRevision) < metadata.revision
+    )) {
       progress(`Downloading “${metadata.name}”…`);
       await pullProject(metadata);
     }
@@ -451,7 +473,10 @@ export async function synchronizeProjectLibrary(onProgress = null) {
   }
 
   for (const record of local) {
-    if (!record.serverRevision && !pending.has(record.id)) {
+    if (record.localSyncPending && !pending.has(record.id)) {
+      progress(`Uploading “${record.name}”…`);
+      pending.set(record.id, await queueProjectSync(record));
+    } else if (!record.serverRevision && !pending.has(record.id)) {
       progress(`Uploading “${record.name}”…`);
       pending.set(record.id, await queueProjectSync(record));
     } else if (record.serverRevision && !remoteById.has(record.id) && !pending.has(record.id)) {
@@ -463,6 +488,8 @@ export async function synchronizeProjectLibrary(onProgress = null) {
         serverRevision: 0,
         serverSyncedAt: null,
         serverSha256: null,
+        localSyncPending: true,
+        localChangeId: record.localChangeId || crypto.randomUUID(),
       });
       progress(`Recovering “${recoverable.name}” to the server…`);
       pending.set(record.id, await queueProjectSync(recoverable));

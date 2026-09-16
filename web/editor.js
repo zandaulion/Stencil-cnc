@@ -78,9 +78,12 @@ import {
 import {
   buildProjectBundle,
   deleteServerProject,
+  flushQueuedProjectSync,
+  hasPendingProjectSync,
   pendingProjectSyncCount,
   PROJECT_BUNDLE_SCHEMA,
   PROJECT_BUNDLE_VERSION,
+  queueProjectSync,
   synchronizeProjectLibrary,
   syncProject,
 } from '/project-sync.js';
@@ -98,6 +101,8 @@ const PLASMA_MIN_OPENING_MM = 2;
 const PLASMA_MIN_WEB_MM = 3;
 const UNDO_DEPTH = 40;
 const CANDIDATE_LIMIT = 8;
+const LOCAL_SAVE_DELAY_MS = 160;
+const SERVER_SYNC_DELAY_MS = 1200;
 const SHARE_BUNDLE_SCHEMA = PROJECT_BUNDLE_SCHEMA;
 const SHARE_BUNDLE_VERSION = PROJECT_BUNDLE_VERSION;
 const MANUAL_ONLY_STYLES = new Set(['icoana']);
@@ -2665,8 +2670,10 @@ function markDirty() {
   scheduleSave();
 }
 
-let saveTimer = null;
-let saveInFlight = null;
+let localSaveTimer = null;
+let serverSyncTimer = null;
+let localSaveInFlight = null;
+let serverSyncInFlight = null;
 let lastSavedRecord = null;
 let dirtyGeneration = 0;
 
@@ -2715,7 +2722,9 @@ async function syncStoredProject(record) {
       state.serverRevision = Number(current.serverRevision) || 0;
       lastSavedRecord = current;
     }
-    if (result.status === 'synced' || result.status === 'conflict') {
+    if (state.dirty || current?.localSyncPending) {
+      setSaveState('saving', cachedAtLabel());
+    } else if (result.status === 'synced' || result.status === 'conflict') {
       setSaveState('saved', savedAtLabel(new Date(current?.serverSyncedAt || Date.now())));
     } else if (result.status === 'queued' || result.status === 'superseded' || result.status === 'conflict-queued') {
       setSaveState('saving', cachedAtLabel());
@@ -2724,9 +2733,19 @@ async function syncStoredProject(record) {
   return result;
 }
 
+function scheduleLocalSave(delay = LOCAL_SAVE_DELAY_MS) {
+  clearTimeout(localSaveTimer);
+  localSaveTimer = setTimeout(() => void persistLocally(), delay);
+}
+
+function scheduleServerSync(delay = SERVER_SYNC_DELAY_MS) {
+  clearTimeout(serverSyncTimer);
+  serverSyncTimer = setTimeout(() => void syncPendingSave(), delay);
+}
+
 function scheduleSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(persist, 1200);
+  scheduleLocalSave();
+  scheduleServerSync();
 }
 
 function projectFromState() {
@@ -2795,14 +2814,15 @@ function projectFromState() {
   });
 }
 
-async function persist() {
-  clearTimeout(saveTimer);
-  saveTimer = null;
+async function persistLocally() {
+  clearTimeout(localSaveTimer);
+  localSaveTimer = null;
   if (!state.sourceMask) return null;
-  if (saveInFlight) {
-    await saveInFlight.catch(() => null);
+  if (localSaveInFlight) {
+    await localSaveInFlight.catch(() => null);
     if (!state.dirty) return lastSavedRecord;
   }
+  if (!state.dirty) return lastSavedRecord || (state.projectId ? loadProject(state.projectId) : null);
   const generation = dirtyGeneration;
   const operation = (async () => {
     const record = {
@@ -2814,42 +2834,21 @@ async function persist() {
     state.projectId = saved.id;
     state.createdAt = saved.createdAt;
     lastSavedRecord = saved;
-    let syncResult;
-    try {
-      syncResult = await syncProject(saved);
-      if (syncResult.projectId !== saved.id) {
-        saved = await loadProject(syncResult.projectId) || saved;
-        state.projectId = syncResult.projectId;
-        state.name = syncResult.name || saved.name;
-        el('project-name').value = state.name;
-        toast(syncResult.message);
-      } else {
-        saved = await loadProject(saved.id) || saved;
-      }
-      state.serverRevision = Number(saved.serverRevision) || 0;
-      lastSavedRecord = saved;
-    } catch (error) {
-      console.error('Server project synchronization failed:', error);
-      syncResult = { status: error.code === 'workspace_changed' ? 'workspace-changed' : 'error' };
-    }
     if (generation === dirtyGeneration) {
       state.dirty = false;
-      if (syncResult.status === 'synced' || syncResult.status === 'conflict') {
-        setSaveState('saved', savedAtLabel(new Date(saved.serverSyncedAt || Date.now())));
-      } else if (['queued', 'superseded', 'conflict-queued'].includes(syncResult.status)) {
-        setSaveState('saving', cachedAtLabel());
-      } else if (syncResult.status === 'workspace-changed') {
-        setSaveState('error', 'Workspace changed — Reload');
-        toast('This browser tab belongs to the previous workspace. Reload before synchronizing.');
-      } else {
-        setSaveState('error', 'Server sync failed — Retry');
-      }
+      setSaveState('saving', cachedAtLabel());
     } else {
-      scheduleSave();
+      scheduleLocalSave();
+    }
+    try {
+      await queueProjectSync(saved);
+    } catch (error) {
+      console.error('Could not queue the locally saved project for synchronization:', error);
+      setSaveState('error', 'Saved locally — Sync queue needs attention');
     }
     return saved;
   })();
-  saveInFlight = operation;
+  localSaveInFlight = operation;
   try {
     return await operation;
   } catch (error) {
@@ -2859,15 +2858,87 @@ async function persist() {
     toast('Could not cache this project. Your current work remains open.');
     return null;
   } finally {
-    if (saveInFlight === operation) saveInFlight = null;
+    if (localSaveInFlight === operation) localSaveInFlight = null;
   }
 }
 
+async function flushPendingLocalSave() {
+  clearTimeout(localSaveTimer);
+  localSaveTimer = null;
+  if (localSaveInFlight) await localSaveInFlight.catch(() => null);
+  if (state.dirty) return persistLocally();
+  return lastSavedRecord || (state.projectId ? loadProject(state.projectId) : null);
+}
+
+async function syncPendingSave() {
+  clearTimeout(serverSyncTimer);
+  serverSyncTimer = null;
+  if (!state.sourceMask) return null;
+  if (serverSyncInFlight) {
+    await serverSyncInFlight.catch(() => null);
+    if (state.dirty || (state.projectId && await hasPendingProjectSync(state.projectId))) {
+      scheduleServerSync();
+    }
+    return lastSavedRecord;
+  }
+  const operation = (async () => {
+    const locallySaved = await flushPendingLocalSave();
+    if (!locallySaved?.id) return null;
+    let current = await loadProject(locallySaved.id) || locallySaved;
+    if (current.localSyncPending && !await hasPendingProjectSync(current.id)) {
+      await queueProjectSync(current);
+    }
+    const result = await flushQueuedProjectSync(current.id);
+    const activeId = result.projectId || current.id;
+    current = await loadProject(activeId) || current;
+    if (activeId !== state.projectId && result.name) {
+      state.projectId = activeId;
+      state.name = result.name || current.name;
+      el('project-name').value = state.name;
+      if (result.message) toast(result.message);
+    }
+    state.serverRevision = Number(current.serverRevision) || state.serverRevision || 0;
+    lastSavedRecord = current;
+    const stillPending = state.dirty || current.localSyncPending || await hasPendingProjectSync(current.id);
+    if (stillPending) {
+      setSaveState('saving', cachedAtLabel());
+      // A superseded upload means a newer local generation is already queued;
+      // follow it promptly. Network failures stay durable for online/manual
+      // retry instead of creating an unbounded retry loop.
+      if (state.dirty || result.status === 'superseded') scheduleServerSync();
+    } else if (result.status === 'synced' || result.status === 'conflict') {
+      setSaveState('saved', savedAtLabel(new Date(current.serverSyncedAt || Date.now())));
+    } else if (result.status === 'queued') {
+      setSaveState('saving', cachedAtLabel());
+    }
+    return current;
+  })();
+  serverSyncInFlight = operation;
+  try {
+    return await operation;
+  } catch (error) {
+    console.error('Server project synchronization failed:', error);
+    if (error.code === 'workspace_changed') {
+      setSaveState('error', 'Workspace changed — Reload');
+      toast('This browser tab belongs to the previous workspace. Reload before synchronizing.');
+    } else {
+      setSaveState('error', 'Saved locally — Server sync failed');
+    }
+    return null;
+  } finally {
+    if (serverSyncInFlight === operation) serverSyncInFlight = null;
+  }
+}
+
+async function persist() {
+  const locallySaved = await flushPendingLocalSave();
+  if (!locallySaved) return null;
+  await syncPendingSave();
+  return state.projectId ? loadProject(state.projectId) : locallySaved;
+}
+
 async function flushPendingSave() {
-  clearTimeout(saveTimer);
-  saveTimer = null;
-  if (saveInFlight) await saveInFlight.catch(() => null);
-  if (state.dirty) await persist();
+  await persist();
   return !state.dirty;
 }
 
@@ -2883,7 +2954,7 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
   const operation = (async () => {
     const activeProjectId = state.projectId;
     const activeServerRevision = state.serverRevision;
-    if (state.dirty) await persist();
+    if (state.dirty) await flushPendingLocalSave();
     const result = await synchronizeProjectLibrary(({ completed, total, message }) => {
       if (announce || total > 1) {
         setSaveState('saving', total
@@ -6379,6 +6450,19 @@ function wire() {
     event.preventDefault();
     event.returnValue = '';
   });
+
+  const flushLocalForLifecycle = () => {
+    if (!state.dirty && !localSaveTimer) return;
+    void flushPendingLocalSave();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushLocalForLifecycle();
+    } else if (navigator.onLine && state.projectId) {
+      void syncPendingSave();
+    }
+  });
+  window.addEventListener('pagehide', flushLocalForLifecycle);
 }
 
 function updateRangeOutputs() {
@@ -6452,7 +6536,8 @@ export async function startEditor({ device, offline = false } = {}) {
 
   pushHistory();
   window.stencilCncIsBusy = () => Boolean(
-    state.dirty || state.styleBusy || state.shareBusy || workspaceSyncInFlight || rebuildTimer || saveTimer || styleTimer,
+    state.dirty || state.styleBusy || state.shareBusy || workspaceSyncInFlight ||
+    localSaveInFlight || serverSyncInFlight || rebuildTimer || localSaveTimer || serverSyncTimer || styleTimer,
   );
   window.addEventListener('resize', () => fitToView());
   window.addEventListener('offline', () => {

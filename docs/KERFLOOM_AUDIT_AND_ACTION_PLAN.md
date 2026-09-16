@@ -43,9 +43,9 @@ This repository now contains the following implementation increments:
 - **K01 — partial, continuing.** Twenty-one JavaScript tests were added for the selected storage/sync/geometry/candidate/export defects. Later kerf-contract, broader browser interaction, quota, and cache-durability fixtures remain pending.
 - **K09 — partial.** Permanent-delete copy now states the server-workspace/all-linked-device effect. Other truth-in-copy items remain pending.
 - **K17 — deployed, app-level browser acceptance pending.** PNG preview is available whenever artwork geometry exists. A preview without a current passing validation receives a branded, high-contrast “not validated for cutting” watermark and a `draft-preview` filename; SVG and DXF remain blocked. Validated PNG remains unwatermarked. The existing artifact path retains and synchronizes either PNG through the authoritative project save flow. A Chromium rasterization smoke test verified that the watermark is visibly drawn and the canvas encodes a non-empty PNG.
-- **K04 — first increment implemented locally.** Downloaded project, source, checkpoint, and retained-export data is now staged before replacement and committed through one multi-store IndexedDB transaction. The transaction wrapper explicitly aborts callback failures. A malformed-download regression and a simulated quota failure retain the prior revision and outbox; a real Chromium `DataCloneError` check verified rollback of project, checkpoint, and export together. Lifecycle flushing, retry/backoff, quota-specific user guidance, and physical mobile suspension remain open.
+- **K04 — atomic replacement and lifecycle increments deployed.** Downloaded project, source, checkpoint, and retained-export data is staged before replacement and committed through one multi-store IndexedDB transaction. The editor now writes locally after a short independent debounce, queues the immutable generation without starting network I/O, and uploads after a longer debounce. Backgrounding triggers a best-effort local flush, while a durable change marker makes an edit recoverable on reopening even if suspension happened before its outbox entry was written. Retry/backoff, quota-specific user guidance, and physical mobile suspension remain open.
 
-Verification after these increments: **163/163 JavaScript tests passed**; the most recent deployment also passed **71/71 Python tests**. Syntax and diff checks passed. The isolated Chromium workspace/legacy-import smoke test, draft-watermark rasterization/PNG-encoding smoke test, and IndexedDB replacement rollback smoke test passed. K17 is deployed; the K04 increment remains local. The existing `portfolio-screenshots/` assets were left untouched.
+Verification after these increments: **165/165 JavaScript tests passed** and **71/71 Python tests passed** in deployment. Syntax and diff checks passed. The isolated Chromium workspace/legacy-import, draft-watermark rasterization/PNG-encoding, IndexedDB replacement rollback, and reopen-without-outbox recovery smoke tests passed. K17 and both delivered K04 increments are deployed. The existing `portfolio-screenshots/` assets were left untouched.
 
 ## Scope and confidence
 
@@ -392,13 +392,13 @@ Done when: save → checkpoint → edit creates no false conflict; A-in-flight/B
 
 ### K04 — Make the offline copy durable and atomically replaceable
 
-- [ ] Separate rapid local persistence from debounced network upload; flush pending local state at lifecycle transitions without depending on `beforeunload`.
+- [x] Separate rapid local persistence from debounced network upload; flush pending local state at lifecycle transitions without depending on `beforeunload`.
 - [x] Stage complete incoming bundles and validate their assets before replacing a usable local copy in a multi-store transaction.
 - [x] Record a server revision as locally complete only after all corresponding assets/checkpoints are committed.
 - [ ] Add bounded retries/backoff while active and an honest unsynced count. Retain a manual retry option.
 - [ ] Handle quota failure explicitly without deleting the last good copy or clearing the outbox.
 
-**Status:** first local increment complete. Replacement failures now roll back atomically and leave queued edits untouched. Malformed-asset and simulated quota regressions pass, and a Chromium IndexedDB smoke test verified rollback after a mid-transaction clone failure. Quota-specific messaging/recovery, lifecycle flushes, retries, and physical mobile suspension are still pending.
+**Status:** atomic replacement and lifecycle increments are deployed. Replacement failures roll back atomically and leave queued edits untouched. Local saves use a 160 ms debounce, server upload uses a separate 1.2-second debounce, and `visibilitychange`/`pagehide` initiate a local-only flush. Each local edit has a durable identity and pending marker; an older acknowledgement cannot clear a newer unqueued edit, and startup reconstructs a missing outbox operation instead of downloading over it. A Chromium reopen simulation verified that a local edit with no outbox entry uploads and clears its marker. Quota-specific messaging/recovery, bounded retry/backoff, and physical mobile suspension are still pending.
 
 Start at `web/storage.js`, `cacheBundle` in `web/project-sync.js`, and save/lifecycle handlers in `web/editor.js`.
 

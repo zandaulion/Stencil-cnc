@@ -115,7 +115,11 @@ export async function saveProject(record, { makeCurrent = true } = {}) {
     ...record,
     id: record.id || crypto.randomUUID(),
     createdAt: record.createdAt || now,
-    updatedAt: now
+    updatedAt: now,
+    localSyncPending: record.localSyncPending !== false,
+    localChangeId: record.localSyncPending === false
+      ? record.localChangeId || null
+      : crypto.randomUUID(),
   };
   await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   if (makeCurrent) await setLastProject(value.id);
@@ -329,15 +333,21 @@ export async function acknowledgeProjectSync(
       requestResult(stores[SYNC_STORE].get(projectId)),
     ]);
     const revision = Number(metadata?.revision) || 0;
+    const reconciliation = reconcileProjectAcknowledgement(pending, operationId, revision);
+    const acknowledgesCurrentChange = reconciliation.exact && (
+      !pending?.localChangeId || pending.localChangeId === local?.localChangeId
+    );
     const project = local ? {
       ...local,
       serverRevision: revision,
       serverSyncedAt: new Date().toISOString(),
       serverSha256: metadata?.sha256 || null,
+      localSyncPending: acknowledgesCurrentChange
+        ? false
+        : Boolean(local.localSyncPending || reconciliation.pending),
     } : null;
     if (project) await requestResult(stores[PROJECT_STORE].put(project));
 
-    const reconciliation = reconcileProjectAcknowledgement(pending, operationId, revision);
     const nextPending = reconciliation.pending;
     if (reconciliation.exact) {
       await requestResult(stores[SYNC_STORE].delete(projectId));
@@ -360,7 +370,15 @@ export async function loadStorageMeta(key) {
 export async function updateProject(id, changes) {
   const current = await loadProject(id);
   if (!current) throw new RangeError('Project not found');
-  const value = { ...current, ...changes, id, updatedAt: new Date().toISOString() };
+  const localSyncPending = changes.localSyncPending !== false;
+  const value = {
+    ...current,
+    ...changes,
+    id,
+    updatedAt: new Date().toISOString(),
+    localSyncPending,
+    localChangeId: localSyncPending ? crypto.randomUUID() : current.localChangeId || null,
+  };
   await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   return value;
 }
