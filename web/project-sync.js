@@ -2,11 +2,8 @@ import { deserializeProject, serializeProject } from '/core/index.js';
 import {
   acknowledgeProjectSync,
   cacheProject,
-  clearProjectAssets,
   deleteProject,
   deleteProjectSync,
-  importArtifact,
-  importCheckpoint,
   listArtifacts,
   listCheckpoints,
   listProjects,
@@ -14,6 +11,7 @@ import {
   loadProject,
   loadProjectSync,
   putProjectSync,
+  replaceProjectCache,
   storageWorkspaceId,
 } from '/storage.js';
 
@@ -147,8 +145,18 @@ async function cacheBundle(metadata, bundle) {
   const project = deserializeProject(JSON.stringify(bundle.project));
   const id = metadata.id || bundle.clientProjectId;
   const localSource = bundle.source?.dataUrl ? dataUrlToBlob(bundle.source.dataUrl) : null;
-  await clearProjectAssets(id);
-  const cached = await cacheProject({
+  if (localSource && Number.isFinite(Number(bundle.source?.size)) && localSource.size !== Number(bundle.source.size)) {
+    throw new Error('The downloaded source image is incomplete.');
+  }
+  const checkpoints = (bundle.checkpoints || []).slice(0, 10).map((checkpoint) => ({
+    ...checkpoint,
+    project: deserializeProject(JSON.stringify(checkpoint?.project)),
+  }));
+  const artifacts = (bundle.artifacts || []).slice(0, 30).map((artifact) => ({
+    ...artifact,
+    blob: dataUrlToBlob(artifact?.dataUrl),
+  }));
+  const cached = {
     ...project,
     id,
     localSource,
@@ -156,17 +164,8 @@ async function cacheBundle(metadata, bundle) {
     serverRevision: Number(metadata.revision) || 0,
     serverSyncedAt: new Date().toISOString(),
     serverSha256: metadata.sha256 || null,
-  });
-  for (const checkpoint of (bundle.checkpoints || []).slice(0, 10)) {
-    await importCheckpoint(id, checkpoint);
-  }
-  for (const artifact of (bundle.artifacts || []).slice(0, 30)) {
-    await importArtifact(id, {
-      ...artifact,
-      blob: dataUrlToBlob(artifact.dataUrl),
-    });
-  }
-  return cached;
+  };
+  return replaceProjectCache(cached, { checkpoints, artifacts });
 }
 
 async function pullProject(metadata, workspaceId = storageWorkspaceId()) {

@@ -82,15 +82,27 @@ async function transaction(storeName, mode, operation, workspaceId = storageWork
   try {
     const storeNames = Array.isArray(storeName) ? storeName : [storeName];
     const tx = db.transaction(storeNames, mode);
-    const stores = Array.isArray(storeName)
-      ? Object.fromEntries(storeNames.map((name) => [name, tx.objectStore(name)]))
-      : tx.objectStore(storeName);
-    const result = await operation(stores);
-    await new Promise((resolve, reject) => {
+    const completion = new Promise((resolve, reject) => {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('Storage transaction aborted'));
     });
+    const stores = Array.isArray(storeName)
+      ? Object.fromEntries(storeNames.map((name) => [name, tx.objectStore(name)]))
+      : tx.objectStore(storeName);
+    let result;
+    try {
+      result = await operation(stores);
+    } catch (error) {
+      try {
+        tx.abort();
+      } catch {
+        // A failed IndexedDB request may already have aborted the transaction.
+      }
+      await completion.catch(() => {});
+      throw error;
+    }
+    await completion;
     return result;
   } finally {
     db.close();
@@ -171,6 +183,92 @@ export async function clearProjectAssets(id) {
   for (const artifact of artifacts) {
     await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.delete(artifact.id)));
   }
+}
+
+function importedCheckpoint(projectId, checkpoint) {
+  const value = {
+    id: crypto.randomUUID(),
+    projectId,
+    label: String(checkpoint?.label || 'Imported recovery point').slice(0, 120),
+    createdAt: typeof checkpoint?.createdAt === 'string'
+      ? checkpoint.createdAt
+      : new Date().toISOString(),
+    project: checkpoint?.project,
+  };
+  if (!value.project || typeof value.project !== 'object' || Array.isArray(value.project)) {
+    throw new TypeError('An editable checkpoint project is required');
+  }
+  return value;
+}
+
+function importedArtifact(projectId, artifact) {
+  if (!(artifact?.blob instanceof Blob)) {
+    throw new TypeError('A saved project and Blob artefact are required');
+  }
+  return {
+    id: crypto.randomUUID(),
+    projectId,
+    filename: String(artifact.filename || 'shared-artefact').slice(0, 240),
+    kind: String(artifact.kind || 'file').slice(0, 30),
+    mimeType: String(artifact.mimeType || artifact.blob.type || 'application/octet-stream').slice(0, 120),
+    createdAt: typeof artifact.createdAt === 'string'
+      ? artifact.createdAt
+      : new Date().toISOString(),
+    blob: artifact.blob,
+  };
+}
+
+/**
+ * Replace a downloaded project's complete local cache as one IndexedDB commit.
+ * Values are normalized before the transaction starts; clone/quota failures
+ * abort that transaction so the prior usable revision remains complete.
+ */
+export async function replaceProjectCache(
+  record,
+  { checkpoints = [], artifacts = [], makeCurrent = false } = {},
+) {
+  if (!record?.id) throw new TypeError('A project identifier is required');
+  if (!Array.isArray(checkpoints) || !Array.isArray(artifacts)) {
+    throw new TypeError('Project checkpoints and artefacts must be arrays');
+  }
+  const preparedCheckpoints = checkpoints
+    .slice(0, CHECKPOINT_LIMIT)
+    .map((checkpoint) => importedCheckpoint(record.id, checkpoint));
+  const preparedArtifacts = artifacts
+    .slice(0, ARTIFACT_LIMIT)
+    .map((artifact) => importedArtifact(record.id, artifact));
+  const storeNames = [PROJECT_STORE, CHECKPOINT_STORE, ARTIFACT_STORE];
+  if (makeCurrent) storeNames.push(META_STORE);
+
+  await transaction(storeNames, 'readwrite', async (stores) => {
+    const [checkpointIds, artifactIds] = await Promise.all([
+      requestResult(stores[CHECKPOINT_STORE].index('projectId').getAllKeys(record.id)),
+      requestResult(stores[ARTIFACT_STORE].index('projectId').getAllKeys(record.id)),
+    ]);
+    const writes = [];
+    const queue = (request) => {
+      const pending = requestResult(request);
+      // If a later `put` throws synchronously (for example DataCloneError),
+      // the outer transaction aborts. Mark already queued request rejections
+      // as observed while still allowing Promise.all below to propagate them.
+      pending.catch(() => {});
+      writes.push(pending);
+    };
+    queue(stores[PROJECT_STORE].put(record));
+    for (const id of checkpointIds) queue(stores[CHECKPOINT_STORE].delete(id));
+    for (const id of artifactIds) queue(stores[ARTIFACT_STORE].delete(id));
+    for (const checkpoint of preparedCheckpoints) {
+      queue(stores[CHECKPOINT_STORE].put(checkpoint));
+    }
+    for (const artifact of preparedArtifacts) {
+      queue(stores[ARTIFACT_STORE].put(artifact));
+    }
+    if (makeCurrent) {
+      queue(stores[META_STORE].put({ key: 'lastProjectId', value: record.id }));
+    }
+    await Promise.all(writes);
+  });
+  return record;
 }
 
 export async function putProjectSync(operation) {
@@ -305,18 +403,7 @@ export async function listCheckpoints(projectId) {
 }
 
 export async function importCheckpoint(projectId, checkpoint) {
-  const value = {
-    id: crypto.randomUUID(),
-    projectId,
-    label: String(checkpoint?.label || 'Imported recovery point').slice(0, 120),
-    createdAt: typeof checkpoint?.createdAt === 'string'
-      ? checkpoint.createdAt
-      : new Date().toISOString(),
-    project: checkpoint?.project,
-  };
-  if (!value.project || typeof value.project !== 'object') {
-    throw new TypeError('An editable checkpoint project is required');
-  }
+  const value = importedCheckpoint(projectId, checkpoint);
   await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   return value;
 }
@@ -343,20 +430,10 @@ export async function saveArtifact(projectId, artifact) {
 }
 
 export async function importArtifact(projectId, artifact) {
-  if (!projectId || !(artifact?.blob instanceof Blob)) {
+  if (!projectId) {
     throw new TypeError('A saved project and Blob artefact are required');
   }
-  const value = {
-    id: crypto.randomUUID(),
-    projectId,
-    filename: String(artifact.filename || 'shared-artefact').slice(0, 240),
-    kind: String(artifact.kind || 'file').slice(0, 30),
-    mimeType: String(artifact.mimeType || artifact.blob.type || 'application/octet-stream').slice(0, 120),
-    createdAt: typeof artifact.createdAt === 'string'
-      ? artifact.createdAt
-      : new Date().toISOString(),
-    blob: artifact.blob,
-  };
+  const value = importedArtifact(projectId, artifact);
   await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   return value;
 }

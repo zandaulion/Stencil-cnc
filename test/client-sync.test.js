@@ -27,15 +27,20 @@ async function syncHarness() {
   fs.writeFileSync(storagePath, `
     export const state = {
       workspaceId: 'workspace-a', projects: new Map(), sync: new Map(), sequence: 0,
+      checkpoints: new Map(), artifacts: new Map(), replaceError: null,
     };
     export const storageWorkspaceId = () => state.workspaceId;
-    export const listArtifacts = async () => [];
-    export const listCheckpoints = async () => [];
-    export const clearProjectAssets = async () => {};
-    export const importArtifact = async () => {};
-    export const importCheckpoint = async () => {};
+    export const listArtifacts = async (id) => state.artifacts.get(id) || [];
+    export const listCheckpoints = async (id) => state.checkpoints.get(id) || [];
     export const loadProject = async (id) => state.projects.get(id) || null;
     export const cacheProject = async (record) => (state.projects.set(record.id, record), record);
+    export const replaceProjectCache = async (record, { checkpoints = [], artifacts = [] } = {}) => {
+      if (state.replaceError) throw state.replaceError;
+      state.projects.set(record.id, record);
+      state.checkpoints.set(record.id, checkpoints);
+      state.artifacts.set(record.id, artifacts);
+      return record;
+    };
     export const deleteProject = async (id) => state.projects.delete(id);
     export const listProjects = async ({ trashed = false } = {}) =>
       [...state.projects.values()].filter((row) => Boolean(row.trashedAt) === trashed);
@@ -503,6 +508,106 @@ test('a downloaded bundle records the response revision instead of stale list me
     assert.equal(cached.name, 'New bundle name');
     assert.equal(cached.serverRevision, 2);
     assert.equal(cached.serverSha256, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a malformed downloaded asset cannot replace the last complete local revision', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  const oldProject = { id: 'project-1', name: 'Complete local copy', serverRevision: 1 };
+  const oldCheckpoint = { id: 'checkpoint-old', projectId: oldProject.id };
+  const oldArtifact = { id: 'artifact-old', projectId: oldProject.id, blob: new Blob(['old']) };
+  storage.state.projects.set(oldProject.id, oldProject);
+  storage.state.checkpoints.set(oldProject.id, [oldCheckpoint]);
+  storage.state.artifacts.set(oldProject.id, [oldArtifact]);
+  globalThis.fetch = async (url) => {
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({
+        projects: [{ id: oldProject.id, name: 'Remote copy', revision: 2, sha256: 'new' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({
+      schema: sync.PROJECT_BUNDLE_SCHEMA,
+      version: sync.PROJECT_BUNDLE_VERSION,
+      clientProjectId: oldProject.id,
+      project: { id: oldProject.id, name: 'Incomplete remote copy' },
+      source: null,
+      checkpoints: [],
+      artifacts: [{ filename: 'broken.png', dataUrl: 'not-a-data-url' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ETag: '"2"' },
+    });
+  };
+
+  try {
+    await assert.rejects(sync.synchronizeProjectLibrary(), /Invalid project artefact/);
+    assert.strictEqual(storage.state.projects.get(oldProject.id), oldProject);
+    assert.deepEqual(storage.state.checkpoints.get(oldProject.id), [oldCheckpoint]);
+    assert.deepEqual(storage.state.artifacts.get(oldProject.id), [oldArtifact]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a failed atomic cache replacement retains the prior revision and queued edit', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  const oldProject = { id: 'project-1', name: 'Offline edit', serverRevision: 1 };
+  const queued = { projectId: 'project-2', kind: 'put', operationId: 'operation-local' };
+  storage.state.projects.set(oldProject.id, oldProject);
+  storage.state.sync.set(queued.projectId, queued);
+  storage.state.replaceError = new DOMException('Storage quota exceeded', 'QuotaExceededError');
+  globalThis.fetch = async (url) => {
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({
+        projects: [{ id: oldProject.id, name: 'Remote copy', revision: 2, sha256: 'new' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({
+      schema: sync.PROJECT_BUNDLE_SCHEMA,
+      version: sync.PROJECT_BUNDLE_VERSION,
+      clientProjectId: oldProject.id,
+      project: { id: oldProject.id, name: 'Complete remote copy' },
+      source: null,
+      checkpoints: [],
+      artifacts: [{
+        filename: 'preview.png',
+        mimeType: 'image/png',
+        dataUrl: 'data:image/png;base64,bmV3',
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ETag: '"2"' },
+    });
+  };
+
+  try {
+    await assert.rejects(sync.synchronizeProjectLibrary(), { name: 'QuotaExceededError' });
+    assert.strictEqual(storage.state.projects.get(oldProject.id), oldProject);
+    assert.strictEqual(storage.state.sync.get(queued.projectId), queued);
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'navigator', {
