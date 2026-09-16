@@ -183,6 +183,10 @@ const state = {
   styleMask: null,       // what the analysis service returned, before touch-ups
   styleMaskFor: null,    // cut style that produced styleMask
   styleMaskFresh: false, // false while controls have changed or a refinement is pending
+  tonePreviewCanvas: null, // exact server interpretation before pattern generation
+  tonePreviewFor: null,
+  toneStatistics: null,
+  lineToneCache: null,
   styleBusy: false,
   shareBusy: false,
   baseMask: null,        // threshold/style result in the source's own aspect
@@ -313,6 +317,50 @@ function treatedImageData() {
 
   const field = { width, height, data: out };
   return blur > 0 ? boxBlur(field, Math.round(blur)) : field;
+}
+
+function lineArtTonePreview() {
+  if (!state.source) return null;
+  const key = [
+    numberField('contrast', 0),
+    numberField('blur', 0),
+    state.source.width,
+    state.source.height,
+  ].join(':');
+  if (state.lineToneCache?.key === key) return state.lineToneCache;
+  const field = treatedImageData();
+  const canvas = new OffscreenCanvas(field.width, field.height);
+  const context = canvas.getContext('2d');
+  const image = context.createImageData(field.width, field.height);
+  image.data.set(field.data);
+  context.putImageData(image, 0, 0);
+  let dark = 0;
+  let midtone = 0;
+  let light = 0;
+  for (let index = 0; index < field.data.length; index += 4) {
+    const value = field.data[index];
+    if (value < 255 / 3) dark += 1;
+    else if (value < 255 * 2 / 3) midtone += 1;
+    else light += 1;
+  }
+  const total = Math.max(1, dark + midtone + light);
+  state.lineToneCache = {
+    key,
+    canvas,
+    statistics: { dark: dark / total, midtone: midtone / total, light: light / total },
+  };
+  return state.lineToneCache;
+}
+
+function currentTonePreview() {
+  if (state.mode === 'line-art') return lineArtTonePreview();
+  // Keep the last complete interpretation visible while replacement settings
+  // render. It still corresponds to the currently displayed artwork, and the
+  // progress affordance makes the pending replacement explicit.
+  if (state.tonePreviewFor !== selectedCutStyle()) return null;
+  return state.tonePreviewCanvas
+    ? { canvas: state.tonePreviewCanvas, statistics: state.toneStatistics }
+    : null;
 }
 
 /** Separable box blur: one horizontal pass and one vertical pass. */
@@ -875,6 +923,7 @@ function invalidateStyleRender({ useLocalPreview = state.mode === 'line-art' } =
   styleAbort = null;
   state.styleBusy = false;
   setRenderProgress();
+  updateViewAvailability();
   if (state.selectedCandidateId) {
     state.selectedCandidateId = null;
     renderCandidates();
@@ -926,9 +975,17 @@ async function renderStyle() {
     // A slower earlier answer must not overwrite a newer one: the same race
     // that made a slider look stuck in the other app.
     if (mine !== styleToken || requestedStyle !== selectedCutStyle()) return false;
+    const decodedTone = payload.tonePreview
+      ? await decodeTonePreview(payload.tonePreview)
+      : null;
+    if (mine !== styleToken || requestedStyle !== selectedCutStyle()) return false;
     state.styleMask = decodeMask(payload.sourceMask);
     state.styleMaskFor = requestedStyle;
     state.styleMaskFresh = true;
+    state.tonePreviewCanvas = decodedTone;
+    state.tonePreviewFor = decodedTone ? requestedStyle : null;
+    state.toneStatistics = payload.tonePreview?.statistics ?? null;
+    updateViewAvailability();
     if (requestedStyle === 'raze' && payload.info.radialCenter) {
       const radial = payload.info.radialCenter;
       const centerX = el('style-ray-center-x');
@@ -1039,6 +1096,7 @@ function updateSlatStabilizerControls() {
 function setMode(mode) {
   state.mode = mode;
   reflectModeControls();
+  updateViewAvailability();
   if (!state.source) { refresh({ immediate: true }); return; }
   if (mode === 'line-art') {
     refresh({ immediate: true });
@@ -2033,6 +2091,43 @@ const escapeHtml = (value) => String(value)
 
 /* ---------------------------------------------------------------- drawing */
 
+function drawPlacedImage(context, preview, mask, background = '#e5e8e5') {
+  const currentSheet = sheet();
+  context.fillStyle = background;
+  context.fillRect(0, 0, mask.width, mask.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  const bounds = state.contentBounds;
+  const sourceSize = state.contentSourceSize;
+  const sourceX = bounds && sourceSize ? bounds.x / sourceSize.width * preview.width : 0;
+  const sourceY = bounds && sourceSize ? bounds.y / sourceSize.height * preview.height : 0;
+  const sourceWidth = bounds && sourceSize ? bounds.width / sourceSize.width * preview.width : preview.width;
+  const sourceHeight = bounds && sourceSize ? bounds.height / sourceSize.height * preview.height : preview.height;
+  context.drawImage(
+    preview,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    state.placement.xMm / currentSheet.widthMm * mask.width,
+    state.placement.yMm / currentSheet.heightMm * mask.height,
+    state.placement.widthMm / currentSheet.widthMm * mask.width,
+    state.placement.heightMm / currentSheet.heightMm * mask.height,
+  );
+}
+
+function updateToneInspector(preview = null) {
+  const inspector = el('tone-inspector');
+  inspector?.toggleAttribute('hidden', state.view !== 'tone' || !preview);
+  if (state.view !== 'tone' || !preview?.statistics) return;
+  for (const name of ['dark', 'midtone', 'light']) {
+    const value = Number(preview.statistics[name]);
+    if (el(`tone-${name}`)) el(`tone-${name}`).textContent = Number.isFinite(value)
+      ? `${Math.round(value * 100)}%`
+      : '—';
+  }
+}
+
 function draw() {
   const canvas = el('editor-canvas');
   const overlay = el('overlay-canvas');
@@ -2040,6 +2135,8 @@ function draw() {
   const mask = state.designMask;
   const stage = el('canvas-stage');
   if (stage) stage.dataset.view = state.view;
+  const tonePreview = state.view === 'tone' ? currentTonePreview() : null;
+  updateToneInspector(tonePreview);
   el('empty-state')?.toggleAttribute('hidden', Boolean(mask));
   stage?.classList.toggle('has-design', Boolean(mask));
   if (!mask) {
@@ -2060,29 +2157,13 @@ function draw() {
 
   const context = canvas.getContext('2d');
   if (state.view === 'original' && state.source?.previewCanvas && state.placement) {
-    const currentSheet = sheet();
-    context.fillStyle = '#e5e8e5';
-    context.fillRect(0, 0, mask.width, mask.height);
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
-    const preview = state.source.previewCanvas;
-    const bounds = state.contentBounds;
-    const sourceSize = state.contentSourceSize;
-    const sourceX = bounds && sourceSize ? bounds.x / sourceSize.width * preview.width : 0;
-    const sourceY = bounds && sourceSize ? bounds.y / sourceSize.height * preview.height : 0;
-    const sourceWidth = bounds && sourceSize ? bounds.width / sourceSize.width * preview.width : preview.width;
-    const sourceHeight = bounds && sourceSize ? bounds.height / sourceSize.height * preview.height : preview.height;
-    context.drawImage(
-      preview,
-      sourceX,
-      sourceY,
-      sourceWidth,
-      sourceHeight,
-      state.placement.xMm / currentSheet.widthMm * mask.width,
-      state.placement.yMm / currentSheet.heightMm * mask.height,
-      state.placement.widthMm / currentSheet.widthMm * mask.width,
-      state.placement.heightMm / currentSheet.heightMm * mask.height,
-    );
+    drawPlacedImage(context, state.source.previewCanvas, mask);
+    drawOverlay(overlay, mask);
+    applyTransform();
+    return;
+  }
+  if (state.view === 'tone' && tonePreview?.canvas && state.placement) {
+    drawPlacedImage(context, tonePreview.canvas, mask, '#f4f4f1');
     drawOverlay(overlay, mask);
     applyTransform();
     return;
@@ -4043,6 +4124,18 @@ async function decodeSourceFile(file, fallbackName = 'Source image') {
   return decoded;
 }
 
+async function decodeTonePreview(payload) {
+  if (!payload?.data || payload.mimeType !== 'image/png') return null;
+  const binary = atob(payload.data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: payload.mimeType }));
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0);
+  bitmap.close?.();
+  return canvas;
+}
+
 async function loadProjectState(project, { imported = false } = {}) {
   state.styleSettings = cloneStyleSettings(project.editor?.styleSettings);
   applyCanonicalProjectControls(project);
@@ -4063,6 +4156,10 @@ async function loadProjectState(project, { imported = false } = {}) {
   state.styleMask = null;
   state.styleMaskFor = null;
   state.styleMaskFresh = false;
+  state.tonePreviewCanvas = null;
+  state.tonePreviewFor = null;
+  state.toneStatistics = null;
+  state.lineToneCache = null;
   state.contentBounds = null;
   state.contentSourceSize = null;
   state.baseMask = project.raster?.baseMask
@@ -4187,6 +4284,10 @@ async function importFile(file) {
     state.styleMask = null;
     state.styleMaskFor = null;
     state.styleMaskFresh = false;
+    state.tonePreviewCanvas = null;
+    state.tonePreviewFor = null;
+    state.toneStatistics = null;
+    state.lineToneCache = null;
     state.contentBounds = null;
     state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
@@ -4458,6 +4559,10 @@ function restoreCandidate(id) {
   applyControls(candidate.controls);
   state.baseMask = decodeMask(candidate.baseMask);
   state.sourceMask = null;
+  state.tonePreviewCanvas = null;
+  state.tonePreviewFor = null;
+  state.toneStatistics = null;
+  state.lineToneCache = null;
   if (state.source) {
     state.styleMask = { ...state.baseMask, data: Uint8Array.from(state.baseMask.data) };
     state.styleMaskFor = selectedCutStyle();
@@ -5376,8 +5481,12 @@ function setView(view) {
     toast('The original image is not available in this project file.');
     return;
   }
+  if (view === 'tone' && !currentTonePreview()) {
+    toast(state.source ? 'The updated tone interpretation is still rendering.' : 'The source image is not available.');
+    return;
+  }
   state.view = view;
-  for (const name of ['original', 'source', 'material', 'backlit', 'issues']) {
+  for (const name of ['original', 'tone', 'source', 'material', 'backlit', 'issues']) {
     const button = el(`view-${name}`);
     button?.setAttribute('aria-pressed', String(name === view));
     button?.classList.toggle('is-selected', name === view);
@@ -5390,7 +5499,14 @@ function setView(view) {
 function updateViewAvailability() {
   const original = el('view-original');
   if (original) original.disabled = !state.source;
-  if (!state.source && state.view === 'original') state.view = 'material';
+  const tone = el('view-tone');
+  const toneReady = Boolean(state.source && (state.mode === 'line-art' || (
+    state.tonePreviewCanvas && state.tonePreviewFor === selectedCutStyle()
+  )));
+  if (tone) tone.disabled = !toneReady;
+  if (!state.source && state.view === 'original') { setView('material'); return; }
+  if (!toneReady && state.view === 'tone') { setView(state.source ? 'original' : 'material'); return; }
+  updateToneInspector();
 }
 
 function setSidePanel(panel) {
@@ -5747,6 +5863,8 @@ function wire() {
     styleAbort?.abort();
     state.source = null; state.styleMask = null; state.styleMaskFor = null;
     state.styleMaskFresh = false; state.baseMask = null;
+    state.tonePreviewCanvas = null; state.tonePreviewFor = null;
+    state.toneStatistics = null; state.lineToneCache = null;
     state.sourceMask = null; state.designMask = null; state.frameMask = null; state.kerfPreviewMask = null;
     state.placement = null; state.contentBounds = null; state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
@@ -5904,6 +6022,19 @@ function wire() {
     });
   }
   el('btn-restyle')?.addEventListener('click', renderStyle);
+  el('btn-reset-photo-interpretation')?.addEventListener('click', () => {
+    const defaults = styleDefaults(selectedCutStyle());
+    for (const id of ['style-gain', 'style-smooth', 'style-cutout', 'style-clothes']) {
+      const node = el(id);
+      if (!node) continue;
+      if (node.type === 'checkbox') node.checked = defaults[id] === true;
+      else node.value = defaults[id];
+    }
+    rememberStyleSettings();
+    updateRangeOutputs();
+    restyle();
+    pushHistory();
+  });
 
   for (const id of ['kerf', 'min-web', 'min-opening']) {
     el(id)?.addEventListener('input', () => {
@@ -5995,7 +6126,7 @@ function wire() {
   el('touchup-size')?.addEventListener('input', () => { updateTouchupControls(); draw(); });
   el('touchup-size')?.addEventListener('change', pushHistory);
   el('touchup-safety')?.addEventListener('change', pushHistory);
-  for (const name of ['original', 'source', 'material', 'backlit', 'issues']) {
+  for (const name of ['original', 'tone', 'source', 'material', 'backlit', 'issues']) {
     el(`view-${name}`)?.addEventListener('click', () => setView(name));
   }
   for (const name of ['candidates', 'issues']) {

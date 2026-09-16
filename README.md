@@ -9,6 +9,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 ## What it does
 
 - Converts line art locally in the browser and photographs through a private analysis service.
+- Shows the actual light, midtone, and shadow interpretation before any cut pattern is applied.
 - Provides 13 cut styles: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
 - Radial cuts use a directly controlled solid-hub diameter and split rays progressively toward the panel edge.
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
@@ -24,7 +25,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 ## Workflow
 
-1. **Prepare** — import an image, choose a cut style, and tune its visual parameters.
+1. **Prepare** — import an image, inspect Original → Tone → Artwork, choose a cut style, and tune its visual parameters.
 2. **Panel** — set stock dimensions, orientation, frame edges, artwork fitting, and plasma constraints.
 3. **Support** — inspect connectivity, generate smart bridges, or draw and refine supports manually.
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.

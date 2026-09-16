@@ -44,7 +44,7 @@ from stiluri import (
     silueta,
 )
 from subiect import FaraSubiect, aplica, subiect, subiect_icoana
-from ton import portret, ton
+from ton import portret, previzualizare_ton, ton
 
 # The working resolution is chosen per request, from the panel and the limits.
 #
@@ -128,6 +128,7 @@ def _raspuns_masca(
     mm_pe_px: float,
     previzualizare: bool,
     info_suplimentar: dict | None = None,
+    ton_intermediar: tuple[np.ndarray, dict[str, float]] | None = None,
 ) -> JSONResponse:
     inaltime, latime = masca.shape
     raspuns = {
@@ -142,6 +143,17 @@ def _raspuns_masca(
     }
     if info_suplimentar:
         raspuns["info"].update(info_suplimentar)
+    if ton_intermediar is not None:
+        imagine_ton, rezumat_ton = ton_intermediar
+        ok, buf = cv2.imencode(".png", imagine_ton)
+        if ok:
+            raspuns["tonePreview"] = {
+                "mimeType": "image/png",
+                "data": base64.b64encode(buf.tobytes()).decode(),
+                "width": int(imagine_ton.shape[1]),
+                "height": int(imagine_ton.shape[0]),
+                "statistics": rezumat_ton,
+            }
     if previzualizare:
         ok, buf = cv2.imencode(".png", np.where(masca, 30, 245).astype(np.uint8))
         if ok:
@@ -276,6 +288,9 @@ async def analizeaza(
     if inverseaza:
         camp = np.where(masca_subiect, 1.0 - camp, camp).astype(np.float32)
 
+    zona_ton = masca_subiect if fara_fundal or stil in {"silueta", "grafic", "icoana"} else None
+    ton_intermediar = previzualizare_ton(camp, zona=zona_ton, latime_maxima=LATIME_ANALIZA)
+
     inaltime = round(mic.shape[0] * lat_geometrie / mic.shape[1])
     latime = lat_geometrie
     mm_pe_px = coala_lat_mm / latime
@@ -386,4 +401,5 @@ async def analizeaza(
     return _raspuns_masca(
         masca, coala_lat_mm, mm_pe_px, previzualizare,
         info_suplimentar=info_suplimentar,
+        ton_intermediar=ton_intermediar,
     )

@@ -12,7 +12,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "analiza"))
 
-from ton import portret, ton  # noqa: E402
+from ton import portret, previzualizare_ton, ton  # noqa: E402
 
 
 def plan(inaltime, latime, valoare):
@@ -20,6 +20,19 @@ def plan(inaltime, latime, valoare):
 
 
 class TestTon(unittest.TestCase):
+    def test_previzualizarea_arata_campul_real_si_raportul_tonal(self):
+        camp = np.array([[0.0, 0.2, 0.4, 0.7, 1.0]], np.float32)
+        imagine, rezumat = previzualizare_ton(camp)
+        self.assertEqual(imagine.tolist(), [[255, 204, 153, 76, 0]])
+        self.assertEqual(rezumat, {"light": 0.4, "midtone": 0.2, "dark": 0.4})
+
+    def test_previzualizarea_exclude_fundalul_din_raport_si_il_arata_alb(self):
+        camp = np.array([[1.0, 0.5, 0.0]], np.float32)
+        zona = np.array([[True, True, False]])
+        imagine, rezumat = previzualizare_ton(camp, zona=zona)
+        self.assertEqual(imagine.tolist(), [[0, 128, 255]])
+        self.assertEqual(rezumat, {"light": 0.0, "midtone": 0.5, "dark": 0.5})
+
     def test_o_suprafata_plata_nu_cere_cerneala(self):
         # The first mistake: local contrast written as `0.5 + difference`, which
         # makes a featureless wall ask for half the sheet. Measured on a real

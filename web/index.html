@@ -578,12 +578,17 @@
 
               <span id="style-photo-common-home" hidden></span>
               <div id="style-photo-common" hidden>
+                <div class="section-title-row image-interpretation-title">
+                  <h3>Image interpretation <small>Automatic</small></h3>
+                  <button class="text-button" id="btn-reset-photo-interpretation" type="button">Reset</button>
+                </div>
+                <p class="section-help image-interpretation-help">Kerfloom first identifies light, midtone, shadow, and subject shape. Inspect that result in the Tone view before choosing how the cut pattern expresses it.</p>
                 <div class="range-control">
-                  <label for="style-gain"><span>Detail strength</span><output id="style-gain-value" for="style-gain">2.2</output></label>
+                  <label for="style-gain"><span>Shadow detail</span><output id="style-gain-value" for="style-gain">2.2</output></label>
                   <input id="style-gain" name="styleGain" type="range" min="0.5" max="4" step="0.1" value="2.2">
                 </div>
                 <div class="range-control">
-                  <label for="style-smooth"><span>Flatten skin</span><output id="style-smooth-value" for="style-smooth">0.55</output></label>
+                  <label for="style-smooth"><span>Surface smoothing</span><output id="style-smooth-value" for="style-smooth">0.55</output></label>
                   <input id="style-smooth" name="styleSmooth" type="range" min="0" max="1" step="0.05" value="0.55">
                 </div>
 
@@ -1004,6 +1009,7 @@
         <div class="canvas-toolbar" aria-label="Canvas tools">
           <div class="toolbar-group view-modes" role="group" aria-label="Preview mode">
             <button class="toolbar-button" id="view-original" type="button" aria-pressed="false">Original</button>
+            <button class="toolbar-button" id="view-tone" type="button" aria-pressed="false" disabled>Tone</button>
             <button class="toolbar-button" id="view-source" type="button" aria-pressed="false">Artwork</button>
             <button class="toolbar-button is-selected" id="view-material" type="button" aria-pressed="true">Material</button>
             <button class="toolbar-button" id="view-backlit" type="button" aria-pressed="false">Back-lit</button>
@@ -1056,6 +1062,15 @@
             </span>
             <span class="render-progress-track" aria-hidden="true"><i></i></span>
           </div>
+          <aside class="tone-inspector" id="tone-inspector" aria-label="Tone interpretation" hidden>
+            <div><strong>Image interpretation</strong><small>The actual tonal field used before the cut pattern.</small></div>
+            <span class="tone-gradient" aria-hidden="true"></span>
+            <dl>
+              <div><dt>Dark</dt><dd id="tone-dark">—</dd></div>
+              <div><dt>Midtone</dt><dd id="tone-midtone">—</dd></div>
+              <div><dt>Light</dt><dd id="tone-light">—</dd></div>
+            </dl>
+          </aside>
           <div class="scale-indicator" id="scale-readout" aria-hidden="true"><span></span><small>100 mm</small></div>
         </div>
 

@@ -30,6 +30,46 @@ RAZA_IMPLICITA = 0.06
 CASTIG_IMPLICIT = 2.2
 
 
+def previzualizare_ton(
+    camp: np.ndarray,
+    zona: np.ndarray | None = None,
+    latime_maxima: int = 900,
+) -> tuple[np.ndarray, dict[str, float]]:
+    """Render the exact 0..1 interpretation field as conventional greyscale.
+
+    The filters read 1 as deepest ink/shadow and 0 as light/no mark. The user
+    preview reverses that onto a white page, while the three percentages expose
+    how much of the active picture falls into light, midtone, and dark bands.
+    """
+    if camp.ndim != 2 or not np.isfinite(camp).all():
+        raise ValueError("Expected a finite two-dimensional tone field")
+    if latime_maxima < 1:
+        raise ValueError("Preview width must be positive")
+    valori = np.clip(camp.astype(np.float32), 0.0, 1.0)
+    if zona is not None:
+        if zona.shape != camp.shape:
+            raise ValueError("Tone preview zone must match the field")
+        active = zona.astype(bool)
+    else:
+        active = np.ones(camp.shape, dtype=bool)
+    esantion = valori[active]
+    if esantion.size == 0:
+        esantion = valori.reshape(-1)
+    total = max(1, int(esantion.size))
+    rezumat = {
+        "light": round(float(np.count_nonzero(esantion < 1 / 3) / total), 4),
+        "midtone": round(float(np.count_nonzero((esantion >= 1 / 3) & (esantion < 2 / 3)) / total), 4),
+        "dark": round(float(np.count_nonzero(esantion >= 2 / 3) / total), 4),
+    }
+    imagine = np.rint((1.0 - valori) * 255.0).astype(np.uint8)
+    if zona is not None:
+        imagine = np.where(active, imagine, 255).astype(np.uint8)
+    if imagine.shape[1] > latime_maxima:
+        inaltime = max(1, round(imagine.shape[0] * latime_maxima / imagine.shape[1]))
+        imagine = cv2.resize(imagine, (latime_maxima, inaltime), interpolation=cv2.INTER_AREA)
+    return imagine, rezumat
+
+
 def ton(
     bgr: np.ndarray,
     raza: float = RAZA_IMPLICITA,

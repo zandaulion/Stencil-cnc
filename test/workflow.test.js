@@ -32,12 +32,15 @@ test('Kerfloom is the public brand while project compatibility remains stable', 
 
 test('the creative workflow exposes every preview and a candidate workspace', () => {
   for (const id of [
-    'view-original', 'view-source', 'view-material', 'view-backlit', 'view-issues',
+    'view-original', 'view-tone', 'view-source', 'view-material', 'view-backlit', 'view-issues',
     'side-candidates', 'side-issues', 'candidate-list', 'btn-save-candidate',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(editor, /const CANDIDATE_LIMIT = 8/);
+  assert.match(html, /The actual tonal field used before the cut pattern/);
+  assert.match(editor, /payload\.tonePreview/);
+  assert.match(editor, /function drawPlacedImage/);
   assert.match(editor, /baseMask: encodeMask\(state\.baseMask\)/);
   assert.match(editor, /payloadVersion: CANDIDATE_PAYLOAD_VERSION/);
   assert.match(editor, /manufacturingRepairs: \{/);
