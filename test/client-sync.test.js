@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -77,11 +78,27 @@ async function syncHarness() {
     .replace("from '/core/index.js'", `from '${pathToFileURL(corePath).href}'`)
     .replace("from '/storage.js'", `from '${pathToFileURL(storagePath).href}'`);
   fs.writeFileSync(syncPath, source);
+  const syncUrl = pathToFileURL(syncPath).href;
+  const openTab = () => import(`${syncUrl}?test=${crypto.randomUUID()}`);
   const [sync, storage] = await Promise.all([
-    import(`${pathToFileURL(syncPath).href}?test=${crypto.randomUUID()}`),
+    openTab(),
     import(pathToFileURL(storagePath).href),
   ]);
-  return { directory, sync, storage };
+  return { directory, openTab, sync, storage };
+}
+
+function lockManager() {
+  const pending = new Map();
+  return {
+    request(name, callback) {
+      const previous = pending.get(name) || Promise.resolve();
+      const run = previous.catch(() => {}).then(callback);
+      pending.set(name, run);
+      return run.finally(() => {
+        if (pending.get(name) === run) pending.delete(name);
+      });
+    },
+  };
 }
 
 test('an older upload acknowledgement cannot remove a newer queued edit', async () => {
@@ -128,6 +145,319 @@ test('an older upload acknowledgement cannot remove a newer queued edit', async 
     assert.equal(JSON.parse(requests[1].body).project.name, 'B');
     assert.equal(storage.state.sync.size, 0);
     assert.equal(storage.state.projects.get('project-1').serverRevision, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('independent tabs serialize writes through a shared Web Lock', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, openTab, sync, storage } = await syncHarness();
+  const secondTab = await openTab();
+  const requests = [];
+  let releaseFirst;
+  let markFirstStarted;
+  const firstStarted = new Promise((resolve) => { markFirstStarted = resolve; });
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true, locks: lockManager() },
+  });
+  globalThis.fetch = async (_url, options) => {
+    requests.push(options);
+    if (requests.length === 1) {
+      markFirstStarted();
+      return new Promise((resolve) => { releaseFirst = () => resolve(response({ revision: 1, sha256: 'a' })); });
+    }
+    return response({ revision: 2, sha256: 'b' });
+  };
+
+  try {
+    const firstRecord = { id: 'project-1', name: 'Tab A', serverRevision: 0 };
+    storage.state.projects.set(firstRecord.id, firstRecord);
+    const first = sync.syncProject(firstRecord);
+    await firstStarted;
+
+    const secondRecord = { ...firstRecord, name: 'Tab B' };
+    storage.state.projects.set(secondRecord.id, secondRecord);
+    const second = secondTab.syncProject(secondRecord);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(requests.length, 1, 'the second tab must wait for the first tab\'s lock');
+
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.equal(firstResult.status, 'superseded');
+    assert.equal(secondResult.status, 'synced');
+    assert.equal(new Headers(requests[1].headers).get('If-Match'), '"1"');
+    assert.equal(JSON.parse(requests[1].body).project.name, 'Tab B');
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a two-tab edit racing a permanent delete is preserved under a new id', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, openTab, sync, storage } = await syncHarness();
+  const secondTab = await openTab();
+  let releaseDelete;
+  let markDeleteStarted;
+  let requestCount = 0;
+  const deleteStarted = new Promise((resolve) => { markDeleteStarted = resolve; });
+  const tombstone = {
+    id: 'project-1', name: 'Portrait', revision: 2, sha256: '',
+    deletedAt: '2026-09-16T11:00:00.000Z',
+  };
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true, locks: lockManager() },
+  });
+  globalThis.fetch = async (_url, options) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      assert.equal(options.method, 'DELETE');
+      markDeleteStarted();
+      return new Promise((resolve) => {
+        releaseDelete = () => resolve(new Response(JSON.stringify({
+          id: tombstone.id,
+          deleted: true,
+          revision: tombstone.revision,
+          deletedAt: tombstone.deletedAt,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      });
+    }
+    if (requestCount === 2) {
+      assert.equal(options.method, 'PUT');
+      assert.equal(new Headers(options.headers).get('If-Match'), '"2"');
+      return new Response(JSON.stringify({
+        error: 'This project was permanently deleted.',
+        code: 'project_deleted',
+        currentRevision: 2,
+        project: tombstone,
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+    }
+    const replacementId = JSON.parse(options.body).project.id;
+    return response({ id: replacementId, revision: 1, sha256: 'replacement' });
+  };
+
+  try {
+    const record = { id: 'project-1', name: 'Portrait', serverRevision: 1 };
+    storage.state.projects.set(record.id, record);
+    const deleting = sync.deleteServerProject(record);
+    await deleteStarted;
+
+    const edited = { ...record, name: 'Portrait edited in tab B' };
+    storage.state.projects.set(edited.id, edited);
+    const saving = secondTab.syncProject(edited);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(requestCount, 1);
+
+    releaseDelete();
+    const [deleteResult, saveResult] = await Promise.all([deleting, saving]);
+    assert.equal(deleteResult.status, 'superseded');
+    assert.equal(saveResult.status, 'conflict');
+    assert.notEqual(saveResult.projectId, record.id);
+    assert.equal(storage.state.projects.has(record.id), false);
+    assert.equal(storage.state.projects.get(saveResult.projectId).serverRevision, 1);
+    assert.equal(storage.state.sync.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a lost upload response is reconciled by content instead of creating a conflict copy', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  let committedPayload = null;
+  let committedSha256 = null;
+  let requestCount = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      committedPayload = options.body;
+      committedSha256 = createHash('sha256').update(committedPayload).digest('hex');
+      throw new TypeError('response lost after commit');
+    }
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Portrait', revision: 1, sha256: committedSha256 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    assert.equal(options.body, committedPayload);
+    return new Response(JSON.stringify({
+      error: 'This project changed on another device.',
+      code: 'revision_conflict',
+      currentRevision: 1,
+      project: { id: 'project-1', name: 'Portrait', revision: 1, sha256: committedSha256 },
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const record = { id: 'project-1', name: 'Portrait', serverRevision: 0 };
+    storage.state.projects.set(record.id, record);
+    assert.equal((await sync.syncProject(record)).status, 'queued');
+    assert.ok(storage.state.sync.has(record.id));
+
+    const result = await sync.synchronizeProjectLibrary();
+    assert.equal(result.status, 'synced');
+    assert.equal(result.conflicts, 0);
+    assert.equal(storage.state.projects.size, 1);
+    assert.equal(storage.state.projects.get(record.id).serverRevision, 1);
+    assert.equal(storage.state.sync.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a stale-tab workspace rejection leaves its original operation queued', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(new Headers(options.headers).get('X-Kerfloom-Workspace'), 'workspace-a');
+    return new Response(JSON.stringify({
+      error: 'The linked workspace changed. Reload before synchronizing projects.',
+      code: 'workspace_changed',
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const record = { id: 'project-1', name: 'Workspace A portrait', serverRevision: 0 };
+    storage.state.projects.set(record.id, record);
+    await assert.rejects(() => sync.syncProject(record), (error) => error.code === 'workspace_changed');
+
+    assert.equal(storage.state.projects.size, 1);
+    assert.equal(storage.state.projects.get(record.id).name, record.name);
+    assert.equal(storage.state.sync.get(record.id)?.kind, 'put');
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('an offline edit of a permanently deleted project becomes a new conflict copy', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  let requestCount = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    requestCount += 1;
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({
+        projects: [{
+          id: 'project-1', name: 'Deleted portrait', revision: 2,
+          sha256: '', deletedAt: '2026-09-16T10:00:00.000Z',
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url === '/api/projects/project-1') {
+      return new Response(JSON.stringify({
+        error: 'This project changed on another device.',
+        code: 'revision_conflict',
+        currentRevision: 2,
+        project: {
+          id: 'project-1', name: 'Deleted portrait', revision: 2,
+          sha256: '', deletedAt: '2026-09-16T10:00:00.000Z',
+        },
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+    }
+    const replacementId = JSON.parse(options.body).project.id;
+    return response({ id: replacementId, revision: 1, sha256: 'replacement' });
+  };
+
+  try {
+    const record = { id: 'project-1', name: 'Offline portrait edit', serverRevision: 1 };
+    storage.state.projects.set(record.id, record);
+    await sync.queueProjectSync(record);
+
+    const result = await sync.synchronizeProjectLibrary();
+    assert.equal(result.conflicts, 1);
+    assert.equal(storage.state.projects.has(record.id), false);
+    assert.equal(storage.state.projects.size, 1);
+    const [copy] = storage.state.projects.values();
+    assert.notEqual(copy.id, record.id);
+    assert.match(copy.name, /conflict/i);
+    assert.equal(copy.serverRevision, 1);
+    assert.equal(storage.state.sync.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a lost delete response is acknowledged by the server tombstone', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  let requestCount = 0;
+  globalThis.fetch = async (url) => {
+    requestCount += 1;
+    if (requestCount === 1) throw new TypeError('response lost after delete commit');
+    assert.equal(url, '/api/projects');
+    return new Response(JSON.stringify({
+      projects: [{
+        id: 'project-1', name: 'Portrait', revision: 2, sha256: '',
+        deletedAt: '2026-09-16T12:00:00.000Z',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const record = { id: 'project-1', name: 'Portrait', serverRevision: 1 };
+    storage.state.projects.set(record.id, record);
+    assert.equal((await sync.deleteServerProject(record)).status, 'queued');
+    storage.state.projects.delete(record.id);
+
+    const result = await sync.synchronizeProjectLibrary();
+    assert.deepEqual(result.deleted, [record.id]);
+    assert.equal(storage.state.projects.has(record.id), false);
+    assert.equal(storage.state.sync.size, 0);
+    assert.equal(requestCount, 2, 'the tombstone confirms deletion without another DELETE');
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'navigator', {

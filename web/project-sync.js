@@ -55,11 +55,43 @@ async function responseError(response, fallback) {
   return error;
 }
 
+function isProjectConflict(error) {
+  return error.status === 409 && ['revision_conflict', 'project_deleted'].includes(error.code);
+}
+
+async function sha256Text(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function acknowledgeMatchingUpload(operation, details) {
+  const metadata = details?.project;
+  if (!metadata?.sha256 || metadata.deletedAt || operation.kind !== 'put') return null;
+  if (await sha256Text(operation.payload) !== String(metadata.sha256).toLowerCase()) return null;
+  const acknowledged = await acknowledgeProjectSync(
+    operation.projectId,
+    operation.operationId,
+    metadata,
+    { workspaceId: operation.workspaceId },
+  );
+  return {
+    status: acknowledged.exact ? 'synced' : 'superseded',
+    projectId: operation.projectId,
+    project: metadata,
+    recoveredAcknowledgement: true,
+  };
+}
+
 async function requestProjects() {
   const response = await fetch('/api/projects', {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: { Accept: 'application/json' },
+    headers: {
+      Accept: 'application/json',
+      'X-Kerfloom-Workspace': storageWorkspaceId(),
+    },
   });
   if (!response.ok) throw await responseError(response, 'Could not load server projects');
   return (await response.json()).projects || [];
@@ -137,11 +169,14 @@ async function cacheBundle(metadata, bundle) {
   return cached;
 }
 
-async function pullProject(metadata) {
+async function pullProject(metadata, workspaceId = storageWorkspaceId()) {
   const response = await fetch(`/api/projects/${encodeURIComponent(metadata.id)}/bundle`, {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: { Accept: PROJECT_CONTENT_TYPE },
+    headers: {
+      Accept: PROJECT_CONTENT_TYPE,
+      'X-Kerfloom-Workspace': workspaceId,
+    },
   });
   if (!response.ok) throw await responseError(response, 'Could not download the project');
   const responseRevision = Number(String(response.headers.get('ETag') || '').replaceAll('"', ''));
@@ -206,7 +241,7 @@ async function forkConflict(operation, details) {
   if (details?.project?.deletedAt) {
     await deleteProject(operation.projectId);
   } else if (details?.project) {
-    await pullProject(details.project);
+    await pullProject(details.project, operation.workspaceId);
   }
   const result = await flushProjectOperation(replacement, { resolveConflicts: false });
   const saved = result.status === 'synced';
@@ -258,6 +293,7 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
         headers: {
           Accept: 'application/json',
           'If-Match': `"${operation.expectedRevision}"`,
+          'X-Kerfloom-Workspace': operation.workspaceId,
         },
       });
       if (!response.ok) {
@@ -274,7 +310,7 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
             projectId: operation.projectId,
           };
         }
-        if (error.status === 409 && resolveConflicts) {
+        if (isProjectConflict(error) && resolveConflicts) {
           if (operation.workspaceId !== storageWorkspaceId()) {
             return { status: 'stale-workspace', projectId: operation.projectId };
           }
@@ -282,11 +318,22 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
           if (current && current.operationId !== operation.operationId && current.kind === 'put') {
             return forkConflict(current, error.details);
           }
-          await deleteProjectSync(operation.projectId, operation.operationId, { workspaceId: operation.workspaceId });
           if (error.details?.project?.deletedAt) {
+            const acknowledged = await acknowledgeProjectSync(
+              operation.projectId,
+              operation.operationId,
+              error.details.project,
+              { workspaceId: operation.workspaceId },
+            );
             await deleteProject(operation.projectId);
+            return {
+              status: acknowledged.exact ? 'deleted' : 'superseded',
+              projectId: operation.projectId,
+              recoveredAcknowledgement: true,
+            };
           } else if (error.details?.project) {
-            await pullProject(error.details.project);
+            await deleteProjectSync(operation.projectId, operation.operationId, { workspaceId: operation.workspaceId });
+            await pullProject(error.details.project, operation.workspaceId);
           }
           return {
             status: 'conflict',
@@ -317,15 +364,18 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
         Accept: 'application/json',
         'Content-Type': PROJECT_CONTENT_TYPE,
         'If-Match': `"${operation.expectedRevision}"`,
+        'X-Kerfloom-Workspace': operation.workspaceId,
       },
       body: operation.payload,
     });
     if (!response.ok) {
       const error = await responseError(response, 'Could not save the server project');
-      if (error.status === 409 && resolveConflicts) {
+      if (isProjectConflict(error) && resolveConflicts) {
         if (operation.workspaceId !== storageWorkspaceId()) {
           return { status: 'stale-workspace', projectId: operation.projectId };
         }
+        const recovered = await acknowledgeMatchingUpload(operation, error.details);
+        if (recovered) return recovered;
         const current = await loadProjectSync(operation.projectId, { workspaceId: operation.workspaceId });
         return forkConflict(current?.kind === 'put' ? current : operation, error.details);
       }

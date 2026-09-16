@@ -36,13 +36,13 @@ This document began as the audit and proposed implementation handoff for Sol. Th
 
 This repository now contains a local, undeployed first increment:
 
-- **K02 — implemented, broader verification pending.** Browser databases are named by the server-verified workspace identifier. Offline startup requires a previously verified identifier. The former origin-wide database is quarantined and can only be copied into the current workspace through an explicit, reversible Projects-library action; it is never auto-uploaded. A fresh-browser Chromium check verified that workspace A and B see separate projects and that a legacy project is copied only into the chosen workspace.
-- **K03 — implemented, concurrency edge verification pending.** Queued operations carry immutable IDs and workspace ownership. Server acknowledgement atomically removes only the exact operation or rebases a newer pending edit. Per-project writers use local serialization plus Web Locks where available. Actual upload/download responses provide the recorded revision. A conflict copy that cannot upload remains visibly queued. The client tests cover an A-in-flight/B-queued acknowledgement race, stale list metadata, and an offline conflict copy. Two-tab, tombstone, quota/interruption, and in-flight identity-switch scenarios remain to be exercised end to end.
+- **K02 — implemented, real-browser acceptance pending.** Browser databases are named by the server-verified workspace identifier. Offline startup requires a previously verified identifier. The former origin-wide database is quarantined and can only be copied into the current workspace through an explicit, reversible Projects-library action; it is never auto-uploaded. Every project API request also carries its originating workspace identity; the server rejects a stale tab after another tab changes the authentication cookie. A fresh-browser Chromium check verified separate A/B project stores and deliberate legacy import; HTTP integration tests verify the stale-session fence.
+- **K03 — implemented, real-browser acceptance pending.** Queued operations carry immutable IDs and workspace ownership. Server acknowledgement atomically removes only the exact operation or rebases a newer pending edit. Per-project writers use local serialization plus Web Locks where available. Actual upload/download responses provide the recorded revision. A conflict copy that cannot upload remains visibly queued. Tests now cover independent-tab serialization, an edit racing permanent deletion, tombstones, lost upload/delete responses, content-hash acknowledgement recovery, stale list metadata, and offline conflict copies. A physical two-tab/browser run plus quota and partial-cache interruption remain open.
 - **K06 — verified for the selected regression.** A solid panel in no-anchor/single-piece mode no longer receives an invented narrow-connection warning, while a real narrow-neck fixture still warns. The wider repair-count and multi-resolution matrix remains open.
-- **K01 — partial, continuing.** Seven JavaScript tests were added for the selected storage/sync/geometry defects. Later kerf-contract, candidate, browser interaction, tombstone, and durability fixtures remain pending.
+- **K01 — partial, continuing.** Fifteen JavaScript tests were added for the selected storage/sync/geometry defects. Later kerf-contract, candidate, broader browser interaction, quota, and cache-durability fixtures remain pending.
 - **K09 — partial.** Permanent-delete copy now states the server-workspace/all-linked-device effect. Other truth-in-copy items remain pending.
 
-Verification after this increment: **147/147 JavaScript tests passed**, **71/71 Python tests passed**, syntax and diff checks passed, and the isolated Chromium workspace/legacy-import smoke test passed. No production server, real user library, hostname, or deployment was changed. The existing `portfolio-screenshots/` assets were left untouched.
+Verification after these increments: **155/155 JavaScript tests passed**, **71/71 Python tests passed**, syntax and diff checks passed, and the isolated Chromium workspace/legacy-import smoke test passed. No production server, real user library, hostname, or deployment was changed. The existing `portfolio-screenshots/` assets were left untouched.
 
 ## Scope and confidence
 
@@ -364,7 +364,7 @@ Done for a batch when its defect regressions fail under the old implementation, 
 - [x] Stage legacy unowned records without auto-upload; provide explicit copy/import while retaining originals.
 - [x] Scope local enumeration, cleanup, recovery, and cache keys through the workspace database rather than only filtering the visible project list.
 
-**Status:** implemented locally—verification pending. The isolated Chromium A/B/legacy-import smoke test passed. Repeat-import, two-tab, offline A → B → A, and a deliberately delayed in-flight identity transition still need browser/server acceptance coverage before marking the package verified.
+**Status:** implemented locally—real-browser verification pending. The isolated Chromium A/B/legacy-import smoke test passed. The project API now rejects a missing or stale workspace header, preventing an old tab from writing into a newly authenticated workspace. Repeat import and the identity fence are automated; offline A → B → A and physical multi-tab interaction still need browser acceptance coverage before marking the package verified.
 
 Start at `web/storage.js`, `web/project-sync.js`, `web/app.js`, and authenticated session endpoints in `server/index.js`.
 
@@ -377,9 +377,9 @@ Done when A → B → A switching, offline startup, two tabs, and an in-flight i
 - [x] Serialize per-workspace/project writers in-page and across supporting tabs with Web Locks; retain server conditional writes as the final concurrency guard.
 - [x] Take revision/hash from the actual response. A checkpoint/export save advances the revision the editor uses.
 - [x] Preserve queued status when a conflict copy cannot upload; do not present that state as server-saved.
-- [ ] Test deletes/tombstones and offline edits explicitly. Legitimate deletions must not silently resurrect through a generic recovery path.
+- [x] Test deletes/tombstones and offline edits explicitly. The server refuses reuse of a permanently deleted ID; the client preserves a racing or offline edit under a new conflict-copy ID. Lost delete responses reconcile from the tombstone.
 
-**Status:** implemented locally—verification pending. Focused tests cover exact-operation acknowledgement, A-in-flight/B-queued, response ETags, and queued conflict copies. Real two-tab contention, deletion/tombstone races, unauthorized expiry, and interrupted writes remain acceptance requirements.
+**Status:** implemented locally—real-browser verification pending. Focused tests cover exact-operation acknowledgement, A-in-flight/B-queued, independent module/tab writers, response ETags, lost-response recovery, tombstones, delete/edit races, stale-session rejection, and queued conflict copies. Physical two-tab contention, unauthorized expiry during an active write, quota failure, and partial local-cache replacement remain acceptance requirements.
 
 Start at `web/project-sync.js`, `web/storage.js`, and `persist`, `createRecoveryPoint`, and export handling in `web/editor.js`.
 

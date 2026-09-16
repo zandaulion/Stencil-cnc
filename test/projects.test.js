@@ -116,3 +116,28 @@ test('device invites join the issuing workspace and trash state travels with the
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('a permanently deleted project id cannot be silently resurrected', () => {
+  const { directory, db, owner, service } = fixture();
+  try {
+    const id = 'f5140d8d-e5b6-47eb-92b5-2c33f907b24d';
+    service.save(owner.workspaceId, id, bundle(id, 'Original'), '0');
+    const deleted = service.delete(owner.workspaceId, id, '1');
+
+    assert.throws(
+      () => service.save(owner.workspaceId, id, bundle(id, 'Stale offline edit'), String(deleted.revision)),
+      (error) => error instanceof ProjectError &&
+        error.status === 409 &&
+        error.code === 'project_deleted' &&
+        error.details.project.deletedAt === deleted.deletedAt,
+    );
+
+    const recoveredId = 'f5140d8d-e5b6-47eb-92b5-2c33f907b24e';
+    const recovered = service.save(owner.workspaceId, recoveredId, bundle(recoveredId, 'Recovered copy'), '0');
+    assert.equal(recovered.revision, 1);
+    assert.equal(service.list(owner.workspaceId).filter((project) => !project.deletedAt).length, 1);
+  } finally {
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

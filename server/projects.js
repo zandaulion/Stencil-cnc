@@ -183,6 +183,14 @@ export class ProjectService {
         { currentRevision: actual, project: current ? publicRow(current) : null },
       );
     }
+    if (current?.deleted_at) {
+      throw new ProjectError(
+        409,
+        'This project was permanently deleted. Save the offline edit as a new project.',
+        'project_deleted',
+        { currentRevision: actual, project: publicRow(current) },
+      );
+    }
     if (this.usage(workspaceId, current?.id ?? null) + buffer.length > this.maximumWorkspaceBytes) {
       throw new ProjectError(507, 'The server project storage allowance is full.', 'project_quota');
     }

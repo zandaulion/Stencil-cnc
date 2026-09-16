@@ -129,6 +129,27 @@ export function createApp(options = {}) {
     return next();
   };
 
+  const requireWorkspace = (req, res, next) => {
+    const expectedWorkspaceId = String(req.get('x-kerfloom-workspace') || '').trim();
+    if (!expectedWorkspaceId) {
+      return errorResponse(
+        res,
+        428,
+        'Reload Kerfloom before synchronizing projects.',
+        'workspace_required',
+      );
+    }
+    if (expectedWorkspaceId !== req.device.workspaceId) {
+      return errorResponse(
+        res,
+        409,
+        'The linked workspace changed. Reload before synchronizing projects.',
+        'workspace_changed',
+      );
+    }
+    return next();
+  };
+
   const requireAdmin = (req, res, next) => {
     if (!auth.adminTokenMatches(req.get('x-admin-token'))) {
       // The private surface is intentionally undiscoverable from the public
@@ -212,7 +233,7 @@ export function createApp(options = {}) {
     throw error;
   };
 
-  app.get('/api/projects', requireDevice, (req, res) => {
+  app.get('/api/projects', requireDevice, requireWorkspace, (req, res) => {
     setPrivateNoStore(res);
     try {
       return res.json({ projects: projects.list(req.device.workspaceId) });
@@ -221,7 +242,7 @@ export function createApp(options = {}) {
     }
   });
 
-  app.get('/api/projects/:id/bundle', requireDevice, (req, res) => {
+  app.get('/api/projects/:id/bundle', requireDevice, requireWorkspace, (req, res) => {
     setPrivateNoStore(res);
     try {
       const result = projects.bundle(req.device.workspaceId, req.params.id);
@@ -236,6 +257,7 @@ export function createApp(options = {}) {
   app.put(
     '/api/projects/:id',
     requireDevice,
+    requireWorkspace,
     express.raw({
       type: ['application/vnd.kerfloom.project-bundle+json', 'application/octet-stream'],
       limit: projects.maximumBytes,
@@ -257,7 +279,7 @@ export function createApp(options = {}) {
     },
   );
 
-  app.delete('/api/projects/:id', requireDevice, (req, res) => {
+  app.delete('/api/projects/:id', requireDevice, requireWorkspace, (req, res) => {
     setPrivateNoStore(res);
     try {
       return res.json(projects.delete(

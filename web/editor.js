@@ -2812,7 +2812,7 @@ async function persist() {
       lastSavedRecord = saved;
     } catch (error) {
       console.error('Server project synchronization failed:', error);
-      syncResult = { status: 'error' };
+      syncResult = { status: error.code === 'workspace_changed' ? 'workspace-changed' : 'error' };
     }
     if (generation === dirtyGeneration) {
       state.dirty = false;
@@ -2820,6 +2820,9 @@ async function persist() {
         setSaveState('saved', savedAtLabel(new Date(saved.serverSyncedAt || Date.now())));
       } else if (['queued', 'superseded', 'conflict-queued'].includes(syncResult.status)) {
         setSaveState('saving', cachedAtLabel());
+      } else if (syncResult.status === 'workspace-changed') {
+        setSaveState('error', 'Workspace changed — Reload');
+        toast('This browser tab belongs to the previous workspace. Reload before synchronizing.');
       } else {
         setSaveState('error', 'Server sync failed — Retry');
       }
@@ -2899,6 +2902,11 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
     return await operation;
   } catch (error) {
     console.error('Workspace synchronization failed:', error);
+    if (error.code === 'workspace_changed') {
+      setSaveState('error', 'Workspace changed — Reload');
+      if (announce) toast('This browser tab belongs to the previous workspace. Reload before synchronizing.');
+      return { status: 'workspace-changed', error };
+    }
     setSaveState('error', 'Server sync failed — Retry');
     if (announce) toast('Projects remain safely cached and will retry when the server is available.');
     return { status: 'error', error };
@@ -3358,6 +3366,11 @@ async function handleProjectAction(action, record) {
     if (deletion.status === 'conflict') {
       await refreshProjectLibrary();
       toast(deletion.message);
+      return;
+    }
+    if (deletion.status === 'superseded') {
+      await refreshProjectLibrary();
+      toast('A newer local edit is waiting to sync, so it was preserved instead of being silently deleted.');
       return;
     }
     await deleteProject(record.id);

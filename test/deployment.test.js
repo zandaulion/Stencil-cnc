@@ -220,6 +220,28 @@ test('encrypted project snapshots are claimable by one invited recipient and rev
   })).status, 404);
 });
 
+test('project APIs reject a missing or stale browser workspace identity', async () => {
+  const first = await register('First workspace');
+  const second = await register('Second workspace');
+
+  const missing = await request('/api/projects', { headers: { Cookie: first.cookie } });
+  assert.equal(missing.status, 428);
+  assert.equal((await missing.json()).code, 'workspace_required');
+
+  const staleTab = await request('/api/projects', { headers: {
+    Cookie: second.cookie,
+    'X-Kerfloom-Workspace': first.body.device.workspaceId,
+  } });
+  assert.equal(staleTab.status, 409);
+  assert.equal((await staleTab.json()).code, 'workspace_changed');
+
+  const current = await request('/api/projects', { headers: {
+    Cookie: first.cookie,
+    'X-Kerfloom-Workspace': first.body.device.workspaceId,
+  } });
+  assert.equal(current.status, 200);
+});
+
 test('server projects synchronize complete encrypted bundles across linked workspace devices', async () => {
   const owner = await register('Workspace owner');
   const linkedInviteResponse = await request('/api/workspace/device-invites', {
@@ -263,6 +285,7 @@ test('server projects synchronize complete encrypted bundles across linked works
       Cookie: owner.cookie,
       'Content-Type': 'application/vnd.kerfloom.project-bundle+json',
       'If-Match': '"0"',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
     },
     body: JSON.stringify(bundle),
   });
@@ -272,10 +295,16 @@ test('server projects synchronize complete encrypted bundles across linked works
   assert.equal(encryptedFile.includes(Buffer.from('Server portrait')), false);
   assert.equal(encryptedFile.includes(Buffer.from('private')), false);
 
-  const listed = await request('/api/projects', { headers: { Cookie: linked.cookie } });
+  const listed = await request('/api/projects', { headers: {
+    Cookie: linked.cookie,
+    'X-Kerfloom-Workspace': linked.body.device.workspaceId,
+  } });
   assert.equal((await listed.json()).projects[0].id, id);
   const downloaded = await request(`/api/projects/${id}/bundle`, {
-    headers: { Cookie: linked.cookie },
+    headers: {
+      Cookie: linked.cookie,
+      'X-Kerfloom-Workspace': linked.body.device.workspaceId,
+    },
   });
   assert.equal(downloaded.headers.get('etag'), '"1"');
   assert.deepEqual(await downloaded.json(), bundle);
@@ -286,6 +315,7 @@ test('server projects synchronize complete encrypted bundles across linked works
       Cookie: owner.cookie,
       'Content-Type': 'application/vnd.kerfloom.project-bundle+json',
       'If-Match': '"0"',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
     },
     body: JSON.stringify(bundle),
   });
@@ -294,18 +324,28 @@ test('server projects synchronize complete encrypted bundles across linked works
 
   const removed = await request(`/api/projects/${id}`, {
     method: 'DELETE',
-    headers: { Cookie: linked.cookie, 'If-Match': '"1"' },
+    headers: {
+      Cookie: linked.cookie,
+      'If-Match': '"1"',
+      'X-Kerfloom-Workspace': linked.body.device.workspaceId,
+    },
   });
   assert.equal(removed.status, 200);
   const tombstone = (await (await request('/api/projects', {
-    headers: { Cookie: owner.cookie },
+    headers: {
+      Cookie: owner.cookie,
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+    },
   })).json()).projects[0];
   assert.equal(tombstone.id, id);
   assert.equal(tombstone.revision, 2);
   assert.equal(typeof tombstone.deletedAt, 'string');
   assert.equal(tombstone.sizeBytes, 0);
   assert.equal((await request(`/api/projects/${id}/bundle`, {
-    headers: { Cookie: owner.cookie },
+    headers: {
+      Cookie: owner.cookie,
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+    },
   })).status, 404);
   assert.equal(fs.readdirSync(projectDirectory).length, 0);
 });
