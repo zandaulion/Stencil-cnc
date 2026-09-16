@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createMask, orientSheet, placeMaskOnSheet, trimMaskToContent } from "../../web/core/index.js";
+import {
+  calculateArtworkPlacement,
+  createMask,
+  orientSheet,
+  placeMaskOnSheet,
+  pointFromArtworkPlacement,
+  pointToArtworkPlacement,
+  trimMaskToContent,
+} from "../../web/core/index.js";
 import { maskFromAscii } from "./fixtures.js";
 
 test("artwork is contained without stretching when sheet and source aspects differ", () => {
@@ -51,6 +59,47 @@ test("letterbox fill does not consume an explicit artwork margin", () => {
 
   assert.equal(mask.data[5 * mask.width + 50], 0, "explicit outer margin remains clear");
   assert.equal(mask.data[15 * mask.width + 50], 1, "aspect-ratio gap inside the safe area is metal");
+});
+
+test("artwork transforms apply after auto-fit without changing its safe area", () => {
+  const placement = calculateArtworkPlacement(
+    { width: 2, height: 1 },
+    { widthMm: 100, heightMm: 100 },
+    {
+      fitToFrame: false,
+      artworkTransform: { scale: 0.5, rotationDeg: 30, offsetXMm: 10, offsetYMm: -5 },
+    },
+  );
+
+  assert.deepEqual(placement.safeArea, { xMm: 0, yMm: 0, widthMm: 100, heightMm: 100 });
+  assert.deepEqual(
+    [placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, placement.rotationDeg],
+    [35, 32.5, 50, 25, 30],
+  );
+});
+
+test("rotated artwork is inverse-sampled into the manufacturing raster", () => {
+  const source = createMask(2, 1);
+  source.data[0] = 1;
+  const { mask } = placeMaskOnSheet(source, { widthMm: 100, heightMm: 100 }, {
+    longEdgePx: 100,
+    fitToFrame: false,
+    artworkTransform: { rotationDeg: 90 },
+  });
+
+  assert.equal(mask.data[10 * mask.width + 50], 1, "left source half rotates to the top");
+  assert.equal(mask.data[90 * mask.width + 50], 0, "right source half rotates to the bottom");
+  assert.equal(mask.data[50 * mask.width + 10], 0, "outside the rotated artwork remains clear");
+});
+
+test("artwork placement point transforms round-trip through rotation", () => {
+  const placement = {
+    xMm: 20, yMm: 30, widthMm: 80, heightMm: 120, rotationDeg: -37,
+  };
+  const point = pointFromArtworkPlacement(placement, 0.2, 0.75);
+  const normalized = pointToArtworkPlacement(placement, point);
+  assert.ok(Math.abs(normalized.x - 0.2) < 1e-12);
+  assert.ok(Math.abs(normalized.y - 0.75) < 1e-12);
 });
 
 test("sheet orientation swaps physical dimensions without resizing the stock", () => {

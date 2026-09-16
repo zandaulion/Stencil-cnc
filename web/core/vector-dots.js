@@ -1,3 +1,5 @@
+import { pointFromArtworkPlacement } from './placement.js';
+
 /**
  * Normalizes the compact Variable Dots descriptor returned by the analysis
  * service. Circles are stored in source-normalized coordinates so the exact
@@ -47,9 +49,14 @@ export function placeVectorDots(vectorDots, sourceSize, contentBounds, placement
     const sourceX = cx * sourceWidth;
     const sourceY = cy * sourceHeight;
     const radiusPixels = radius * sourceWidth;
+    const center = pointFromArtworkPlacement(
+      placement,
+      (sourceX - contentBounds.x) / contentBounds.width,
+      (sourceY - contentBounds.y) / contentBounds.height,
+    );
     return {
-      cxMm: placement.xMm + (sourceX - contentBounds.x) * scaleX,
-      cyMm: placement.yMm + (sourceY - contentBounds.y) * scaleY,
+      cxMm: center.x,
+      cyMm: center.y,
       // Placement preserves aspect ratio. Averaging suppresses only the tiny
       // difference caused by integer crop dimensions.
       radiusMm: radiusPixels * (scaleX + scaleY) / 2,

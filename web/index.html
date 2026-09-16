@@ -706,6 +706,33 @@
                 <span>Fit artwork to frame<small>Preserve proportions · fill unused axis with metal</small></span>
                 <input class="switch" id="fit-artwork" name="fitArtwork" type="checkbox" checked>
               </label>
+              <div class="artwork-transform" id="artwork-transform-controls">
+                <div class="section-title-row artwork-transform-heading">
+                  <h3>Artwork transform</h3>
+                  <button class="text-button" id="btn-reset-artwork-transform" type="button">Reset</button>
+                </div>
+                <div class="range-control">
+                  <label for="artwork-scale"><span>Zoom</span><output id="artwork-scale-value" for="artwork-scale">100%</output></label>
+                  <input id="artwork-scale" name="artworkScale" type="range" min="10" max="400" step="1" value="100">
+                </div>
+                <div class="range-control">
+                  <label for="artwork-rotation"><span>Rotation</span><output id="artwork-rotation-value" for="artwork-rotation">0°</output></label>
+                  <input id="artwork-rotation" name="artworkRotation" type="range" min="-180" max="180" step="1" value="0">
+                </div>
+                <div class="artwork-offset-grid">
+                  <label for="artwork-offset-x">Horizontal
+                    <span class="number-field"><input id="artwork-offset-x" name="artworkOffsetX" type="number" min="-10000" max="10000" step="0.1" value="0"><span data-unit-label>mm</span></span>
+                  </label>
+                  <label for="artwork-offset-y">Vertical
+                    <span class="number-field"><input id="artwork-offset-y" name="artworkOffsetY" type="number" min="-10000" max="10000" step="0.1" value="0"><span data-unit-label>mm</span></span>
+                  </label>
+                </div>
+                <button class="button button-secondary button-full" id="btn-position-artwork" type="button" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M2 12h20M12 2l-3 3m3-3 3 3M22 12l-3-3m3 3-3 3M12 22l-3-3m3 3 3-3M2 12l3-3m-3 3 3 3"></path></svg>
+                  Position on canvas
+                </button>
+                <p class="section-help artwork-transform-help">Drag anywhere on the panel to position the artwork. Arrow keys nudge it by 1 mm; hold Shift for 10 mm. Use the controls for precise zoom and free rotation.</p>
+              </div>
             </div>
 
             <fieldset class="control-section checkbox-section" id="anchor-edges">

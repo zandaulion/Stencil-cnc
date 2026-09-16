@@ -46,6 +46,8 @@ import {
   placeVectorDots,
   planManufacturingRepairs,
   placeMaskOnSheet,
+  pointFromArtworkPlacement,
+  pointToArtworkPlacement,
   serializeProject,
   setSmallOpeningRepairAction,
   suggestKerfAwareBridges,
@@ -300,6 +302,27 @@ function sheet() {
     widthMm: Math.max(10, toMm(numberField('panel-width', 1250))),
     heightMm: Math.max(10, toMm(numberField('panel-height', 2500))),
   };
+}
+
+function artworkTransform() {
+  return {
+    scale: Math.max(0.1, Math.min(4, numberField('artwork-scale', 100) / 100)),
+    rotationDeg: Math.max(-180, Math.min(180, numberField('artwork-rotation', 0))),
+    offsetXMm: toMm(numberField('artwork-offset-x', 0)),
+    offsetYMm: toMm(numberField('artwork-offset-y', 0)),
+  };
+}
+
+function setArtworkOffset(offsetXMm, offsetYMm) {
+  if (el('artwork-offset-x')) el('artwork-offset-x').value = roundUnit(fromMm(offsetXMm));
+  if (el('artwork-offset-y')) el('artwork-offset-y').value = roundUnit(fromMm(offsetYMm));
+}
+
+function resetArtworkTransformControls() {
+  if (el('artwork-scale')) el('artwork-scale').value = '100';
+  if (el('artwork-rotation')) el('artwork-rotation').value = '0';
+  setArtworkOffset(0, 0);
+  updateRangeOutputs();
 }
 
 /* ------------------------------------------------- rebuilding the design */
@@ -650,6 +673,7 @@ function rebuildSource() {
     frame: frameConfig(),
     marginMm: toMm(numberField('panel-margin', 0)),
     fitToFrame: el('fit-artwork')?.checked !== false,
+    artworkTransform: artworkTransform(),
     fillLetterboxWithMetal: true,
     longEdgePx: Math.min(MAX_SHEET_LONG_EDGE, Math.max(mask.width, mask.height, requiredLongEdge)),
   });
@@ -690,6 +714,7 @@ function styleParams(stil = selectedCutStyle()) {
     frame: frameConfig(),
     marginMm: toMm(numberField('panel-margin', 0)),
     fitToFrame: el('fit-artwork')?.checked !== false,
+    artworkTransform: artworkTransform(),
   });
   form.set('coala_lat_mm', String(placement.widthMm));
   form.set('fara_fundal', String(el('style-cutout')?.checked !== false));
@@ -828,6 +853,7 @@ function enforceStyleSpacing() {
           frame: frameConfig(),
           marginMm: toMm(numberField('panel-margin', 0)),
           fitToFrame: el('fit-artwork')?.checked !== false,
+          artworkTransform: artworkTransform(),
         })
       : sheet();
     // The deterministic fallback is one quarter from the left edge. Limiting
@@ -2134,17 +2160,27 @@ function drawPlacedImage(context, preview, mask, background = '#e5e8e5') {
   const sourceY = bounds && sourceSize ? bounds.y / sourceSize.height * preview.height : 0;
   const sourceWidth = bounds && sourceSize ? bounds.width / sourceSize.width * preview.width : preview.width;
   const sourceHeight = bounds && sourceSize ? bounds.height / sourceSize.height * preview.height : preview.height;
+  const destinationWidth = state.placement.widthMm / currentSheet.widthMm * mask.width;
+  const destinationHeight = state.placement.heightMm / currentSheet.heightMm * mask.height;
+  const destinationCenterX = (state.placement.xMm + state.placement.widthMm / 2) /
+    currentSheet.widthMm * mask.width;
+  const destinationCenterY = (state.placement.yMm + state.placement.heightMm / 2) /
+    currentSheet.heightMm * mask.height;
+  context.save();
+  context.translate(destinationCenterX, destinationCenterY);
+  context.rotate((state.placement.rotationDeg || 0) * Math.PI / 180);
   context.drawImage(
     preview,
     sourceX,
     sourceY,
     sourceWidth,
     sourceHeight,
-    state.placement.xMm / currentSheet.widthMm * mask.width,
-    state.placement.yMm / currentSheet.heightMm * mask.height,
-    state.placement.widthMm / currentSheet.widthMm * mask.width,
-    state.placement.heightMm / currentSheet.heightMm * mask.height,
+    -destinationWidth / 2,
+    -destinationHeight / 2,
+    destinationWidth,
+    destinationHeight,
   );
+  context.restore();
 }
 
 function updateToneInspector(preview = null) {
@@ -2328,6 +2364,27 @@ function drawOverlay(overlay, mask) {
       const y = Math.round(mm * (mask.height / heightMm)) + 0.5;
       context.beginPath(); context.moveTo(0, y); context.lineTo(overlay.width, y); context.stroke();
     }
+  }
+
+  if (state.tool === 'artwork' && state.placement) {
+    const corners = [
+      pointFromArtworkPlacement(state.placement, 0, 0),
+      pointFromArtworkPlacement(state.placement, 1, 0),
+      pointFromArtworkPlacement(state.placement, 1, 1),
+      pointFromArtworkPlacement(state.placement, 0, 1),
+    ];
+    context.save();
+    context.strokeStyle = '#e85f35';
+    context.lineWidth = Math.max(1.5, 2 / Math.max(state.zoom, 0.1));
+    context.setLineDash([8 / Math.max(state.zoom, 0.1), 5 / Math.max(state.zoom, 0.1)]);
+    context.beginPath();
+    context.moveTo(corners[0].x * pxPerMm, corners[0].y * (mask.height / heightMm));
+    for (const corner of corners.slice(1)) {
+      context.lineTo(corner.x * pxPerMm, corner.y * (mask.height / heightMm));
+    }
+    context.closePath();
+    context.stroke();
+    context.restore();
   }
 
   for (const bridge of state.bridges) {
@@ -2756,6 +2813,14 @@ function applyControls(controls = {}) {
   // been trimmed. Migrate only that legacy value; other user-selected margins
   // remain untouched. The hidden version marker makes this a one-time change.
   const migratedControls = { ...controls };
+  for (const [id, value] of Object.entries({
+    'artwork-scale': '100',
+    'artwork-rotation': '0',
+    'artwork-offset-x': '0',
+    'artwork-offset-y': '0',
+  })) {
+    if (!Object.hasOwn(controls, id)) migratedControls[id] = value;
+  }
   if (!Object.hasOwn(controls, 'support-follow-features')) {
     migratedControls['support-follow-features'] = true;
   }
@@ -4281,6 +4346,7 @@ async function loadProjectState(project, { imported = false } = {}) {
   applyCanonicalProjectControls(project);
   if (project.editor?.controls) applyControls(project.editor.controls);
   else {
+    resetArtworkTransformControls();
     state.activeStyle = selectedCutStyle();
     rememberStyleSettings(state.activeStyle);
   }
@@ -4442,6 +4508,7 @@ async function importFile(file) {
     state.candidates = [];
     state.selectedCandidateId = null;
     state.selectedBridge = null;
+    resetArtworkTransformControls();
     state.validation = null;
     resetManualStyleForNewImage();
     resetHistory();
@@ -4931,10 +4998,11 @@ function sourcePointOnSheet(normalizedX, normalizedY) {
   if (!placement || !bounds || !sourceSize) return null;
   const sourceX = normalizedX * Math.max(0, sourceSize.width - 1);
   const sourceY = normalizedY * Math.max(0, sourceSize.height - 1);
-  return {
-    x: placement.xMm + (sourceX - bounds.x) / Math.max(1, bounds.width) * placement.widthMm,
-    y: placement.yMm + (sourceY - bounds.y) / Math.max(1, bounds.height) * placement.heightMm,
-  };
+  return pointFromArtworkPlacement(
+    placement,
+    (sourceX - bounds.x) / Math.max(1, bounds.width),
+    (sourceY - bounds.y) / Math.max(1, bounds.height),
+  );
 }
 
 /**
@@ -4953,6 +5021,7 @@ function placedStyleScale() {
       frame: frameConfig(),
       marginMm: toMm(numberField('panel-margin', 0)),
       fitToFrame: el('fit-artwork')?.checked !== false,
+      artworkTransform: artworkTransform(),
     },
   );
   const croppedWidthMm = rendered.widthMm * bounds.width / Math.max(1, sourceSize.width);
@@ -5024,10 +5093,11 @@ function bridgeImageSamplers() {
   const sourceSize = state.contentSourceSize ? { ...state.contentSourceSize } : null;
 
   const sampleSource = ({ x, y }) => {
-    if (!bounds || !sourceSize || x < placement.xMm || y < placement.yMm ||
-        x > placement.xMm + placement.widthMm || y > placement.yMm + placement.heightMm) return null;
-    const localX = (x - placement.xMm) / Math.max(placement.widthMm, Number.EPSILON);
-    const localY = (y - placement.yMm) / Math.max(placement.heightMm, Number.EPSILON);
+    if (!bounds || !sourceSize) return null;
+    const local = pointToArtworkPlacement(placement, { x, y });
+    if (local.x < 0 || local.y < 0 || local.x > 1 || local.y > 1) return null;
+    const localX = local.x;
+    const localY = local.y;
     const fullX = (bounds.x + localX * bounds.width) / Math.max(1, sourceSize.width);
     const fullY = (bounds.y + localY * bounds.height) / Math.max(1, sourceSize.height);
     const imageX = Math.max(0, Math.min(analysisWidth - 1,
@@ -5053,7 +5123,7 @@ function bridgeImageSamplers() {
     return {
       lightness,
       strength,
-      tangentAngleDeg: Math.atan2(gy, gx) * 180 / Math.PI + 90,
+      tangentAngleDeg: Math.atan2(gy, gx) * 180 / Math.PI + 90 + (placement.rotationDeg || 0),
       portraitFocus,
       portraitRisk,
     };
@@ -5099,7 +5169,7 @@ function smartBridgeStrategy({ sampleImage = true } = {}) {
   // A tie across parallel retained bars is their normal. It reads as one of
   // the pattern's own rungs, like the supplied diagonal-slat reference.
   if (style === 'lamele') {
-    const barAngleDeg = numberField('style-slat-angle', -55);
+    const barAngleDeg = numberField('style-slat-angle', -55) + artworkTransform().rotationDeg;
     strategy.preferredAngleDeg = barAngleDeg + 90;
     strategy.barAngleDeg = barAngleDeg;
     strategy.slatPitchMm = toMm(numberField('style-pitch', 38)) * placedStyleScale();
@@ -5108,7 +5178,7 @@ function smartBridgeStrategy({ sampleImage = true } = {}) {
       strategy.maximumUnsupportedSpanMm = toMm(numberField('max-cantilever', 250));
     }
   } else if (style === 'hasura') {
-    strategy.preferredAngleDeg = numberField('style-angle', 30) + 90;
+    strategy.preferredAngleDeg = numberField('style-angle', 30) + artworkTransform().rotationDeg + 90;
   } else if (style === 'icoana') {
     // Horizontal ties read as intentional icon construction and align with
     // the segmented halo instead of crossing facial features diagonally.
@@ -5379,8 +5449,9 @@ function safeBridgeWidthMm(value = toMm(numberField('bridge-width', 6))) {
 function preferredManualSupportAngle(start, end) {
   if (el('support-follow-style')?.checked !== true) return null;
   const style = selectedCutStyle();
-  if (style === 'lamele') return numberField('style-slat-angle', -55) + 90;
-  if (style === 'hasura') return numberField('style-angle', 30) + 90;
+  const rotationDeg = artworkTransform().rotationDeg;
+  if (style === 'lamele') return numberField('style-slat-angle', -55) + rotationDeg + 90;
+  if (style === 'hasura') return numberField('style-angle', 30) + rotationDeg + 90;
   if (style === 'icoana') return 0;
   if (style === 'raze') {
     const center = sourcePointOnSheet(
@@ -5703,7 +5774,7 @@ function setSidePanel(panel) {
 }
 
 function setTool(tool) {
-  if (!['pan', 'keep', 'remove', 'support'].includes(tool)) return;
+  if (!['pan', 'artwork', 'keep', 'remove', 'support'].includes(tool)) return;
   state.tool = tool;
   state.touchupPreview = null;
   state.drawingBridge = tool === 'support';
@@ -5714,7 +5785,12 @@ function setTool(tool) {
   el('touchup-options')?.toggleAttribute('hidden', !editing);
   el('touchup-empty')?.toggleAttribute('hidden', editing);
   if (editing) updateTouchupControls();
-  el('canvas-viewport').style.cursor = tool === 'pan' ? 'grab' : 'crosshair';
+  el('btn-position-artwork')?.setAttribute('aria-pressed', String(tool === 'artwork'));
+  const viewport = el('canvas-viewport');
+  if (viewport) {
+    viewport.dataset.activeTool = tool;
+    viewport.style.cursor = tool === 'pan' ? 'grab' : tool === 'artwork' ? 'move' : 'crosshair';
+  }
   draw();
 }
 
@@ -5787,6 +5863,7 @@ function syncToolRailState() {
     button?.setAttribute('aria-pressed', String(selected));
     button?.classList.toggle('is-selected', selected);
   }
+  el('btn-position-artwork')?.setAttribute('aria-pressed', String(state.tool === 'artwork'));
 }
 
 function moveToolOptionNode(id, destination) {
@@ -6008,7 +6085,7 @@ function wire() {
   el('btn-stage-help')?.addEventListener('click', () => {
     const help = {
       prepare: 'Choose line art or a photograph, then tune which areas remain metal.',
-      panel: 'Set the real sheet size, artwork margin, and structural edge frame.',
+      panel: 'Set the real sheet size, then position, rotate, and zoom the artwork inside its structural frame.',
       support: 'Automatic supports are suggestions. Select, move, resize, or remove them at any time.',
       validate: 'Checks use the exact geometry and units that will be exported.',
       export: 'SVG and DXF are true-scale. Kerf compensation remains the CAM tool’s responsibility.',
@@ -6076,6 +6153,23 @@ function wire() {
     clearTimeout(styleTimer);
     styleTimer = setTimeout(() => { styleTimer = null; renderStyle(); }, 500);
     setRenderProgress('queued');
+  };
+
+  let artworkRefreshFrame = null;
+  const scheduleArtworkTransformPreview = () => {
+    if (artworkRefreshFrame !== null) return;
+    artworkRefreshFrame = requestAnimationFrame(() => {
+      artworkRefreshFrame = null;
+      refresh({ immediate: true, reanalyse: false });
+    });
+  };
+  const finishArtworkTransform = () => {
+    if (artworkRefreshFrame !== null) {
+      cancelAnimationFrame(artworkRefreshFrame);
+      artworkRefreshFrame = null;
+    }
+    refresh({ immediate: true });
+    pushHistory();
   };
 
   // --- treatment, panel, and constraints
@@ -6151,6 +6245,30 @@ function wire() {
     restyle();
     refresh({ immediate: true });
     pushHistory();
+  });
+  for (const id of ['artwork-scale', 'artwork-rotation', 'artwork-offset-x', 'artwork-offset-y']) {
+    el(id)?.addEventListener('input', () => {
+      updateRangeOutputs();
+      if (id === 'artwork-scale') restyle();
+      scheduleArtworkTransformPreview();
+    });
+    el(id)?.addEventListener('change', finishArtworkTransform);
+  }
+  el('btn-reset-artwork-transform')?.addEventListener('click', () => {
+    const previousScale = numberField('artwork-scale', 100);
+    resetArtworkTransformControls();
+    if (previousScale !== 100) restyle();
+    finishArtworkTransform();
+    toast('Artwork position, rotation, and zoom reset.');
+  });
+  el('btn-position-artwork')?.addEventListener('click', () => {
+    if (!state.sourceMask && !state.baseMask) { toast('Import artwork first.'); return; }
+    const activate = state.tool !== 'artwork';
+    closeToolOptions();
+    selectBridge(null);
+    setStage('panel');
+    setTool(activate ? 'artwork' : 'pan');
+    if (activate) toast('Drag on the panel to position the artwork.');
   });
 
   for (const node of all('input[name="polarity"]')) {
@@ -6251,6 +6369,7 @@ function wire() {
     // The numbers on screen are re-expressed, not re-interpreted: switching
     // units must not silently resize the panel.
     for (const id of ['panel-width', 'panel-height', 'panel-margin', 'frame-width',
+      'artwork-offset-x', 'artwork-offset-y',
       'bridge-width', 'selected-bridge-width', 'selected-bridge-length',
       'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
@@ -6660,6 +6779,7 @@ function wire() {
   // --- canvas
   const viewport = el('canvas-viewport');
   let panning = null;
+  let draggingArtwork = null;
   let drawingFrom = null;
   let draggingBridge = null;
   let touchupStroke = null;
@@ -6696,6 +6816,18 @@ function wire() {
 
   viewport?.addEventListener('pointerdown', (event) => {
     const { x, y, inside } = pointerToMask(event);
+    if (state.tool === 'artwork' && state.placement && inside) {
+      const point = pointerToMm(event);
+      const transform = artworkTransform();
+      draggingArtwork = {
+        origin: { x: point.mmX, y: point.mmY },
+        offsetXMm: transform.offsetXMm,
+        offsetYMm: transform.offsetYMm,
+      };
+      viewport.setPointerCapture(event.pointerId);
+      viewport.style.cursor = 'grabbing';
+      return;
+    }
     if (state.drawingBridge && inside) {
       const handle = bridgeHandleAtPointer(event);
       const hit = handle && state.selectedBridge ? state.selectedBridge : bridgeAtPointer(event);
@@ -6759,7 +6891,13 @@ function wire() {
         ? `x ${(mmX / MM_PER_INCH).toFixed(2)}  y ${(mmY / MM_PER_INCH).toFixed(2)}`
         : `x ${Math.round(mmX)}  y ${Math.round(mmY)}`;
     }
-    if (drawingFrom) {
+    if (draggingArtwork) {
+      setArtworkOffset(
+        draggingArtwork.offsetXMm + mmX - draggingArtwork.origin.x,
+        draggingArtwork.offsetYMm + mmY - draggingArtwork.origin.y,
+      );
+      scheduleArtworkTransformPreview();
+    } else if (drawingFrom) {
       if (!inside) return;
       const end = manualSupportPoint({ x: mmX, y: mmY }, drawingFrom);
       state.bridgePreview = { start: drawingFrom, end, width: safeBridgeWidthMm() };
@@ -6821,7 +6959,7 @@ function wire() {
       state.hoveredBridge = hovered;
       viewport.style.cursor = handle ? (handle === 'move' ? 'move' : 'crosshair')
         : hovered ? 'move'
-          : state.tool === 'pan' ? 'grab' : 'crosshair';
+          : state.tool === 'pan' ? 'grab' : state.tool === 'artwork' ? 'move' : 'crosshair';
       if (changed) draw();
     }
   });
@@ -6829,6 +6967,10 @@ function wire() {
   viewport?.addEventListener('pointerup', (event) => {
     const releasePoint = pointerToMask(event);
     const inside = releasePoint.inside;
+    if (draggingArtwork) {
+      draggingArtwork = null;
+      finishArtworkTransform();
+    }
     if (draggingBridge) {
       draggingBridge.bridge.lengthMm = Math.hypot(
         draggingBridge.bridge.end.x - draggingBridge.bridge.start.x,
@@ -6884,11 +7026,11 @@ function wire() {
     }
     panning = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
-    viewport.style.cursor = state.tool === 'pan' ? 'grab' : 'crosshair';
+    viewport.style.cursor = state.tool === 'pan' ? 'grab' : state.tool === 'artwork' ? 'move' : 'crosshair';
   });
 
   viewport?.addEventListener('pointerleave', () => {
-    if (touchupStroke || drawingFrom || draggingBridge) return;
+    if (touchupStroke || drawingFrom || draggingBridge || draggingArtwork) return;
     state.touchupPreview = null;
     state.hoveredBridge = null;
     draw();
@@ -6897,11 +7039,13 @@ function wire() {
   viewport?.addEventListener('pointercancel', (event) => {
     const painted = touchupStroke?.changed === true;
     const movedBridge = Boolean(draggingBridge);
+    const movedArtwork = Boolean(draggingArtwork);
     touchupStroke = null;
     state.touchupLive = false;
     cancelLiveTouchupDraw();
     drawingFrom = null;
     draggingBridge = null;
+    draggingArtwork = null;
     panning = null;
     state.drawingBridge = state.tool === 'support';
     state.bridgePreview = null;
@@ -6915,6 +7059,8 @@ function wire() {
     } else if (movedBridge) {
       refresh({ immediate: true, rebuildSourceMask: false });
       pushHistory();
+    } else if (movedArtwork) {
+      finishArtworkTransform();
     } else {
       draw();
     }
@@ -6973,6 +7119,23 @@ function wire() {
       pushHistory();
       return;
     }
+    if (state.tool === 'artwork' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const distanceMm = event.shiftKey ? 10 : 1;
+      const movement = {
+        ArrowLeft: [-distanceMm, 0],
+        ArrowRight: [distanceMm, 0],
+        ArrowUp: [0, -distanceMm],
+        ArrowDown: [0, distanceMm],
+      }[event.key];
+      const transform = artworkTransform();
+      setArtworkOffset(
+        transform.offsetXMm + movement[0],
+        transform.offsetYMm + movement[1],
+      );
+      finishArtworkTransform();
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       if (toolOptionsKind) closeToolOptions({ returnFocus: true });
@@ -7020,6 +7183,8 @@ function updateRangeOutputs() {
   set('contrast-value', String(numberField('contrast', 0)));
   set('blur-value', `${numberField('blur', 0)} px`);
   set('despeckle-value', `${numberField('despeckle', 0)} px²`);
+  set('artwork-scale-value', `${Math.round(numberField('artwork-scale', 100))}%`);
+  set('artwork-rotation-value', `${Math.round(numberField('artwork-rotation', 0))}°`);
   const secure = Number(el('bridge-count')?.value || 2);
   set('bridge-count-value', ['Minimal', 'Aesthetic', 'Secure'][secure - 1] ?? 'Aesthetic');
   set('stabilizer-organic-value', `${numberField('stabilizer-organic', 75)}%`);

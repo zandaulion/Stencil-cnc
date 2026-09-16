@@ -16,7 +16,14 @@ export {
   unionMasks,
 } from "./mask.js";
 export { applyRectangularFrame, createRectangularFrameMask } from "./frame.js";
-export { calculateArtworkPlacement, orientSheet, placeMaskOnSheet, trimMaskToContent } from "./placement.js";
+export {
+  calculateArtworkPlacement,
+  orientSheet,
+  placeMaskOnSheet,
+  pointFromArtworkPlacement,
+  pointToArtworkPlacement,
+  trimMaskToContent,
+} from "./placement.js";
 export { averageTone, toneFromImageData } from "./tone.js";
 export { applySubjectMask, subjectMask } from "./subject.js";
 export { slatMask } from "./styles/slats.js";

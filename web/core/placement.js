@@ -30,7 +30,7 @@ export function orientSheet(sheet, orientation) {
  *
  * @param {{width:number,height:number}} source
  * @param {{widthMm:number,heightMm:number}} sheet
- * @param {{frame?:object,marginMm?:number,fitToFrame?:boolean}} [config]
+ * @param {{frame?:object,marginMm?:number,fitToFrame?:boolean,artworkTransform?:object}} [config]
  */
 export function calculateArtworkPlacement(source, sheet, config = {}) {
   assertSourceDimensions(source);
@@ -56,21 +56,61 @@ export function calculateArtworkPlacement(source, sheet, config = {}) {
   // just as an oversized source must be reduced, until one dimension reaches
   // the safe area's opposing margins. Both dimensions use the same scale so
   // the artwork can never be stretched to the panel's aspect ratio.
-  const scale = Math.min(availableWidth / source.width, availableHeight / source.height);
-  const widthMm = source.width * scale;
-  const heightMm = source.height * scale;
+  const fitScale = Math.min(availableWidth / source.width, availableHeight / source.height);
+  const transform = normalizeArtworkTransform(config.artworkTransform);
+  const widthMm = source.width * fitScale * transform.scale;
+  const heightMm = source.height * fitScale * transform.scale;
+  const centerX = inset.left + availableWidth / 2 + transform.offsetXMm;
+  const centerY = inset.top + availableHeight / 2 + transform.offsetYMm;
 
   return {
-    xMm: inset.left + (availableWidth - widthMm) / 2,
-    yMm: inset.top + (availableHeight - heightMm) / 2,
+    xMm: centerX - widthMm / 2,
+    yMm: centerY - heightMm / 2,
     widthMm,
     heightMm,
+    rotationDeg: transform.rotationDeg,
     safeArea: {
       xMm: inset.left,
       yMm: inset.top,
       widthMm: availableWidth,
       heightMm: availableHeight,
     },
+  };
+}
+
+/**
+ * Maps a normalized point in the unrotated artwork rectangle onto the sheet.
+ * Rotation is around the artwork centre, matching the raster placement and
+ * the editor's photographic preview.
+ *
+ * @param {{xMm:number,yMm:number,widthMm:number,heightMm:number,rotationDeg?:number}} placement
+ * @param {number} normalizedX
+ * @param {number} normalizedY
+ */
+export function pointFromArtworkPlacement(placement, normalizedX, normalizedY) {
+  const angle = (Number(placement.rotationDeg) || 0) * Math.PI / 180;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const localX = (normalizedX - 0.5) * placement.widthMm;
+  const localY = (normalizedY - 0.5) * placement.heightMm;
+  return {
+    x: placement.xMm + placement.widthMm / 2 + localX * cosine - localY * sine,
+    y: placement.yMm + placement.heightMm / 2 + localX * sine + localY * cosine,
+  };
+}
+
+/** The inverse of pointFromArtworkPlacement. */
+export function pointToArtworkPlacement(placement, point) {
+  const angle = -(Number(placement.rotationDeg) || 0) * Math.PI / 180;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const dx = point.x - (placement.xMm + placement.widthMm / 2);
+  const dy = point.y - (placement.yMm + placement.heightMm / 2);
+  const localX = dx * cosine - dy * sine;
+  const localY = dx * sine + dy * cosine;
+  return {
+    x: localX / placement.widthMm + 0.5,
+    y: localY / placement.heightMm + 0.5,
   };
 }
 
@@ -129,7 +169,7 @@ export function trimMaskToContent(sourceMask, contentValue = RETAINED) {
  *
  * @param {import('./mask.js').RasterMask} sourceMask
  * @param {{widthMm:number,heightMm:number}} sheet
- * @param {{frame?:object,marginMm?:number,fitToFrame?:boolean,longEdgePx?:number,fillLetterboxWithMetal?:boolean}} [config]
+ * @param {{frame?:object,marginMm?:number,fitToFrame?:boolean,artworkTransform?:object,longEdgePx?:number,fillLetterboxWithMetal?:boolean}} [config]
  */
 export function placeMaskOnSheet(sourceMask, sheet, config = {}) {
   assertMask(sourceMask);
@@ -151,15 +191,22 @@ export function placeMaskOnSheet(sourceMask, sheet, config = {}) {
   const pixelWidthMm = sheet.widthMm / width;
   const pixelHeightMm = sheet.heightMm / height;
   const safe = placement.safeArea;
-  const hasHorizontalLetterbox = placement.widthMm < safe.widthMm - pixelWidthMm / 2;
-  const hasVerticalLetterbox = placement.heightMm < safe.heightMm - pixelHeightMm / 2;
+  const inverseAngle = -(placement.rotationDeg || 0) * Math.PI / 180;
+  const inverseCosine = Math.cos(inverseAngle);
+  const inverseSine = Math.sin(inverseAngle);
+  const centerX = placement.xMm + placement.widthMm / 2;
+  const centerY = placement.yMm + placement.heightMm / 2;
 
   for (let y = 0; y < height; y += 1) {
     const yMm = (y + 0.5) * pixelHeightMm;
-    const sourceY = Math.floor((yMm - placement.yMm) / placement.heightMm * sourceMask.height);
+    const dy = yMm - centerY;
     for (let x = 0; x < width; x += 1) {
       const xMm = (x + 0.5) * pixelWidthMm;
-      const sourceX = Math.floor((xMm - placement.xMm) / placement.widthMm * sourceMask.width);
+      const dx = xMm - centerX;
+      const localX = dx * inverseCosine - dy * inverseSine;
+      const localY = dx * inverseSine + dy * inverseCosine;
+      const sourceX = Math.floor((localX / placement.widthMm + 0.5) * sourceMask.width);
+      const sourceY = Math.floor((localY / placement.heightMm + 0.5) * sourceMask.height);
       if (sourceX >= 0 && sourceX < sourceMask.width && sourceY >= 0 && sourceY < sourceMask.height) {
         output.data[y * width + x] = sourceMask.data[sourceY * sourceMask.width + sourceX];
         continue;
@@ -167,17 +214,27 @@ export function placeMaskOnSheet(sourceMask, sheet, config = {}) {
       if (config.fillLetterboxWithMetal !== true) continue;
       const insideSafeArea = xMm >= safe.xMm && xMm < safe.xMm + safe.widthMm &&
         yMm >= safe.yMm && yMm < safe.yMm + safe.heightMm;
-      const inHorizontalBand = hasHorizontalLetterbox &&
-        (xMm < placement.xMm || xMm >= placement.xMm + placement.widthMm);
-      const inVerticalBand = hasVerticalLetterbox &&
-        (yMm < placement.yMm || yMm >= placement.yMm + placement.heightMm);
-      if (insideSafeArea && (inHorizontalBand || inVerticalBand)) {
+      if (insideSafeArea) {
         output.data[y * width + x] = RETAINED;
       }
     }
   }
 
   return { mask: output, placement };
+}
+
+function normalizeArtworkTransform(value = {}) {
+  const scale = value?.scale ?? 1;
+  const offsetXMm = value?.offsetXMm ?? 0;
+  const offsetYMm = value?.offsetYMm ?? 0;
+  const rotationDeg = value?.rotationDeg ?? 0;
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new RangeError("artworkTransform.scale must be positive");
+  }
+  for (const [name, candidate] of Object.entries({ offsetXMm, offsetYMm, rotationDeg })) {
+    if (!Number.isFinite(candidate)) throw new RangeError(`artworkTransform.${name} must be finite`);
+  }
+  return { scale, offsetXMm, offsetYMm, rotationDeg };
 }
 
 function assertSourceDimensions(source) {

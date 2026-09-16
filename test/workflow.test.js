@@ -376,6 +376,19 @@ test('panel presets provide standard sizes and remain orientation-aware', () => 
   assert.match(editor, /el\('panel-size-preset'\)\?\.addEventListener\('change'/);
 });
 
+test('artwork can be positioned, rotated, and zoomed as persistent geometry', () => {
+  for (const id of [
+    'artwork-scale', 'artwork-rotation', 'artwork-offset-x', 'artwork-offset-y',
+    'btn-position-artwork', 'btn-reset-artwork-transform',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(editor, /artworkTransform: artworkTransform\(\)/);
+  assert.match(editor, /pointFromArtworkPlacement\(/);
+  assert.match(editor, /pointToArtworkPlacement\(/);
+  assert.match(editor, /state\.tool === 'artwork'/);
+  assert.match(editor, /draggingArtwork/);
+  assert.match(editor, /context\.rotate\(\(state\.placement\.rotationDeg \|\| 0\)/);
+});
+
 test('the plasma profile defaults to 3 mm webs while permitting a verified 2 mm minimum', () => {
   assert.match(html, /value="plasma" selected>Plasma · 2 mm holes · 3 mm gap default/);
   assert.match(html, /id="min-web"[^>]*min="2"[^>]*value="3"/);

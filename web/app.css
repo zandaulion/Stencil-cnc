@@ -1921,6 +1921,46 @@ select:focus {
   font-weight: 650;
 }
 
+.artwork-transform {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.artwork-transform-heading {
+  margin-bottom: 13px;
+}
+
+.artwork-transform-heading .text-button {
+  font-size: 0.63rem;
+}
+
+.artwork-offset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 2px 0 12px;
+}
+
+.artwork-offset-grid > label {
+  display: flex;
+  gap: 7px;
+  flex-direction: column;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 650;
+}
+
+.artwork-transform-help {
+  margin: 9px 0 0;
+}
+
+#btn-position-artwork[aria-pressed="true"] {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
 .link-dimensions {
   display: grid;
   width: 25px;
@@ -2684,6 +2724,10 @@ select:focus {
   background-position: 20px 20px;
   background-size: 20px 20px;
   outline: none;
+}
+
+.canvas-viewport[data-active-tool="artwork"] {
+  touch-action: none;
 }
 
 .canvas-viewport:focus-visible {
