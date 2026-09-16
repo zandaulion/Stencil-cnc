@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   CANDIDATE_PAYLOAD_VERSION,
+  FINISHED_BOUNDARY_CAM,
+  LEGACY_UNCOMPENSATED_CENTERLINE,
   PROJECT_SCHEMA,
   PROJECT_VERSION,
   applyRasterLayers,
@@ -19,6 +21,7 @@ import { maskFromAscii } from "./fixtures.js";
 
 test("a new project uses the standard CNC panel size", () => {
   assert.deepEqual(createProject().sheet, { widthMm: 1250, heightMm: 2500 });
+  assert.equal(createProject().manufacturing.geometryInterpretation, FINISHED_BOUNDARY_CAM);
 });
 
 test("binary masks use deterministic serializable run-length encoding", () => {
@@ -99,6 +102,7 @@ test("draft version 0 projects migrate and future versions fail safely", () => {
   assert.equal(migrated.conversion.threshold, 90);
   assert.equal(migrated.conversion.invert, true);
   assert.equal(migrated.manufacturing.minimumOpeningMm, 2);
+  assert.equal(migrated.manufacturing.geometryInterpretation, LEGACY_UNCOMPENSATED_CENTERLINE);
 
   assert.throws(
     () => deserializeProject(JSON.stringify({ schema: PROJECT_SCHEMA, version: PROJECT_VERSION + 1 })),
@@ -127,6 +131,31 @@ test("version 1 projects migrate without inventing candidate repair layers", () 
   assert.equal(migrated.editor.candidates[0].payloadVersion, 1);
   assert.equal(migrated.editor.candidates[0].manufacturingRepairs, null);
   assert.equal(migrated.editor.candidates[0].geometry, null);
+  assert.equal(migrated.manufacturing.geometryInterpretation, LEGACY_UNCOMPENSATED_CENTERLINE);
+});
+
+test("version 2 projects preserve legacy kerf meaning and invalidate stale readiness", () => {
+  const current = createProject({
+    raster: { sourceMask: encodeMask(maskFromAscii(["##"])) },
+    editor: {
+      controls: {},
+      candidates: [],
+      projectSummary: {
+        status: "ready",
+        lastValidatedAt: "2026-09-15T10:00:00.000Z",
+      },
+    },
+  });
+  const legacy = JSON.parse(JSON.stringify(current));
+  legacy.version = 2;
+  delete legacy.manufacturing.geometryInterpretation;
+  const migrated = deserializeProject(JSON.stringify(legacy));
+
+  assert.equal(migrated.version, PROJECT_VERSION);
+  assert.equal(migrated.manufacturing.geometryInterpretation, LEGACY_UNCOMPENSATED_CENTERLINE);
+  assert.equal(migrated.editor.projectSummary.status, "needs-validation");
+  assert.equal(migrated.editor.projectSummary.lastValidatedAt, null);
+  assert.deepEqual([...decodeMask(migrated.raster.sourceMask).data], [1, 1]);
 });
 
 test("portable project files never include the browser-local source photograph", () => {

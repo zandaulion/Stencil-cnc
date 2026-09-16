@@ -2,6 +2,12 @@ import { analyzeConnectivity } from "./connectivity.js";
 import { applyCapsuleBridges } from "./bridges.js";
 import { erodeMaskPhysical } from "./morphology.js";
 import { assertMask, assertSameSize, assertSheet, cloneMask, pixelSizeMm, positiveFinite } from "./mask.js";
+import {
+  FINISHED_BOUNDARY_CAM,
+  kerfErosionMm,
+  normalizeGeometryInterpretation,
+  rasterWebWidthMm,
+} from "./geometry-contract.js";
 
 /**
  * Suggests straight, finite-width capsule bridges from each unsupported
@@ -29,16 +35,20 @@ export function suggestBridges(mask, config) {
     const maximumSpanMm = config.strategy.maximumUnsupportedSpanMm;
     if (config.strategy.kind !== "lamele" || !Number.isFinite(maximumSpanMm)) return connectivity;
     const connected = applyCapsuleBridges(mask, connectivity, config.sheet);
-    // Detect the slat centre-lines before kerf so even a narrow, warning-worthy
-    // bar still receives a brace instead of vanishing from the planner. The
-    // emitted tie width includes kerf allowance, and the completed design is
-    // subsequently checked by the normal post-kerf validation pass.
+    // Detect the slat centre-lines in the stored artwork so even a narrow,
+    // warning-worthy bar still receives a brace instead of vanishing from the
+    // planner. Current projects emit finished tie widths; explicit legacy
+    // projects retain their historical full-kerf allowance.
     const stabilizers = suggestSlatStabilizers(connected, {
       sheet: config.sheet,
       anchorMask: config.anchorMask,
       widthMm: Math.max(
         config.widthMm,
-        (config.minimumWebMm ?? 0) + (config.kerfMm ?? 0),
+        rasterWebWidthMm(
+          config.minimumWebMm ?? 0,
+          config.kerfMm ?? 0,
+          config.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
+        ),
       ),
       barAngleDeg: config.strategy.barAngleDeg,
       slatPitchMm: config.strategy.slatPitchMm,
@@ -54,14 +64,14 @@ export function suggestBridges(mask, config) {
 }
 
 /**
- * Plans retained-material supports against the geometry that will actually
- * remain after the cutter has passed. A design can be one component before
- * kerf and hundreds afterwards; the ordinary planner cannot see those weak
- * necks because there is no topological break yet.
+ * Plans retained-material supports against the geometry interpretation stored
+ * with the project. Current artwork already represents finished boundaries;
+ * legacy artwork is eroded to retain its historical uncompensated simulation.
  *
- * Each pass plans on the eroded mask, applies full pre-cut bridge width to the
- * original mask, then erodes again. The loop stops only when post-kerf
- * connectivity is satisfied or a pass cannot reduce the component count.
+ * Each pass plans on that interpreted mask, applies the required raster bridge
+ * width to the original mask, then checks again. The loop stops only when
+ * interpreted connectivity is satisfied or a pass cannot reduce the component
+ * count.
  * Slat span stabilizers are added once, after connectivity repair, so retries
  * cannot lay duplicate rows over the portrait.
  *
@@ -79,6 +89,7 @@ export function suggestBridges(mask, config) {
  *   maxPasses?:number,
  *   maximumBridges?:number,
  *   strategy?:object,
+ *   geometryInterpretation?:'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1',
  * }} config
  */
 export function suggestKerfAwareBridges(mask, config) {
@@ -90,6 +101,9 @@ export function suggestKerfAwareBridges(mask, config) {
 
   const kerfMm = nonNegative(config.kerfMm ?? 0, "kerfMm");
   const minimumWebMm = nonNegative(config.minimumWebMm ?? 0, "minimumWebMm");
+  const geometryInterpretation = normalizeGeometryInterpretation(
+    config.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
+  );
   const maxPasses = config.maxPasses ?? 4;
   if (!Number.isInteger(maxPasses) || maxPasses < 1 || maxPasses > 12) {
     throw new RangeError("maxPasses must be an integer between 1 and 12");
@@ -100,12 +114,13 @@ export function suggestKerfAwareBridges(mask, config) {
     throw new RangeError("maximumBridges must be an integer between 1 and 10000");
   }
 
-  // Ordinary support planning asks whether metal remains connected after the
-  // kerf. Manufacturing repair can opt into the stricter question: whether a
-  // full minimum-web-width core remains connected after kerf. That turns the
+  // Ordinary support planning asks whether the finished metal remains
+  // connected. Manufacturing repair can opt into the stricter question:
+  // whether a full minimum-web-width core remains connected. That turns the
   // validator's narrow-web warning into the same sparse, filter-aware bridge
   // problem instead of painting every thin raster cell indiscriminately.
-  const planningErosionMm = kerfMm + (config.targetMinimumWebConnectivity === true ? minimumWebMm : 0);
+  const planningErosionMm = kerfErosionMm(kerfMm, geometryInterpretation) +
+    (config.targetMinimumWebConnectivity === true ? minimumWebMm : 0);
   const erodeForKerf = (candidate) => planningErosionMm > 0
     ? erodeMaskPhysical(candidate, planningErosionMm / 2, config.sheet, {
       outsideIsRemoved: config.outsideIsRemoved,
@@ -172,7 +187,10 @@ export function suggestKerfAwareBridges(mask, config) {
     const stabilizers = suggestSlatStabilizers(postKerfMask, {
       sheet: config.sheet,
       anchorMask: planningAnchor,
-      widthMm: Math.max(config.widthMm, minimumWebMm + kerfMm),
+      widthMm: Math.max(
+        config.widthMm,
+        rasterWebWidthMm(minimumWebMm, kerfMm, geometryInterpretation),
+      ),
       barAngleDeg: config.strategy.barAngleDeg,
       slatPitchMm: config.strategy.slatPitchMm,
       maximumUnsupportedSpanMm: maximumSpanMm,
@@ -719,10 +737,13 @@ function suggestSmartBridges(mask, config) {
   const strategy = normalizeStrategy(config.strategy);
   const minimumWebMm = nonNegative(config.minimumWebMm ?? 0, "minimumWebMm");
   const kerfMm = nonNegative(config.kerfMm ?? 0, "kerfMm");
-  // Kerf eats one half from both sides of a retained tie. Generate the width
-  // that must exist before cutting instead of knowingly proposing a bridge
-  // the post-kerf connectivity check will remove.
-  const widthMm = Math.max(config.widthMm, minimumWebMm + kerfMm);
+  const geometryInterpretation = normalizeGeometryInterpretation(
+    config.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
+  );
+  const widthMm = Math.max(
+    config.widthMm,
+    rasterWebWidthMm(minimumWebMm, kerfMm, geometryInterpretation),
+  );
 
   const analysis = analyzeConnectivity(mask, {
     anchorMask: config.anchorMask ?? null,

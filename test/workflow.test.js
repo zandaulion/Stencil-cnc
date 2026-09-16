@@ -308,7 +308,7 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /Support planning failed before changing the geometry/);
   assert.match(editor, /supportSimulation\.postKerf\.componentCount === 1/);
   assert.match(html, /id="connectivity-detail"/);
-  assert.match(editor, /Everything stays connected after kerf/);
+  assert.match(editor, /Everything is one connected finished piece/);
   assert.match(editor, /MIN_WEB_DISCONNECT/);
   assert.match(editor, /Geometry must be repaired before export/);
 });
@@ -381,11 +381,13 @@ test('the plasma profile drives every filter with 2 mm openings and 3 mm webs', 
   assert.match(html, /id="selected-bridge-width"[^>]*min="3"/);
   assert.match(editor, /form\.set\('punte_min_mm', String\(toMm\(numberField\('min-web', 3\)\)\)\)/);
   assert.match(editor, /form\.set\('kerf_mm', String\(toMm\(numberField\('kerf', 1\.2\)\)\)\)/);
+  assert.match(editor, /form\.set\('interpretare_geometrie', state\.geometryInterpretation\)/);
   assert.match(editor, /form\.set\('fanta_min_mm', String\(Math\.max\(/);
   assert.match(html, /id="prekerf-web-note"/);
   assert.match(html, /id="preview-pre-kerf"[^>]*name="kerfPreview"/);
   assert.match(html, /id="simulate-kerf"[^>]*name="kerfPreview"[^>]*checked/);
-  assert.match(editor, /state\.kerfPreviewMask = kerfMm > 0/);
+  assert.match(editor, /state\.kerfPreviewMask = finishedGeometryPreview\(state\.designMask\)/);
+  assert.match(html, /apply inside\/outside compensation once in CAM/i);
 });
 
 test('panel fitting uses visible generated artwork rather than empty source border', () => {

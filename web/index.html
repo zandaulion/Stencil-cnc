@@ -216,18 +216,23 @@
             <div class="control-section">
               <h2>Plasma constraints</h2>
               <label class="field-row" for="kerf">
-                <span>Kerf / tool diameter <small>Used for simulation and opening limits</small></span>
+                <span>Kerf / tool diameter <small>Used for CAM offset feasibility and legacy simulation</small></span>
                 <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-web">
-                <span>Minimum gap between cuts <small>Finished metal remaining after kerf</small></span>
+                <span>Minimum gap between cuts <small>Finished metal between compensated cuts</small></span>
                 <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="3" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-opening">
                 <span>Minimum opening <small>Smallest removable feature</small></span>
                 <span class="number-field compact"><input id="min-opening" name="minOpening" type="number" min="2" max="500" step="0.1" value="2"><span data-unit-label>mm</span></span>
               </label>
-              <p class="section-help" id="prekerf-web-note">Filters generate at least 4.2 mm before cutting so 3 mm remains after the 1.2 mm kerf.</p>
+              <p class="section-help" id="prekerf-web-note">Filters draw the requested 3 mm finished web. Apply the 1.2 mm kerf once, as inside/outside compensation in CAM.</p>
+              <div class="geometry-contract" id="geometry-contract" data-mode="finished">
+                <strong id="geometry-contract-title">Finished-edge CAM workflow</strong>
+                <span id="geometry-contract-copy">Artwork and exports describe final part edges. Apply inside/outside kerf compensation once in CAM.</span>
+                <button class="text-button" id="btn-upgrade-geometry-contract" type="button" hidden>Use finished-edge workflow</button>
+              </div>
             </div>
 
             <fieldset class="control-group segmented-fieldset" id="polarity">
@@ -788,7 +793,7 @@
                 <div class="range-ends" aria-hidden="true"><span>Orderly</span><span>Organic</span></div>
               </div>
               <input id="stabilizer-version" type="hidden" value="2">
-              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Follow features searches for dark, locally aligned positions where added metal is less visible, and may use one extra sparse slat station to route around a face. Secure adds a small number of separated backup ties. Slat stabilizers include kerf allowance and the completed geometry is checked after kerf. Their span target is a guide, not a strength certification; confirm it for the stock, thickness, mounting, and cut sequence. Orange dashed ties are safe fallbacks to review.</p>
+              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Follow features searches for dark, locally aligned positions where added metal is less visible, and may use one extra sparse slat station to route around a face. Secure adds a small number of separated backup ties. Slat stabilizers meet the finished-web requirement, and the completed finished geometry is checked. Their span target is a guide, not a strength certification; confirm it for the stock, thickness, mounting, and cut sequence. Orange dashed ties are safe fallbacks to review.</p>
             </div>
 
             <div class="button-stack">
@@ -844,14 +849,14 @@
               <div class="segmented-control">
                 <label>
                   <input id="preview-pre-kerf" name="kerfPreview" type="radio" value="pre">
-                  <span>Before kerf</span>
+                  <span id="geometry-preview-design-label">Design contours</span>
                 </label>
                 <label>
                   <input id="simulate-kerf" name="kerfPreview" type="radio" value="post" checked>
-                  <span>After kerf</span>
+                  <span id="geometry-preview-finished-label">Finished part</span>
                 </label>
               </div>
-              <p class="section-help">Switch between the drawn geometry and the material that remains after cutting.</p>
+              <p class="section-help" id="geometry-preview-help">With CAM compensation, the design contours are the intended finished material edges.</p>
             </fieldset>
 
             <button class="button button-primary button-full" id="btn-validate" type="button">
@@ -891,9 +896,10 @@
                 <input class="switch" id="export-frame" name="exportFrame" type="checkbox" checked>
               </label>
               <label class="toggle-row" for="export-kerf">
-                <span>Bake in kerf compensation<small>Planned; for now leave compensation to CAM</small></span>
+                <span>Bake in kerf compensation<small id="export-kerf-copy">Off — apply inside/outside compensation once in CAM</small></span>
                 <input class="switch" id="export-kerf" name="exportKerf" type="checkbox" disabled>
               </label>
+              <p class="cam-contract-note" id="cam-contract-note"><strong>CAM setup:</strong> These contours are finished part boundaries. Apply the configured kerf once in CAM; do not cut them as uncompensated centre paths.</p>
             </div>
 
             <div class="scale-card">
@@ -1154,7 +1160,7 @@
               <legend>Error repair categories</legend>
               <label><input id="repair-category-slivers" type="checkbox" checked><span><strong>Clean raster slivers</strong><small>Remove detached specks and close uncuttable holes.</small></span></label>
               <label><input id="repair-category-gaps" type="checkbox" checked><span><strong>Repair close cuts</strong><small>Widen the web, merge cuts, or close minor cuts.</small></span></label>
-              <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect detached material</strong><small>Add bounded, filter-aware ties to pieces that separate before or after kerf.</small></span></label>
+              <label><input id="repair-category-webs" type="checkbox" checked><span><strong>Connect detached material</strong><small>Add bounded, filter-aware ties to pieces that are separate in the finished geometry.</small></span></label>
             </fieldset>
             <button class="button button-primary button-full" id="btn-preview-repairs" type="button">Preview error repairs</button>
           </section>

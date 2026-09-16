@@ -38,6 +38,7 @@ export function validateProject(project) {
     kerfMm: project.manufacturing.kerfMm,
     minimumWebMm: project.manufacturing.minimumWebMm,
     minimumOpeningMm: project.manufacturing.minimumOpeningMm,
+    geometryInterpretation: project.manufacturing.geometryInterpretation,
     anchorMask: built.frameMask,
     anchorBoundary: project.frame.insetMm === 0,
   });

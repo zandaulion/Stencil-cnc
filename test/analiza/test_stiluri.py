@@ -16,6 +16,8 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "analiza"))
 
 from stiluri import (  # noqa: E402
+    INTERPRETARE_FINITA_CAM,
+    INTERPRETARE_LEGACY,
     _cap_din_subiect,
     _raze_adaptive,
     ReglajImposibil,
@@ -34,6 +36,7 @@ from stiluri import (  # noqa: E402
     sablon,
     sablon_icoana,
     punte_inainte_de_kerf,
+    punte_pentru_interpretare,
     silueta,
 )
 
@@ -62,6 +65,18 @@ class TestCompensareKerf(unittest.TestCase):
             punte_inainte_de_kerf(0, 1.2)
         with self.assertRaises(ReglajImposibil):
             punte_inainte_de_kerf(3, -0.1)
+
+    def test_interpretarea_finita_nu_adauga_kerf_a_doua_oara(self):
+        self.assertAlmostEqual(
+            punte_pentru_interpretare(3.0, 1.2, INTERPRETARE_FINITA_CAM),
+            3.0,
+        )
+        self.assertAlmostEqual(
+            punte_pentru_interpretare(3.0, 1.2, INTERPRETARE_LEGACY),
+            4.2,
+        )
+        with self.assertRaises(ReglajImposibil):
+            punte_pentru_interpretare(3.0, 1.2, "necunoscut")
 
 
 class TestLinieArt(unittest.TestCase):

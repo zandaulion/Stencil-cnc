@@ -1486,6 +1486,35 @@ svg {
   line-height: 1.45;
 }
 
+.geometry-contract,
+.cam-contract-note {
+  border: 1px solid color-mix(in srgb, var(--teal) 34%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--teal) 7%, white);
+  color: var(--muted);
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 12px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.geometry-contract strong,
+.cam-contract-note strong { color: var(--ink); }
+
+.geometry-contract[data-mode="legacy"] {
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--line));
+  background: color-mix(in srgb, var(--warning) 9%, white);
+}
+
+.geometry-contract .text-button {
+  justify-self: start;
+  margin-top: 3px;
+}
+
+.cam-contract-note { margin: 12px 0 0; }
+
 .segmented-control {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

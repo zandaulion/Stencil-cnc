@@ -1,6 +1,13 @@
 import { analyzeConnectivity } from "./connectivity.js";
 import { dilateMaskPhysical, erodeMaskPhysical } from "./morphology.js";
 import {
+  FINISHED_BOUNDARY_CAM,
+  kerfErosionMm,
+  normalizeGeometryInterpretation,
+  rasterWebWidthMm,
+  requiredOpeningMm,
+} from "./geometry-contract.js";
+import {
   RETAINED,
   assertMask,
   assertSameSize,
@@ -11,10 +18,11 @@ import {
 } from "./mask.js";
 
 /**
- * Runs topology and approximate physical-width checks. Kerf is modelled as an
- * inward erosion of retained material by half its configured width. Minimum
- * web checks use a second erosion and therefore intentionally err on the safe
- * side at raster resolution.
+ * Runs topology and approximate physical-width checks. In the current
+ * finished-boundary contract the raster describes the intended final material
+ * edge and CAM applies kerf compensation, so kerf is not subtracted again.
+ * The legacy interpretation retains the historical uncompensated erosion for
+ * existing projects until their owner deliberately upgrades them.
  *
  * Only structural disconnection is an error in the MVP. Approximate width and
  * raster-resolution findings are warnings for a human/CAM review.
@@ -30,6 +38,7 @@ import {
  *   requireAnchored?: boolean,
  *   requireSingleComponent?: boolean,
  *   outsideIsRemoved?: boolean,
+ *   geometryInterpretation?: 'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1',
  * }} config
  */
 export function validateDesign(mask, config) {
@@ -41,6 +50,12 @@ export function validateDesign(mask, config) {
   const kerfMm = nonNegative(config.kerfMm ?? 0, "kerfMm");
   const minimumWebMm = nonNegative(config.minimumWebMm ?? 0, "minimumWebMm");
   const minimumOpeningMm = nonNegative(config.minimumOpeningMm ?? 0, "minimumOpeningMm");
+  const geometryInterpretation = normalizeGeometryInterpretation(
+    config.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
+  );
+  const kerfLossMm = kerfErosionMm(kerfMm, geometryInterpretation);
+  const requiredDrawnWebMm = rasterWebWidthMm(minimumWebMm, kerfMm, geometryInterpretation);
+  const effectiveOpeningMm = requiredOpeningMm(minimumOpeningMm, kerfMm);
   const connectivityOptions = {
     anchorMask: config.anchorMask ?? null,
     anchorBoundary: config.anchorBoundary,
@@ -80,15 +95,15 @@ export function validateDesign(mask, config) {
     }
   }
 
-  const postKerfMask = kerfMm > 0
-    ? erodeMaskPhysical(mask, kerfMm / 2, config.sheet, { outsideIsRemoved: config.outsideIsRemoved })
+  const postKerfMask = kerfLossMm > 0
+    ? erodeMaskPhysical(mask, kerfLossMm / 2, config.sheet, { outsideIsRemoved: config.outsideIsRemoved })
     : { width: mask.width, height: mask.height, data: mask.data.slice() };
   const postKerf = analyzeConnectivity(postKerfMask, connectivityOptions);
 
   if (initial.retainedPixels > 0 && postKerf.retainedPixels === 0) {
     issues.push(issue("KERF_REMOVED_ALL", "error", "The configured kerf removes all retained material."));
   }
-  if (kerfMm > 0) {
+  if (kerfLossMm > 0) {
     if (config.requireSingleComponent === true && postKerf.componentCount > 1) {
       const components = disconnectedComponents(postKerf);
       const locations = componentLocations(components);
@@ -126,7 +141,7 @@ export function validateDesign(mask, config) {
   const undersizedOpenings = [];
   let removedMask = null;
   let removed = null;
-  if (minimumOpeningMm > 0 || minimumWebMm > 0) {
+  if (effectiveOpeningMm > 0 || minimumWebMm > 0) {
     removedMask = createMask(mask.width, mask.height);
     for (let index = 0; index < mask.data.length; index += 1) {
       if (mask.data[index] !== RETAINED) removedMask.data[index] = RETAINED;
@@ -140,8 +155,8 @@ export function validateDesign(mask, config) {
       connectivity: 8,
     });
   }
-  if (minimumOpeningMm > 0) {
-    openingCoreMask = erodeMaskPhysical(removedMask, minimumOpeningMm / 2, config.sheet, {
+  if (effectiveOpeningMm > 0) {
+    openingCoreMask = erodeMaskPhysical(removedMask, effectiveOpeningMm / 2, config.sheet, {
       outsideIsRemoved: false,
     });
     const surviving = new Set();
@@ -162,11 +177,13 @@ export function validateDesign(mask, config) {
       issues.push(issue(
         "MIN_OPENING_UNCUTTABLE",
         "error",
-        `${undersizedOpenings.length} removed ${undersizedOpenings.length === 1 ? "region is" : "regions are"} too small for the configured minimum opening.`,
+        `${undersizedOpenings.length} removed ${undersizedOpenings.length === 1 ? "region is" : "regions are"} too small for the configured opening or compensated cutter path.`,
         {
           phase: "opening",
           componentCount: undersizedOpenings.length,
           minimumOpeningMm,
+          requiredOpeningMm: effectiveOpeningMm,
+          kerfMm,
           componentId: locations[0].componentId,
           bounds: locations[0].bounds,
           locations,
@@ -180,7 +197,13 @@ export function validateDesign(mask, config) {
   // constraint: rounded outer corners do not look like two cuts and therefore
   // cannot create a false export blocker.
   if (minimumWebMm > 0 && removed?.componentCount > 1) {
-    const gaps = findCutGapViolations(removedMask, removed.labels, config.sheet, minimumWebMm);
+    const gaps = findCutGapViolations(
+      removedMask,
+      removed.labels,
+      config.sheet,
+      requiredDrawnWebMm,
+      kerfLossMm,
+    );
     if (gaps.length > 0) {
       const closest = gaps[0];
       const count = gaps.length;
@@ -188,12 +211,14 @@ export function validateDesign(mask, config) {
         "MIN_CUT_GAP",
         "error",
         count === 1
-          ? `Separate cuts are only ${closest.gapMm.toFixed(2)} mm apart; the configured minimum is ${minimumWebMm} mm.`
-          : `${count} pairs of separate cuts are closer than ${minimumWebMm} mm; the closest gap is ${closest.gapMm.toFixed(2)} mm.`,
+          ? `Separate cuts leave only ${closest.finishedGapMm.toFixed(2)} mm of finished metal; the configured minimum is ${minimumWebMm} mm.`
+          : `${count} pairs of separate cuts leave less than ${minimumWebMm} mm of finished metal; the closest finished gap is ${closest.finishedGapMm.toFixed(2)} mm.`,
         {
           phase: "cutGap",
           violationCount: count,
           minimumWebMm,
+          requiredDrawnWebMm,
+          geometryInterpretation,
           ...closest,
           locations: gaps,
         },
@@ -246,7 +271,7 @@ export function validateDesign(mask, config) {
       issues.push(issue(
         "MIN_WEB_NO_SURVIVING_CORE",
         "warning",
-        `${locations.length} material ${locations.length === 1 ? "region contains" : "regions contain"} no area at the configured ${minimumWebMm} mm web width after kerf.`,
+        `${locations.length} material ${locations.length === 1 ? "region contains" : "regions contain"} no area at the configured ${minimumWebMm} mm finished web width.`,
         {
           phase: "thinArea",
           componentCount: locations.length,
@@ -299,7 +324,7 @@ export function validateDesign(mask, config) {
 
   const pixel = pixelSizeMm(mask, config.sheet);
   const smallestModelledRadius = Math.min(
-    ...[kerfMm / 2, minimumWebMm / 2, minimumOpeningMm / 2].filter((value) => value > 0),
+    ...[kerfLossMm / 2, minimumWebMm / 2, effectiveOpeningMm / 2].filter((value) => value > 0),
   );
   if (Number.isFinite(smallestModelledRadius) && smallestModelledRadius < Math.min(pixel.x, pixel.y) / 2) {
     issues.push(issue(
@@ -340,6 +365,9 @@ export function validateDesign(mask, config) {
       kerfMm,
       minimumWebMm,
       minimumOpeningMm,
+      requiredOpeningMm: effectiveOpeningMm,
+      requiredDrawnWebMm,
+      geometryInterpretation,
     },
   };
 }
@@ -355,7 +383,7 @@ function issue(code, severity, message, details = {}) {
  * pixel-level duplicates. Boundary pixels are spatially bucketed, keeping the
  * search bounded by local cutter-scale neighbourhoods.
  */
-function findCutGapViolations(removedMask, labels, sheet, minimumGapMm) {
+function findCutGapViolations(removedMask, labels, sheet, minimumGapMm, finishedGapOffsetMm = 0) {
   const pixel = pixelSizeMm(removedMask, sheet);
   const cellSize = minimumGapMm + Math.max(pixel.x, pixel.y);
   const buckets = new Map();
@@ -388,6 +416,7 @@ function findCutGapViolations(removedMask, labels, sheet, minimumGapMm) {
             if (current && current.gapMm <= gapMm) continue;
             closestByPair.set(pairKey, {
               gapMm,
+              finishedGapMm: Math.max(0, gapMm - finishedGapOffsetMm),
               componentIds,
               points: [
                 { x: other.x, y: other.y },

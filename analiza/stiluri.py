@@ -28,6 +28,10 @@ class ReglajImposibil(ValueError):
     """The spacing asked for cannot hold both a cut and the material beside it."""
 
 
+INTERPRETARE_FINITA_CAM = "finished-boundary-cam-v1"
+INTERPRETARE_LEGACY = "legacy-uncompensated-centerline-v1"
+
+
 # The raster has to be able to draw the limits it is given. Below this many
 # pixels a bar is not thin, it is a dotted line: measured on a 1200 mm panel at
 # 900 px -- 1.33 mm per pixel -- a 1 mm minimum web produced three thousand
@@ -138,6 +142,23 @@ def punte_inainte_de_kerf(punte_finita_mm: float, kerf_mm: float) -> float:
     if kerf_mm < 0:
         raise ReglajImposibil("Kerf-ul nu poate fi negativ.")
     return punte_finita_mm + kerf_mm
+
+
+def punte_pentru_interpretare(
+    punte_finita_mm: float,
+    kerf_mm: float,
+    interpretare: str,
+) -> float:
+    """Return raster web width for the versioned contour interpretation."""
+    if punte_finita_mm <= 0:
+        raise ReglajImposibil("Puntea finită trebuie să fie pozitivă.")
+    if kerf_mm < 0:
+        raise ReglajImposibil("Kerf-ul nu poate fi negativ.")
+    if interpretare == INTERPRETARE_FINITA_CAM:
+        return punte_finita_mm
+    if interpretare == INTERPRETARE_LEGACY:
+        return punte_inainte_de_kerf(punte_finita_mm, kerf_mm)
+    raise ReglajImposibil("Interpretarea geometriei nu este acceptată.")
 
 
 def aplica_limite_fizice(

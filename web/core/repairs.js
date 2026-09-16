@@ -4,6 +4,12 @@ import { dilateMaskPhysical } from "./morphology.js";
 import { suggestBridges, suggestKerfAwareBridges } from "./suggestions.js";
 import { countValidationLocations, validateDesign } from "./validation.js";
 import {
+  FINISHED_BOUNDARY_CAM,
+  normalizeGeometryInterpretation,
+  rasterWebWidthMm,
+  requiredOpeningMm,
+} from "./geometry-contract.js";
+import {
   REMOVED,
   RETAINED,
   assertMask,
@@ -224,6 +230,7 @@ export function planCutGapRepairs(mask, validation, options) {
       bounds: location.bounds,
       points: location.points,
       gapMm: location.gapMm,
+      finishedGapMm: location.finishedGapMm ?? location.gapMm,
       deficitMm,
       smallerComponentId: smaller?.id ?? null,
       smallerDiameterMm,
@@ -369,6 +376,7 @@ const CONNECTIVITY_ERROR_CODES = new Set([
  *   bridgeWidthMm:number,
  *   bridgeStrategy?:object,
  *   maximumBridges?:number,
+ *   geometryInterpretation?:'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1',
  * }} options
  */
 export function planManufacturingRepairs(mask, options) {
@@ -381,6 +389,11 @@ export function planManufacturingRepairs(mask, options) {
   const minimumOpeningMm = nonNegative(options.minimumOpeningMm, "minimumOpeningMm");
   const targetWebMm = positive(options.targetWebMm, "targetWebMm");
   const targetOpeningMm = positive(options.targetOpeningMm, "targetOpeningMm");
+  const geometryInterpretation = normalizeGeometryInterpretation(
+    options.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
+  );
+  const targetRasterWebMm = rasterWebWidthMm(targetWebMm, kerfMm, geometryInterpretation);
+  const targetRasterOpeningMm = requiredOpeningMm(targetOpeningMm, kerfMm);
   const bridgeWidthMm = positive(options.bridgeWidthMm, "bridgeWidthMm");
   const maximumBridges = options.maximumBridges ?? 192;
   if (!Number.isInteger(maximumBridges) || maximumBridges < 1 || maximumBridges > 10_000) {
@@ -402,6 +415,7 @@ export function planManufacturingRepairs(mask, options) {
     kerfMm,
     minimumWebMm,
     minimumOpeningMm,
+    geometryInterpretation,
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
@@ -456,14 +470,14 @@ export function planManufacturingRepairs(mask, options) {
       }), "sliver", "DISCONNECTED_RETAINED_MATERIAL", stagePass + 1);
       tryCleanupPlanner((attemptStrategy) => planSmallOpeningRepairs(candidate, validation, {
         sheet: options.sheet, strategy: attemptStrategy,
-        targetOpeningMm, minimumWebMm: targetWebMm, protectedMask,
+        targetOpeningMm: targetRasterOpeningMm, minimumWebMm: targetRasterWebMm, protectedMask,
       }), "opening", "MIN_OPENING_UNCUTTABLE", stagePass + 2);
     }
     if (categories.gaps) {
       for (let pass = 1; pass <= 3; pass += 1) {
         const accepted = tryCleanupPlanner((attemptStrategy) => planCutGapRepairs(candidate, validation, {
           sheet: options.sheet, strategy: attemptStrategy,
-          targetGapMm: targetWebMm, targetOpeningMm, protectedMask,
+          targetGapMm: targetRasterWebMm, targetOpeningMm: targetRasterOpeningMm, protectedMask,
         }), "gap", "MIN_CUT_GAP", stagePass + 2 + pass);
         if (!accepted) break;
       }
@@ -488,11 +502,12 @@ export function planManufacturingRepairs(mask, options) {
     const previousConnectivityErrors = connectivityErrorCount(validation);
     const supportPlan = suggestKerfAwareBridges(candidate, {
       sheet: options.sheet,
-      widthMm: Math.max(bridgeWidthMm, targetWebMm + kerfMm),
+      widthMm: Math.max(bridgeWidthMm, targetRasterWebMm),
       anchorBoundary: false,
       requireSingleComponent: true,
       minimumWebMm: targetWebMm,
       kerfMm,
+      geometryInterpretation,
       targetMinimumWebConnectivity: false,
       maxPasses: 8,
       maximumBridges,
@@ -535,11 +550,12 @@ export function planManufacturingRepairs(mask, options) {
       const available = maximumBridges - supportCount;
       const bridges = suggestBridges(validation.minimumWebCoreMask, {
         sheet: options.sheet,
-        widthMm: Math.max(bridgeWidthMm, targetWebMm + kerfMm),
+        widthMm: Math.max(bridgeWidthMm, targetRasterWebMm),
         anchorBoundary: false,
         requireSingleComponent: true,
         minimumWebMm: targetWebMm,
         kerfMm,
+        geometryInterpretation,
         strategy: options.bridgeStrategy
           ? { ...options.bridgeStrategy, maximumUnsupportedSpanMm: undefined }
           : undefined,

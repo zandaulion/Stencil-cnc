@@ -1,21 +1,26 @@
 import { assertMask, createMask } from "./mask.js";
 import { validateBridge } from "./bridges.js";
 import { CANDIDATE_PAYLOAD_VERSION } from "./candidates.js";
+import {
+  FINISHED_BOUNDARY_CAM,
+  LEGACY_UNCOMPENSATED_CENTERLINE,
+  normalizeGeometryInterpretation,
+} from "./geometry-contract.js";
 
 export const PROJECT_SCHEMA = "stencil-cnc.project";
-export const PROJECT_VERSION = 2;
+export const PROJECT_VERSION = 3;
 
 /**
  * @typedef {object} StencilProject
  * @property {'stencil-cnc.project'} schema
- * @property {2} version
+ * @property {3} version
  * @property {string | null} id
  * @property {string} name
  * @property {'mm'} units
  * @property {{widthMm:number,heightMm:number}} sheet
  * @property {{mode:'line-art'|'photograph',threshold:number,invert:boolean,backgroundLuminance:number}} conversion
  * @property {{enabled:boolean,thicknessMm:number|object,insetMm:number|object,sides:{top:boolean,right:boolean,bottom:boolean,left:boolean}}} frame
- * @property {{kerfMm:number,minimumWebMm:number,minimumOpeningMm:number,maximumCantileverMm:number|null}} manufacturing
+ * @property {{kerfMm:number,minimumWebMm:number,minimumOpeningMm:number,maximumCantileverMm:number|null,geometryInterpretation:'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1'}} manufacturing
  * @property {{mode:'single-sheet'}} structure
  * @property {{kind:'none'|'image',name:string|null,mimeType:string|null,widthPx:number|null,heightPx:number|null,imageDataUrl:string|null}} source
  * @property {{sourceMask:EncodedMask|null,baseMask:EncodedMask|null}} raster
@@ -43,7 +48,13 @@ const DEFAULT_PROJECT = Object.freeze({
     insetMm: 0,
     sides: { top: true, right: true, bottom: true, left: true },
   },
-  manufacturing: { kerfMm: 0, minimumWebMm: 3, minimumOpeningMm: 2, maximumCantileverMm: null },
+  manufacturing: {
+    kerfMm: 0,
+    minimumWebMm: 3,
+    minimumOpeningMm: 2,
+    maximumCantileverMm: null,
+    geometryInterpretation: FINISHED_BOUNDARY_CAM,
+  },
   structure: { mode: "single-sheet" },
   source: {
     kind: "none",
@@ -174,13 +185,35 @@ export function migrateProject(input) {
         }),
       },
       raster: project.raster ?? { sourceMask: project.sourceMask ?? null },
+      manufacturing: {
+        ...project.manufacturing,
+        geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
+      },
     });
   } else if (version === 1) {
     // Version 2 makes complete candidate snapshots part of the persistence
     // contract. Raising the outer version prevents an older offline client
     // from opening a newer project and silently dropping candidate repair
     // layers when it next serializes the project.
+    project.version = 2;
+  }
+  if (version < 3) {
+    // Versions 0–2 generated stored raster geometry with a full kerf of web
+    // allowance and validated it as uncompensated cutter-centre geometry.
+    // Preserve that meaning until the owner explicitly chooses the new CAM
+    // contract. The bitmap is not silently narrowed or regenerated.
     project.version = PROJECT_VERSION;
+    project.manufacturing = {
+      ...project.manufacturing,
+      geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
+    };
+    if (project.editor?.projectSummary) {
+      project.editor.projectSummary = {
+        ...project.editor.projectSummary,
+        status: project.raster?.sourceMask ? "needs-validation" : "draft",
+        lastValidatedAt: null,
+      };
+    }
   }
   return project;
 }
@@ -249,6 +282,9 @@ export function normalizeProject(input) {
       maximumCantileverMm: input.manufacturing?.maximumCantileverMm == null
         ? null
         : nonNegative(input.manufacturing.maximumCantileverMm, "manufacturing.maximumCantileverMm"),
+      geometryInterpretation: normalizeGeometryInterpretation(
+        input.manufacturing?.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
+      ),
     },
     structure: { mode: structureMode },
     source: {

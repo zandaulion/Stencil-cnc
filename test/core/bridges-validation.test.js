@@ -9,6 +9,8 @@ import {
   createProject,
   createMask,
   encodeMask,
+  FINISHED_BOUNDARY_CAM,
+  LEGACY_UNCOMPENSATED_CENTERLINE,
   validateDesign,
   validateProject,
 } from "../../web/core/index.js";
@@ -43,6 +45,48 @@ function diagonalBlocks(scale = 1) {
   return mask;
 }
 
+function verticalSlotPair(gapMm, { pixelX = 0.25, pixelY = 0.5 } = {}) {
+  const sheet = { widthMm: 20, heightMm: 12 };
+  const width = Math.round(sheet.widthMm / pixelX);
+  const height = Math.round(sheet.heightMm / pixelY);
+  const mask = createMask(width, height, 1);
+  const carve = (x0Mm, x1Mm, y0Mm = 2, y1Mm = 10) => {
+    for (let y = Math.round(y0Mm / pixelY); y < Math.round(y1Mm / pixelY); y += 1) {
+      for (let x = Math.round(x0Mm / pixelX); x < Math.round(x1Mm / pixelX); x += 1) {
+        mask.data[y * width + x] = 0;
+      }
+    }
+  };
+  carve(2, 7);
+  carve(7 + gapMm, 12 + gapMm);
+  return { mask, sheet };
+}
+
+function rotatedSlotPair(gapMm, angleDeg = 32) {
+  const sheet = { widthMm: 20, heightMm: 20 };
+  const pixelMm = 0.1;
+  const width = Math.round(sheet.widthMm / pixelMm);
+  const height = Math.round(sheet.heightMm / pixelMm);
+  const mask = createMask(width, height, 1);
+  const angle = angleDeg * Math.PI / 180;
+  const tangent = { x: Math.cos(angle), y: Math.sin(angle) };
+  const normal = { x: -Math.sin(angle), y: Math.cos(angle) };
+  const slotWidthMm = 3;
+  const centreOffsetMm = (slotWidthMm + gapMm) / 2;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dx = (x + 0.5) * pixelMm - sheet.widthMm / 2;
+      const dy = (y + 0.5) * pixelMm - sheet.heightMm / 2;
+      const along = dx * tangent.x + dy * tangent.y;
+      const across = dx * normal.x + dy * normal.y;
+      const inFirst = Math.abs(along) <= 5 && Math.abs(across + centreOffsetMm) <= slotWidthMm / 2;
+      const inSecond = Math.abs(along) <= 5 && Math.abs(across - centreOffsetMm) <= slotWidthMm / 2;
+      if (inFirst || inSecond) mask.data[y * width + x] = 0;
+    }
+  }
+  return { mask, sheet };
+}
+
 test("a manual capsule bridge joins components with finite raster width", () => {
   const source = maskFromAscii([
     ".......",
@@ -69,6 +113,7 @@ test("post-kerf validation finds a bridge that becomes disconnected", () => {
   const validation = validateDesign(mask, {
     sheet: { widthMm: 15, heightMm: 15 },
     kerfMm: 1,
+    geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
     minimumWebMm: 0,
   });
 
@@ -206,6 +251,7 @@ test("post-kerf separation stays a grouped blocker without an external anchor", 
   const validation = validateDesign(narrowBridgeFixture(), {
     sheet: { widthMm: 15, heightMm: 15 },
     kerfMm: 1,
+    geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
@@ -281,6 +327,100 @@ test("cuts closer than the configured plasma gap block export", () => {
 
   const accepted = validateDesign(safe, { ...config, sheet: { widthMm: 12, heightMm: 5 } });
   assert.ok(!accepted.errors.some((entry) => entry.code === "MIN_CUT_GAP"));
+});
+
+test("finished-boundary gaps use the requested finished width without adding kerf twice", () => {
+  const config = {
+    kerfMm: 1.2,
+    minimumWebMm: 3,
+    minimumOpeningMm: 0,
+    geometryInterpretation: FINISHED_BOUNDARY_CAM,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  };
+  const cases = [
+    [2.75, true],
+    [3, false],
+    [3.25, false],
+  ];
+  for (const [gapMm, blocked] of cases) {
+    const fixture = verticalSlotPair(gapMm);
+    const validation = validateDesign(fixture.mask, { ...config, sheet: fixture.sheet });
+    const issue = validation.errors.find((entry) => entry.code === "MIN_CUT_GAP");
+    assert.equal(Boolean(issue), blocked, `${gapMm} mm`);
+    assert.equal(validation.metrics.requiredDrawnWebMm, 3);
+    assert.equal(validation.metrics.geometryInterpretation, FINISHED_BOUNDARY_CAM);
+    assert.deepEqual([...validation.postKerfMask.data], [...fixture.mask.data]);
+    if (issue) assert.equal(issue.details.finishedGapMm, gapMm);
+  }
+});
+
+test("legacy gaps retain their uncompensated kerf allowance until explicitly upgraded", () => {
+  const config = {
+    kerfMm: 1.2,
+    minimumWebMm: 3,
+    minimumOpeningMm: 0,
+    geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  };
+  const narrow = verticalSlotPair(3);
+  const blocked = validateDesign(narrow.mask, { ...config, sheet: narrow.sheet });
+  const issue = blocked.errors.find((entry) => entry.code === "MIN_CUT_GAP");
+  assert.ok(issue);
+  assert.equal(blocked.metrics.requiredDrawnWebMm, 4.2);
+  assert.ok(Math.abs(issue.details.finishedGapMm - 1.8) < 1e-9);
+
+  const wide = verticalSlotPair(4.25);
+  const accepted = validateDesign(wide.mask, { ...config, sheet: wide.sheet });
+  assert.ok(!accepted.errors.some((entry) => entry.code === "MIN_CUT_GAP"));
+});
+
+test("finished-gap thresholds stay stable with zero kerf and anisotropic raster cells", () => {
+  for (const geometryInterpretation of [FINISHED_BOUNDARY_CAM, LEGACY_UNCOMPENSATED_CENTERLINE]) {
+    for (const resolution of [
+      { pixelX: 0.25, pixelY: 0.5 },
+      { pixelX: 0.125, pixelY: 0.25 },
+    ]) {
+      for (const [gapMm, blocked] of [[2.75, true], [3, false]]) {
+        const fixture = verticalSlotPair(gapMm, resolution);
+        const validation = validateDesign(fixture.mask, {
+          sheet: fixture.sheet,
+          kerfMm: 0,
+          minimumWebMm: 3,
+          minimumOpeningMm: 0,
+          geometryInterpretation,
+          requireAnchored: false,
+          requireSingleComponent: true,
+        });
+        assert.equal(
+          validation.errors.some((entry) => entry.code === "MIN_CUT_GAP"),
+          blocked,
+          `${geometryInterpretation} ${resolution.pixelX}x${resolution.pixelY} ${gapMm} mm`,
+        );
+      }
+    }
+  }
+});
+
+test("rotated separate cuts use the same finished-gap contract", () => {
+  for (const [gapMm, blocked] of [[2.4, true], [3.6, false]]) {
+    const fixture = rotatedSlotPair(gapMm);
+    const validation = validateDesign(fixture.mask, {
+      sheet: fixture.sheet,
+      kerfMm: 1.2,
+      minimumWebMm: 3,
+      minimumOpeningMm: 1.2,
+      geometryInterpretation: FINISHED_BOUNDARY_CAM,
+      requireAnchored: false,
+      requireSingleComponent: true,
+    });
+    assert.equal(
+      validation.errors.some((entry) => entry.code === "MIN_CUT_GAP"),
+      blocked,
+      `${gapMm} mm rotated gap`,
+    );
+  }
 });
 
 test("all close-cut component pairs are reported together and remain locatable", () => {

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  FINISHED_BOUNDARY_CAM,
+  LEGACY_UNCOMPENSATED_CENTERLINE,
   analyzeConnectivity,
   applyCapsuleBridges,
   createMask,
@@ -228,11 +230,27 @@ test("smart bridge width includes material lost to kerf", () => {
     widthMm: 1,
     minimumWebMm: 2,
     kerfMm: 1,
+    geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
     requireSingleComponent: true,
     strategy: { mode: "smart", kind: "generic", level: 1 },
   });
   assert.equal(suggestions.length, 1);
   assert.equal(suggestions[0].width, 3);
+});
+
+test("finished-boundary smart bridges use the requested finished width without adding kerf", () => {
+  const mask = maskFromAscii(["#...#"]);
+  const suggestions = suggestBridges(mask, {
+    sheet: { widthMm: 5, heightMm: 1 },
+    widthMm: 1,
+    minimumWebMm: 2,
+    kerfMm: 1,
+    geometryInterpretation: FINISHED_BOUNDARY_CAM,
+    requireSingleComponent: true,
+    strategy: { mode: "smart", kind: "generic", level: 1 },
+  });
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].width, 2);
 });
 
 test("a smart bridge retains the requested full web after kerf", () => {
@@ -247,6 +265,7 @@ test("a smart bridge retains the requested full web after kerf", () => {
     widthMm: 1,
     minimumWebMm: 3,
     kerfMm: 2,
+    geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
     requireSingleComponent: true,
     strategy: {
       mode: "smart",
@@ -275,6 +294,7 @@ test("kerf-aware suggestions repair a neck that is connected only before cutting
     widthMm: 1,
     minimumWebMm: 2,
     kerfMm: 1,
+    geometryInterpretation: LEGACY_UNCOMPENSATED_CENTERLINE,
     requireSingleComponent: true,
     strategy: { mode: "smart", kind: "generic", level: 2 },
   });

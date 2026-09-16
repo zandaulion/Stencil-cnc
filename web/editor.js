@@ -16,6 +16,7 @@
 
 import {
   CANDIDATE_PAYLOAD_VERSION,
+  FINISHED_BOUNDARY_CAM,
   analyzeConnectivity,
   applyCapsuleBridges,
   applyRasterLayers,
@@ -52,6 +53,9 @@ import {
   isRetryableSyncError,
   isStorageQuotaError,
   issueLocationCount,
+  isLegacyGeometryInterpretation,
+  kerfErosionMm,
+  rasterWebWidthMm,
   REMOVED,
   RETAINED,
 } from '/core/index.js';
@@ -170,6 +174,7 @@ const state = {
   sidePanel: 'candidates',
   tool: 'pan',
   unit: 'mm',
+  geometryInterpretation: FINISHED_BOUNDARY_CAM,
 
   source: null,          // { file, imageData, width, height, name, bytes }
   mode: 'line-art',      // 'line-art' threshold locally, 'photo' renders on the server
@@ -619,11 +624,12 @@ function styleParams(stil = selectedCutStyle()) {
   form.set('inverseaza', String(
     document.querySelector('input[name="polarity"]:checked')?.value === 'white-retained',
   ));
-  // Minimum web is the width that must remain in the finished panel. The
-  // analysis service receives kerf separately and widens generated retained
-  // geometry before cutting, keeping the operator's requirement explicit.
+  // Minimum web is always the requested finished width. The versioned
+  // interpretation tells the analysis service whether the raster itself is a
+  // finished boundary or a preserved legacy uncompensated centre path.
   form.set('punte_min_mm', String(toMm(numberField('min-web', 3))));
   form.set('kerf_mm', String(toMm(numberField('kerf', 1.2))));
+  form.set('interpretare_geometrie', state.geometryInterpretation);
   form.set('fanta_min_mm', String(Math.max(
     toMm(numberField('kerf', 1.2)),
     toMm(numberField('min-opening', 2)),
@@ -699,7 +705,11 @@ function styleParams(stil = selectedCutStyle()) {
 function enforceStyleSpacing() {
   const style = document.querySelector('input[name="cutStyle"]:checked')?.value || 'sablon';
   const kerf = toMm(numberField('kerf', 1.2));
-  const web = toMm(numberField('min-web', 3)) + kerf;
+  const web = rasterWebWidthMm(
+    toMm(numberField('min-web', 3)),
+    kerf,
+    state.geometryInterpretation,
+  );
   const slot = Math.max(kerf, toMm(numberField('min-opening', 2)));
   // Merely fitting one minimum web beside one minimum opening leaves no range
   // in which tone can change the geometry. Reserve one additional detail band
@@ -1066,10 +1076,17 @@ function rebuildDesign() {
   });
   state.designMask = built.mask;
   state.frameMask = built.frameMask;
-  const kerfMm = toMm(numberField('kerf', 1.2));
-  state.kerfPreviewMask = kerfMm > 0
-    ? erodeMaskPhysical(state.designMask, kerfMm / 2, sheet())
-    : { ...state.designMask, data: Uint8Array.from(state.designMask.data) };
+  state.kerfPreviewMask = finishedGeometryPreview(state.designMask);
+}
+
+function finishedGeometryPreview(mask) {
+  const lossMm = kerfErosionMm(
+    toMm(numberField('kerf', 1.2)),
+    state.geometryInterpretation,
+  );
+  return lossMm > 0
+    ? erodeMaskPhysical(mask, lossMm / 2, sheet())
+    : { ...mask, data: Uint8Array.from(mask.data) };
 }
 
 function invalidateValidation({ clearAnalysis = false } = {}) {
@@ -1181,7 +1198,7 @@ function updateConnectivityCard() {
     return;
   }
   const preCutSeparate = Math.max(0, state.analysis.componentCount - 1);
-  const afterKerfSeparate = Math.max(0, (state.supportAnalysis?.componentCount ?? state.analysis.componentCount) - 1);
+  const finishedSeparate = Math.max(0, (state.supportAnalysis?.componentCount ?? state.analysis.componentCount) - 1);
   const currentValidation = state.validatedRevision === state.revision ? state.validation : null;
   const narrowWebIssue = currentValidation?.issues?.find((issue) => issue.code === 'MIN_WEB_DISCONNECT');
   const narrowRegions = narrowWebIssue?.details?.componentCount ?? 0;
@@ -1189,18 +1206,18 @@ function updateConnectivityCard() {
   if (preCutSeparate > 0) {
     card.dataset.state = 'error';
     count.textContent = `${preCutSeparate} disconnected ${preCutSeparate === 1 ? 'piece' : 'pieces'}`;
-    detail.textContent = 'These pieces are separate even before kerf. Add supports to retain them.';
-  } else if (afterKerfSeparate > 0) {
+    detail.textContent = 'These pieces are separate in the stored contours. Add supports to retain them.';
+  } else if (finishedSeparate > 0) {
     card.dataset.state = 'error';
-    count.textContent = `${afterKerfSeparate} ${afterKerfSeparate === 1 ? 'piece separates' : 'pieces separate'} after kerf`;
-    detail.textContent = 'The drawn connections are too narrow to survive the configured cutter.';
+    count.textContent = `${finishedSeparate} ${finishedSeparate === 1 ? 'piece separates' : 'pieces separate'} in the legacy cut model`;
+    detail.textContent = 'This legacy project models uncompensated cutter loss. Upgrade its workflow or widen the connections.';
   } else if (narrowRegions > 0) {
     card.dataset.state = 'warn';
     count.textContent = `Connected, with ${narrowRegions} narrow-web ${narrowRegions === 1 ? 'region' : 'regions'}`;
-    detail.textContent = `Metal remains connected after kerf, but these regions rely on connections narrower than ${narrowWebIssue.details.minimumWebMm} mm.`;
+    detail.textContent = `The finished geometry is connected, but these regions rely on connections narrower than ${narrowWebIssue.details.minimumWebMm} mm.`;
   } else {
     card.dataset.state = 'ok';
-    count.textContent = 'Everything stays connected after kerf';
+    count.textContent = 'Everything is one connected finished piece';
     detail.textContent = currentValidation
       ? 'The full-width material core also remains connected.'
       : 'Run validation to check the configured minimum web width.';
@@ -1243,6 +1260,7 @@ async function runValidation() {
     kerfMm: toMm(numberField('kerf', 1.2)),
     minimumWebMm: toMm(numberField('min-web', 3)),
     minimumOpeningMm: toMm(numberField('min-opening', 2)),
+    geometryInterpretation: state.geometryInterpretation,
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
@@ -1357,6 +1375,11 @@ function detailText(issue) {
   const details = issue.details;
   if (!details) return '';
   if (typeof details === 'string') return details;
+  if (issue.code === 'MIN_CUT_GAP') {
+    const count = details.violationCount ?? details.locations?.length ?? 1;
+    const finishedGapMm = details.finishedGapMm ?? details.gapMm;
+    return `violation count: ${count} · minimum finished web: ${Math.round(details.minimumWebMm * 100) / 100} mm · closest finished gap: ${Math.round(finishedGapMm * 100) / 100} mm`;
+  }
   return Object.entries(details)
     .filter(([key, value]) => key !== 'phase' && key !== 'componentId' &&
       value !== null && value !== undefined && typeof value !== 'object')
@@ -1473,6 +1496,7 @@ function repairValidation(mask) {
     kerfMm: toMm(numberField('kerf', 1.2)),
     minimumWebMm: toMm(numberField('min-web', 3)),
     minimumOpeningMm: toMm(numberField('min-opening', 2)),
+    geometryInterpretation: state.geometryInterpretation,
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
@@ -1545,10 +1569,14 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
       kerfMm,
       minimumWebMm,
       minimumOpeningMm,
+      geometryInterpretation: state.geometryInterpretation,
       targetWebMm,
       targetOpeningMm,
       protectedMask: repairProtectedMask(mask),
-      bridgeWidthMm: Math.max(requestedWidthMm, targetWebMm + kerfMm),
+      bridgeWidthMm: Math.max(
+        requestedWidthMm,
+        rasterWebWidthMm(targetWebMm, kerfMm, state.geometryInterpretation),
+      ),
       bridgeStrategy: smartBridgeStrategy(),
       maximumBridges: 192,
     });
@@ -1580,10 +1608,7 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
     state.repairPreviewBaseMask = mask;
     state.repairPreviewUsesExistingLayer = usesExistingLayer;
     state.repairPreviewMask = candidate;
-    const previewKerfMm = toMm(numberField('kerf', 1.2));
-    state.repairPreviewKerfMask = previewKerfMm > 0
-      ? erodeMaskPhysical(candidate, previewKerfMm / 2, sheet())
-      : { ...candidate, data: Uint8Array.from(candidate.data) };
+    state.repairPreviewKerfMask = finishedGeometryPreview(candidate);
     state.repairItemIndex = Math.min(state.repairItemIndex, plan.items.length - 1);
     state.repairResult = null;
     renderRepairPanel();
@@ -1631,10 +1656,7 @@ function updateRepairPreviewMasks() {
     outcome.safeToApply = outcome.afterErrors <= outcome.beforeErrors && outcome.improved;
     outcome.complete = outcome.afterErrors === 0;
   }
-  const kerfMm = toMm(numberField('kerf', 1.2));
-  state.repairPreviewKerfMask = kerfMm > 0
-    ? erodeMaskPhysical(state.repairPreviewMask, kerfMm / 2, sheet())
-    : { ...state.repairPreviewMask, data: Uint8Array.from(state.repairPreviewMask.data) };
+  state.repairPreviewKerfMask = finishedGeometryPreview(state.repairPreviewMask);
 }
 
 function discardRepairPreview() {
@@ -1824,10 +1846,12 @@ function renderRepairPanel() {
     ? Math.round(item.addedAreaMm2)
     : loosePieces || item.category === 'sliver'
     ? item.pixelCount
-    : Math.round(((cutGaps || item.category === 'gap') ? item.gapMm : item.equivalentDiameterMm) * 10) / 10;
+    : Math.round(((cutGaps || item.category === 'gap')
+      ? item.finishedGapMm ?? item.gapMm
+      : item.equivalentDiameterMm) * 10) / 10;
   el('repair-current-description').textContent = manufacturing && item.category === 'web'
     ? item.role === 'connectivity'
-      ? `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie connects' : 'ties connect'} detached material and survives the kerf simulation.`
+      ? `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie connects' : 'ties connect'} detached finished material.`
       : `${item.supportCount} filter-aware ${item.supportCount === 1 ? 'tie reinforces' : 'ties reinforce'} disconnected full-width material regions.`
     : manufacturing && item.category === 'warning'
       ? `${item.pixelCount} raster cells add about ${measured} mm² of metal to thicken weak material.`
@@ -2377,8 +2401,65 @@ function updateReadouts() {
   if (webNote) {
     const finished = toMm(numberField('min-web', 3));
     const kerf = toMm(numberField('kerf', 1.2));
-    webNote.textContent = `Filters generate at least ${roundUnit(fromMm(finished + kerf))} ${state.unit} before cutting so ${roundUnit(fromMm(finished))} ${state.unit} remains after the ${roundUnit(fromMm(kerf))} ${state.unit} kerf.`;
+    webNote.textContent = isLegacyGeometryInterpretation(state.geometryInterpretation)
+      ? `Legacy geometry keeps ${roundUnit(fromMm(finished + kerf))} ${state.unit} in the raster so an uncompensated ${roundUnit(fromMm(kerf))} ${state.unit} cut leaves ${roundUnit(fromMm(finished))} ${state.unit}.`
+      : `Filters draw the requested ${roundUnit(fromMm(finished))} ${state.unit} finished web. Apply the ${roundUnit(fromMm(kerf))} ${state.unit} kerf once, as inside/outside compensation in CAM.`;
   }
+  updateGeometryContractUi();
+}
+
+function updateGeometryContractUi() {
+  const legacy = isLegacyGeometryInterpretation(state.geometryInterpretation);
+  const card = el('geometry-contract');
+  if (card) card.dataset.mode = legacy ? 'legacy' : 'finished';
+  if (el('geometry-contract-title')) {
+    el('geometry-contract-title').textContent = legacy
+      ? 'Legacy uncompensated workflow'
+      : 'Finished-edge CAM workflow';
+  }
+  if (el('geometry-contract-copy')) {
+    el('geometry-contract-copy').textContent = legacy
+      ? 'This project keeps its historical kerf allowance and cut simulation. Its artwork has not been changed. Upgrade explicitly before using CAM compensation.'
+      : 'Artwork and exports describe final part edges. Apply inside/outside kerf compensation once in CAM.';
+  }
+  el('btn-upgrade-geometry-contract')?.toggleAttribute('hidden', !legacy);
+  if (el('geometry-preview-design-label')) {
+    el('geometry-preview-design-label').textContent = legacy ? 'Before kerf' : 'Design contours';
+  }
+  if (el('geometry-preview-finished-label')) {
+    el('geometry-preview-finished-label').textContent = legacy ? 'After uncompensated cut' : 'Finished part';
+  }
+  if (el('geometry-preview-help')) {
+    el('geometry-preview-help').textContent = legacy
+      ? 'Legacy projects subtract the cutter width because their stored raster predates the finished-edge CAM contract.'
+      : 'With CAM compensation, the design contours are the intended finished material edges.';
+  }
+  if (el('export-kerf-copy')) {
+    el('export-kerf-copy').textContent = legacy
+      ? 'Off — this legacy geometry expects uncompensated cutter paths'
+      : 'Off — apply inside/outside compensation once in CAM';
+  }
+  if (el('cam-contract-note')) {
+    el('cam-contract-note').innerHTML = legacy
+      ? '<strong>Legacy CAM setup:</strong> Do not add compensation to this export unless you first upgrade and re-render the project.'
+      : '<strong>CAM setup:</strong> These contours are finished part boundaries. Apply the configured kerf once in CAM; do not cut them as uncompensated centre paths.';
+  }
+}
+
+async function upgradeGeometryContract() {
+  if (!isLegacyGeometryInterpretation(state.geometryInterpretation)) return;
+  state.geometryInterpretation = FINISHED_BOUNDARY_CAM;
+  state.lastValidatedAt = null;
+  markManufacturingRepairsStale();
+  markAutomaticSupportsStale();
+  if (state.source) invalidateStyleRender({ useLocalPreview: state.mode === 'line-art' });
+  refresh({ immediate: true });
+  pushHistory();
+  updateGeometryContractUi();
+  toast(state.source
+    ? 'Using finished edges. Re-rendering artwork; apply kerf compensation once in CAM.'
+    : 'Using finished edges. Existing raster geometry was preserved; review and revalidate it before export.');
+  if (state.source && !state.offline) await renderStyle();
 }
 
 function reflectPanelOrientation(preferred = null) {
@@ -2458,6 +2539,7 @@ function updateExportReadiness() {
 function snapshot() {
   rememberStyleSettings();
   return JSON.stringify({
+    geometryInterpretation: state.geometryInterpretation,
     controls: readControls(),
     styleSettings: cloneStyleSettings(state.styleSettings),
     bridges: state.bridges,
@@ -2582,6 +2664,7 @@ function restore(serialised) {
   const data = JSON.parse(serialised);
   const previousStyle = selectedCutStyle();
   const automaticSupportsStale = data.automaticSupportsStale === true;
+  state.geometryInterpretation = data.geometryInterpretation ?? FINISHED_BOUNDARY_CAM;
   state.styleSettings = cloneStyleSettings(data.styleSettings);
   applyControls(data.controls);
   state.bridges = cloneBridges(data.bridges);
@@ -2854,6 +2937,7 @@ function projectFromState() {
       minimumWebMm: toMm(numberField('min-web', 3)),
       minimumOpeningMm: toMm(numberField('min-opening', 2)),
       maximumCantileverMm: null,
+      geometryInterpretation: state.geometryInterpretation,
     },
     structure: { mode: 'single-sheet' },
     source: {
@@ -3910,6 +3994,7 @@ function setSourceRecipeAvailability(available) {
 function applyCanonicalProjectControls(project) {
   el('measurement-unit').value = 'mm';
   state.unit = 'mm';
+  state.geometryInterpretation = project.manufacturing.geometryInterpretation ?? FINISHED_BOUNDARY_CAM;
   el('panel-width').value = project.sheet.widthMm;
   el('panel-height').value = project.sheet.heightMm;
   reflectPanelOrientation();
@@ -4096,6 +4181,7 @@ async function importFile(file) {
   try {
     state.source = await decodeSourceFile(file, file.name);
     state.projectId = null;
+    state.geometryInterpretation = FINISHED_BOUNDARY_CAM;
     state.createdAt = null;
     state.baseMask = null;
     state.styleMask = null;
@@ -4800,11 +4886,14 @@ async function autoBridge() {
   const kerfMm = toMm(numberField('kerf', 1.2));
   const minimumWebMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('min-web', 3)));
   const requestedWidthMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6)));
-  const widthMm = Math.max(requestedWidthMm, minimumWebMm + kerfMm);
+  const widthMm = Math.max(
+    requestedWidthMm,
+    rasterWebWidthMm(minimumWebMm, kerfMm, state.geometryInterpretation),
+  );
   if (widthMm > requestedWidthMm + 1e-9) {
     el('bridge-width').value = roundUnit(fromMm(widthMm));
     updateRangeOutputs();
-    toast(`Raised bridge width to ${el('bridge-width').value} ${state.unit} so the minimum web survives the kerf.`);
+    toast(`Raised bridge width to ${el('bridge-width').value} ${state.unit} to meet the finished-web requirement.`);
   }
   try {
     const manual = state.bridges.filter((bridge) => bridge.source !== 'automatic');
@@ -4819,6 +4908,7 @@ async function autoBridge() {
       requireSingleComponent: true,
       minimumWebMm,
       kerfMm,
+      geometryInterpretation: state.geometryInterpretation,
       maxPasses: 4,
     };
     let strategy;
@@ -4869,11 +4959,12 @@ async function autoBridge() {
       kerfMm,
       minimumWebMm: 0,
       minimumOpeningMm: 0,
+      geometryInterpretation: state.geometryInterpretation,
       anchorBoundary: false,
       requireAnchored: false,
       requireSingleComponent: true,
     });
-    const survivesKerf = supportSimulation.postKerf.componentCount === 1;
+    const finishedConnected = supportSimulation.postKerf.componentCount === 1;
     const fallbackCount = suggested.filter((bridge) => bridge.fallback).length;
     const redundantCount = suggested.filter((bridge) => bridge.redundant).length;
     const stabilizerCount = suggested.filter((bridge) => bridge.stabilizer).length;
@@ -4883,15 +4974,15 @@ async function autoBridge() {
       stabilizerCount ? `${stabilizerCount} staggered slat ${stabilizerCount === 1 ? 'stabilizer' : 'stabilizers'}` : '',
     ].filter(Boolean).join(' and ');
     const repairSummary = plan.initialComponentCount > 1
-      ? ` Post-kerf pieces: ${plan.initialComponentCount} → ${plan.finalComponentCount} in ${plan.passes} ${plan.passes === 1 ? 'pass' : 'passes'}.`
+      ? ` Finished-geometry pieces: ${plan.initialComponentCount} → ${plan.finalComponentCount} in ${plan.passes} ${plan.passes === 1 ? 'pass' : 'passes'}.`
       : '';
     const fallbackNotice = usedImageFallback
       ? ' Image guidance was unavailable, so structural placement was used.'
       : '';
     const resultMessage = suggested.length
-      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${repairSummary}${survivesKerf ? ' Kerf simulation stays connected.' : ' Some geometry still separates after kerf; run validation to locate it.'}`
-      : survivesKerf
-        ? 'Everything is already one connected piece after kerf.'
+      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${repairSummary}${finishedConnected ? ' Finished geometry stays connected.' : ' Some finished geometry is still separate; run validation to locate it.'}`
+      : finishedConnected
+        ? 'Everything is already one connected finished piece.'
         : 'No safe automatic repair was found; reduce detail or add a manual support.';
     toast(`${resultMessage}${fallbackNotice}`);
     if (suggested.length) await createRecoveryPoint('Smart supports generated');
@@ -5021,7 +5112,11 @@ function distanceToSegment(point, start, end) {
 function requiredBridgeWidthMm() {
   return Math.max(
     PLASMA_MIN_WEB_MM,
-    toMm(numberField('min-web', 3)) + toMm(numberField('kerf', 1.2)),
+    rasterWebWidthMm(
+      toMm(numberField('min-web', 3)),
+      toMm(numberField('kerf', 1.2)),
+      state.geometryInterpretation,
+    ),
   );
 }
 
@@ -5659,6 +5754,7 @@ function wire() {
     state.paintedFor = null; state.bridges = []; state.automaticSupportsStale = false;
     state.candidates = []; state.selectedCandidateId = null; state.validation = null;
     state.lastValidatedAt = null; state.lastExportedAt = null;
+    state.geometryInterpretation = FINISHED_BOUNDARY_CAM;
     state.projectId = null; state.createdAt = null; state.dirty = false;
     await clearLastProject();
     setSaveState('saved', 'No artwork');
@@ -5682,6 +5778,7 @@ function wire() {
   };
 
   // --- treatment, panel, and constraints
+  el('btn-upgrade-geometry-contract')?.addEventListener('click', () => void upgradeGeometryContract());
   const treatment = ['threshold', 'contrast', 'blur', 'despeckle'];
   for (const id of treatment) {
     el(id)?.addEventListener('input', () => {
