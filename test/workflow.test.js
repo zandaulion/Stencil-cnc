@@ -38,7 +38,7 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
 
 test('server-backed project management is searchable, recoverable, and offline safe', () => {
   for (const id of [
-    'btn-projects', 'btn-projects-mobile', 'btn-undo-mobile', 'btn-redo-mobile',
+    'btn-projects', 'btn-projects-mobile', 'btn-sync-mobile', 'btn-undo-mobile', 'btn-redo-mobile',
     'project-library-dialog', 'project-search', 'project-status-filter',
     'project-list', 'project-count-active', 'project-count-trash', 'rename-project-dialog',
     'version-dialog', 'version-list', 'save-state-label',
@@ -72,7 +72,9 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(css, /\.project-grid \{[\s\S]*?grid-auto-rows: max-content/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.project-library-dialog/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.mobile-projects-tool \{[\s\S]*?display: flex/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.mobile-sync-tool \{[\s\S]*?display: flex/);
   assert.match(editor, /\['btn-projects', 'btn-projects-mobile'\]/);
+  assert.match(editor, /\['save-state', 'btn-sync-mobile'\]/);
   assert.match(editor, /\['btn-undo', 'btn-undo-mobile'\]/);
   assert.match(editor, /\['btn-redo', 'btn-redo-mobile'\]/);
 });

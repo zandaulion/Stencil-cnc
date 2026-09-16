@@ -950,8 +950,41 @@ svg {
 }
 
 .mobile-projects-tool,
+.mobile-sync-tool,
 .mobile-history-tools {
   display: none;
+}
+
+.mobile-sync-tool {
+  position: relative;
+}
+
+.sync-status-dot {
+  position: absolute;
+  top: 5px;
+  right: max(4px, calc(50% - 16px));
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--surface);
+  border-radius: 50%;
+  background: var(--teal);
+}
+
+.mobile-sync-tool[data-state="saving"] .sync-status-dot {
+  background: var(--warning);
+}
+
+.mobile-sync-tool[data-state="saving"] svg {
+  transform-origin: center;
+  animation: render-progress-spin 0.9s linear infinite;
+}
+
+.mobile-sync-tool[data-state="error"] {
+  color: var(--danger);
+}
+
+.mobile-sync-tool[data-state="error"] .sync-status-dot {
+  background: var(--danger);
 }
 
 .rail-tool-secondary {
@@ -4549,6 +4582,10 @@ select:focus {
   }
 
   .mobile-projects-tool {
+    display: flex;
+  }
+
+  .mobile-sync-tool {
     display: flex;
   }
 

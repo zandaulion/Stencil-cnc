@@ -2653,12 +2653,19 @@ let dirtyGeneration = 0;
 function setSaveState(kind, label) {
   const badge = el('save-state');
   const text = el('save-state-label');
-  if (!badge || !text) return;
-  badge.dataset.state = kind;
-  text.textContent = label;
-  badge.title = kind === 'error'
-    ? 'Server synchronization needs attention. Select to retry.'
-    : label;
+  if (badge && text) {
+    badge.dataset.state = kind;
+    text.textContent = label;
+    badge.title = kind === 'error'
+      ? 'Server synchronization needs attention. Select to retry.'
+      : label;
+  }
+  const mobile = el('btn-sync-mobile');
+  if (mobile) {
+    mobile.dataset.state = kind;
+    mobile.title = label;
+    mobile.setAttribute('aria-label', `Sync projects. ${label}`);
+  }
 }
 
 function savedAtLabel(value = new Date()) {
@@ -2838,7 +2845,9 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
       }
     });
     const current = state.projectId ? await loadProject(state.projectId) : null;
-    if (current?.serverRevision) {
+    if (result.queued) {
+      setSaveState('saving', `${result.queued} ${result.queued === 1 ? 'change' : 'changes'} waiting for server`);
+    } else if (current?.serverRevision) {
       const changedElsewhere = activeProjectId === state.projectId &&
         activeServerRevision > 0 && current.serverRevision > activeServerRevision;
       if (changedElsewhere && state.sourceMask && !state.dirty) {
@@ -2853,8 +2862,6 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
     } else if (result.deleted?.includes(activeProjectId) && state.sourceMask) {
       setSaveState('error', 'Deleted on another device — edit to save a copy');
       toast('This open project was deleted on another device. A new edit will be preserved as a separate copy.');
-    } else if (result.queued) {
-      setSaveState('saving', `${result.queued} changes waiting for server`);
     } else if (!state.sourceMask) {
       setSaveState('saved', 'Server workspace synchronized');
     }
@@ -2871,6 +2878,17 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
     return { status: 'error', error };
   } finally {
     if (workspaceSyncInFlight === operation) workspaceSyncInFlight = null;
+  }
+}
+
+async function manuallySyncProjects() {
+  const result = await syncWorkspaceProjects({ announce: true });
+  if (result.status === 'offline') {
+    toast('You are offline. Changes are safely queued and will sync when connected.');
+  } else if (result.status === 'queued') {
+    toast(`${result.queued} ${result.queued === 1 ? 'change is' : 'changes are'} waiting for the server.`);
+  } else if (result.status === 'synced' && !result.conflicts) {
+    toast('All projects are saved to the server.');
   }
 }
 
@@ -5716,10 +5734,9 @@ function wire() {
   for (const id of ['btn-redo', 'btn-redo-mobile']) el(id)?.addEventListener('click', redo);
   el('btn-new-project')?.addEventListener('click', () => void startNewProject());
   el('btn-library-new-project')?.addEventListener('click', () => void startNewProject());
-  el('save-state')?.addEventListener('click', () => {
-    if (state.dirty) void flushPendingSave();
-    else void syncWorkspaceProjects({ announce: true });
-  });
+  for (const id of ['save-state', 'btn-sync-mobile']) {
+    el(id)?.addEventListener('click', () => void manuallySyncProjects());
+  }
   for (const id of ['btn-projects', 'btn-projects-mobile']) {
     el(id)?.addEventListener('click', () => void openProjectLibrary());
   }
