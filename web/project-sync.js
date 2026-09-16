@@ -12,6 +12,7 @@ import {
   loadProjectSync,
   putProjectSync,
   replaceProjectCache,
+  replaceProjectSyncOperation,
   storageWorkspaceId,
 } from '/storage.js';
 
@@ -32,11 +33,15 @@ function blobToDataUrl(blob) {
 
 function dataUrlToBlob(dataUrl) {
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
-    throw new TypeError('Invalid project artefact');
+    const error = new TypeError('Invalid project artefact');
+    error.code = 'invalid_project_artifact';
+    throw error;
   }
   const separator = dataUrl.indexOf(',');
   if (separator < 0 || !dataUrl.slice(0, separator).includes(';base64')) {
-    throw new TypeError('Unsupported project artefact encoding');
+    const error = new TypeError('Unsupported project artefact encoding');
+    error.code = 'invalid_project_artifact';
+    throw error;
   }
   const mimeType = dataUrl.slice(5, separator).split(';')[0] || 'application/octet-stream';
   const decoded = atob(dataUrl.slice(separator + 1));
@@ -56,6 +61,25 @@ async function responseError(response, fallback) {
 
 function isProjectConflict(error) {
   return error.status === 409 && ['revision_conflict', 'project_deleted'].includes(error.code);
+}
+
+function isRetryableProjectError(error) {
+  const status = Number(error?.status);
+  if ([408, 425, 429].includes(status) || status >= 500 || (status === 400 && !error?.code)) return true;
+  if (error?.code) return false;
+  return error instanceof TypeError || ['AbortError', 'TimeoutError'].includes(error?.name);
+}
+
+function projectFailure({ projectId, name, phase, error }) {
+  return {
+    projectId: projectId || null,
+    name: String(name || projectId || 'Unknown project'),
+    phase,
+    code: error?.code || error?.name || 'sync_failed',
+    message: String(error?.message || 'Project synchronization failed'),
+    retryable: isRetryableProjectError(error),
+    error,
+  };
 }
 
 async function sha256Text(value) {
@@ -248,10 +272,54 @@ export async function queueProjectDeletion(record) {
   });
 }
 
+function validateQueuedProjectOperation(operation) {
+  if (operation.kind !== 'put') return operation;
+  let bundle;
+  try {
+    bundle = JSON.parse(operation.payload);
+  } catch {
+    throw new TypeError('The queued project package is not valid JSON');
+  }
+  if (bundle.schema !== PROJECT_BUNDLE_SCHEMA || bundle.version !== PROJECT_BUNDLE_VERSION) {
+    const error = new TypeError('The queued project package uses an unsupported format');
+    error.code = 'local_queue_format';
+    throw error;
+  }
+  if (bundle.clientProjectId !== operation.projectId || bundle.project?.id !== operation.projectId) {
+    const error = new TypeError('The queued project identifier does not match its package');
+    error.code = 'local_queue_id_mismatch';
+    throw error;
+  }
+  deserializeProject(JSON.stringify(bundle.project));
+  return operation;
+}
+
+async function repairQueuedProjectOperation(operation) {
+  try {
+    return validateQueuedProjectOperation(operation);
+  } catch (cause) {
+    const local = await loadProject(operation.projectId);
+    if (!local) {
+      const error = new Error('The queued change is damaged and has no complete local project to rebuild it from');
+      error.code = 'local_queue_unrecoverable';
+      error.cause = cause;
+      throw error;
+    }
+    console.warn(`Rebuilding damaged sync entry for ${operation.projectId}.`, cause);
+    return queueProjectSync(local);
+  }
+}
+
 async function forkConflict(operation, details) {
   const bundle = JSON.parse(operation.payload);
-  const newId = crypto.randomUUID();
-  const timestamp = new Date();
+  const identity = await sha256Text([
+    operation.workspaceId,
+    operation.projectId,
+    operation.localChangeId || operation.operationId,
+  ].join(':'));
+  const newId = `conflict-${identity.slice(0, 32)}`;
+  const queuedAt = new Date(operation.queuedAt);
+  const timestamp = Number.isFinite(queuedAt.getTime()) ? queuedAt : new Date(0);
   const suffix = new Intl.DateTimeFormat(undefined, {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(timestamp);
@@ -262,7 +330,7 @@ async function forkConflict(operation, details) {
   bundle.project.createdAt = timestamp.toISOString();
   bundle.project.updatedAt = timestamp.toISOString();
 
-  const localChangeId = crypto.randomUUID();
+  const localChangeId = operation.localChangeId || `conflict-${identity.slice(32)}`;
   await cacheBundle({
     id: newId,
     revision: 0,
@@ -270,28 +338,43 @@ async function forkConflict(operation, details) {
     localSyncPending: true,
     localChangeId,
   }, bundle);
-  await deleteProjectSync(operation.projectId, operation.operationId, { workspaceId: operation.workspaceId });
-  const replacement = await putProjectSync({
+  const replacement = {
     projectId: newId,
     kind: 'put',
     expectedRevision: 0,
     payload: JSON.stringify(bundle),
     localChangeId,
     workspaceId: operation.workspaceId,
+    operationId: `conflict-${identity}`,
     queuedAt: timestamp.toISOString(),
-  });
+  };
+  const transition = await replaceProjectSyncOperation(
+    operation.projectId,
+    operation.operationId,
+    replacement,
+    { workspaceId: operation.workspaceId },
+  );
+  const activeReplacement = transition.operation;
+  if (!activeReplacement) {
+    return {
+      status: 'superseded',
+      projectId: operation.projectId,
+      originalProjectId: operation.projectId,
+    };
+  }
 
   if (details?.project?.deletedAt) {
     await deleteProject(operation.projectId);
   } else if (details?.project) {
     await pullProject(details.project, operation.workspaceId);
   }
-  const result = await flushProjectOperation(replacement, { resolveConflicts: false });
+  const result = await flushProjectOperation(activeReplacement, { resolveConflicts: false });
   const saved = result.status === 'synced';
   return {
     ...result,
     status: saved ? 'conflict' : 'conflict-queued',
     projectId: newId,
+    originalProjectId: operation.projectId,
     name: bundle.project.name,
     message: saved
       ? 'Another device changed this project. Your edit was saved as a separate conflict copy.'
@@ -415,12 +498,17 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
     });
     if (!response.ok) {
       const error = await responseError(response, 'Could not save the server project');
+      if (isProjectConflict(error)) {
+        // A second tab may repeat the deterministic conflict-copy upload after
+        // the first tab committed it. Matching content is an acknowledgement,
+        // not another conflict that needs another copy.
+        const recovered = await acknowledgeMatchingUpload(operation, error.details);
+        if (recovered) return recovered;
+      }
       if (isProjectConflict(error) && resolveConflicts) {
         if (operation.workspaceId !== storageWorkspaceId()) {
           return { status: 'stale-workspace', projectId: operation.projectId };
         }
-        const recovered = await acknowledgeMatchingUpload(operation, error.details);
-        if (recovered) return recovered;
         const current = await loadProjectSync(operation.projectId, { workspaceId: operation.workspaceId });
         return forkConflict(current?.kind === 'put' ? current : operation, error.details);
       }
@@ -474,73 +562,118 @@ export async function synchronizeProjectLibrary(onProgress = null) {
   const remote = await requestProjects();
   const remoteById = new Map(remote.map((row) => [row.id, row]));
   const local = [...await listProjects(), ...await listProjects({ trashed: true })];
+  const localById = new Map(local.map((row) => [row.id, row]));
   const pending = new Map((await listProjectSync()).map((row) => [row.projectId, row]));
   let completed = 0;
   const deleted = [];
+  const failures = [];
+  const remapped = [];
   const total = remote.length + local.length + pending.size;
   const progress = (message) => onProgress?.({ completed, total, message });
+  const fail = (details) => {
+    const failure = projectFailure(details);
+    failures.push(failure);
+    console.error(`Project sync ${failure.phase} failed for ${failure.projectId || failure.name}:`, failure.error);
+    return failure;
+  };
 
   for (const metadata of remote) {
-    const cached = local.find((record) => record.id === metadata.id);
-    if (metadata.deletedAt) {
-      const queuedOperation = pending.get(metadata.id);
-      if (queuedOperation?.kind === 'put' || cached?.localSyncPending) {
-        // Let the normal revision-conflict path preserve the offline edit as
-        // a separate project instead of discarding it for the tombstone.
-      } else {
-        await deleteProject(metadata.id);
-        await deleteProjectSync(metadata.id);
-        pending.delete(metadata.id);
-        deleted.push(metadata.id);
+    try {
+      const cached = localById.get(metadata.id);
+      if (metadata.deletedAt) {
+        const queuedOperation = pending.get(metadata.id);
+        if (queuedOperation?.kind === 'put' || cached?.localSyncPending) {
+          // Let the normal revision-conflict path preserve the offline edit as
+          // a separate project instead of discarding it for the tombstone.
+        } else {
+          await deleteProject(metadata.id);
+          await deleteProjectSync(metadata.id);
+          pending.delete(metadata.id);
+          deleted.push(metadata.id);
+        }
+      } else if (!pending.has(metadata.id) && !cached?.localSyncPending && (
+        !cached || Number(cached.serverRevision) < metadata.revision
+      )) {
+        progress(`Downloading “${metadata.name}”…`);
+        await pullProject(metadata);
       }
+    } catch (error) {
+      fail({ projectId: metadata.id, name: metadata.name, phase: 'download', error });
+    } finally {
       completed += 1;
-      continue;
     }
-    if (!pending.has(metadata.id) && !cached?.localSyncPending && (
-      !cached || Number(cached.serverRevision) < metadata.revision
-    )) {
-      progress(`Downloading “${metadata.name}”…`);
-      await pullProject(metadata);
-    }
-    completed += 1;
   }
 
   for (const record of local) {
-    if (record.localSyncPending && !pending.has(record.id)) {
-      progress(`Uploading “${record.name}”…`);
-      pending.set(record.id, await queueProjectSync(record));
-    } else if (!record.serverRevision && !pending.has(record.id)) {
-      progress(`Uploading “${record.name}”…`);
-      pending.set(record.id, await queueProjectSync(record));
-    } else if (record.serverRevision && !remoteById.has(record.id) && !pending.has(record.id)) {
-      // A missing server row can mean recovery from a restored or damaged
-      // server database. Preserve the only remaining complete copy and offer
-      // it back to the server as a new revision-zero project.
-      const recoverable = await cacheProject({
-        ...record,
-        serverRevision: 0,
-        serverSyncedAt: null,
-        serverSha256: null,
-        localSyncPending: true,
-        localChangeId: record.localChangeId || crypto.randomUUID(),
-      });
-      progress(`Recovering “${recoverable.name}” to the server…`);
-      pending.set(record.id, await queueProjectSync(recoverable));
+    try {
+      if (record.localSyncPending && !pending.has(record.id)) {
+        progress(`Uploading “${record.name}”…`);
+        pending.set(record.id, await queueProjectSync(record));
+      } else if (!record.serverRevision && !pending.has(record.id)) {
+        progress(`Uploading “${record.name}”…`);
+        pending.set(record.id, await queueProjectSync(record));
+      } else if (record.serverRevision && !remoteById.has(record.id) && !pending.has(record.id)) {
+        // A missing server row can mean recovery from a restored or damaged
+        // server database. Preserve the only remaining complete copy and offer
+        // it back to the server as a new revision-zero project.
+        const recoverable = await cacheProject({
+          ...record,
+          serverRevision: 0,
+          serverSyncedAt: null,
+          serverSha256: null,
+          localSyncPending: true,
+          localChangeId: record.localChangeId || crypto.randomUUID(),
+        });
+        progress(`Recovering “${recoverable.name}” to the server…`);
+        pending.set(record.id, await queueProjectSync(recoverable));
+      }
+    } catch (error) {
+      fail({ projectId: record.id, name: record.name, phase: 'queue', error });
+    } finally {
+      completed += 1;
     }
-    completed += 1;
   }
 
   let queued = 0;
   let conflicts = 0;
   for (const operation of (await listProjectSync())) {
-    progress(operation.kind === 'delete' ? 'Removing a deleted project…' : 'Saving a project to the server…');
-    const result = await flushProjectOperation(operation);
-    if (result.status === 'queued' || result.status === 'conflict-queued') queued += 1;
-    if (result.status === 'conflict' || result.status === 'conflict-queued') conflicts += 1;
-    completed += 1;
+    try {
+      progress(operation.kind === 'delete' ? 'Removing a deleted project…' : 'Saving a project to the server…');
+      const repaired = await repairQueuedProjectOperation(operation);
+      const result = await flushProjectOperation(repaired);
+      if (result.status === 'queued' || result.status === 'conflict-queued') queued += 1;
+      if (result.status === 'conflict' || result.status === 'conflict-queued') {
+        conflicts += 1;
+        remapped.push({
+          fromProjectId: result.originalProjectId || operation.projectId,
+          toProjectId: result.projectId,
+          name: result.name || localById.get(operation.projectId)?.name || operation.projectId,
+          status: result.status,
+        });
+      }
+    } catch (error) {
+      const record = localById.get(operation.projectId) || await loadProject(operation.projectId).catch(() => null);
+      const failure = fail({
+        projectId: operation.projectId,
+        name: record?.name || operation.projectId,
+        phase: operation.kind === 'delete' ? 'delete' : 'upload',
+        error,
+      });
+      if (failure.retryable) queued += 1;
+    } finally {
+      completed += 1;
+    }
   }
 
-  return { status: queued ? 'queued' : 'synced', queued, conflicts, deleted };
+  const needsAttention = failures.some((failure) => !failure.retryable);
+  return {
+    status: needsAttention ? 'partial' : queued ? 'queued' : 'synced',
+    queued,
+    conflicts,
+    deleted,
+    failures,
+    remapped,
+  };
 }
 
 export async function pendingProjectSyncCount() {

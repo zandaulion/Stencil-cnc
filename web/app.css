@@ -732,6 +732,15 @@ svg {
   background: var(--warning);
 }
 
+.save-state[data-state="warning"] {
+  color: #8a5a00;
+  cursor: pointer;
+}
+
+.save-state[data-state="warning"] .status-dot {
+  background: var(--warning);
+}
+
 .save-state[data-state="offline"] {
   cursor: pointer;
 }
@@ -1001,6 +1010,15 @@ svg {
 }
 
 .mobile-sync-tool[data-state="queued"] .sync-status-dot {
+  background: var(--warning);
+}
+
+.mobile-sync-tool[data-state="warning"] {
+  color: var(--warning);
+}
+
+.mobile-sync-tool[data-state="warning"] .sync-status-dot,
+.mobile-sync-tool[data-state="warning"] .sync-pending-count {
   background: var(--warning);
 }
 

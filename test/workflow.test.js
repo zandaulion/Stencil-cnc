@@ -86,6 +86,7 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(storage, /const CHECKPOINT_LIMIT = 10/);
   assert.match(storage, /const SYNC_STORE = 'projectSync'/);
   assert.match(storage, /export async function putProjectSync/);
+  assert.match(storage, /export async function replaceProjectSyncOperation/);
   assert.match(storage, /transaction\(\[PROJECT_STORE, META_STORE\], 'readwrite'/);
   assert.match(storage, /localSyncPending: record\.localSyncPending !== false/);
   assert.match(storage, /pending\.localChangeId === local\?\.localChangeId/);
@@ -98,6 +99,11 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(projectSync, /project\.localSyncPending \|\| !project\.serverRevision/);
   assert.match(projectSync, /'If-Match': `"\$\{operation\.expectedRevision\}"`/);
   assert.match(projectSync, /status: 'conflict'/);
+  assert.match(projectSync, /const newId = `conflict-\$\{identity\.slice\(0, 32\)\}`/);
+  assert.match(projectSync, /failures,[\s\S]*remapped,/);
+  assert.match(editor, /result\.remapped\?\.find[\s\S]*state\.projectId = remappedProject\.id/);
+  assert.match(editor, /activeId !== record\.id[\s\S]*await setLastProject\(activeId\)/);
+  assert.match(editor, /Saved · “\$\{shortName\}” needs sync attention/);
   assert.match(projectSync, /Offline|navigator\.onLine/);
   assert.match(html, /Encrypted server workspace/);
   assert.match(editor, /Saved to server at/);
@@ -116,6 +122,7 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.mobile-sync-tool \{[\s\S]*?display: flex/);
   assert.match(css, /\.mobile-sync-tool\[data-state="queued"\]/);
   assert.match(css, /\.mobile-sync-tool\[data-state="offline"\]/);
+  assert.match(css, /\.mobile-sync-tool\[data-state="warning"\]/);
   assert.match(editor, /\['btn-projects', 'btn-projects-mobile'\]/);
   assert.match(editor, /\['save-state', 'btn-sync-mobile'\]/);
   assert.match(editor, /\['btn-undo', 'btn-undo-mobile'\]/);

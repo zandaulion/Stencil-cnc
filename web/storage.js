@@ -283,7 +283,7 @@ export async function replaceProjectCache(
   return record;
 }
 
-export async function putProjectSync(operation) {
+function normalizedProjectSyncOperation(operation) {
   if (!operation?.projectId || !['put', 'delete'].includes(operation.kind)) {
     throw new TypeError('A valid project sync operation is required');
   }
@@ -297,8 +297,40 @@ export async function putProjectSync(operation) {
   if (value.workspaceId !== storageWorkspaceId()) {
     throw new Error('A sync operation cannot cross browser workspaces');
   }
+  return value;
+}
+
+export async function putProjectSync(operation) {
+  const value = normalizedProjectSyncOperation(operation);
   await transaction(SYNC_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   return value;
+}
+
+/**
+ * Atomically replaces a conflicted operation with its deterministic copy.
+ * Retrying this transition is harmless: another tab may already have moved
+ * the same operation, in which case its replacement is returned unchanged.
+ */
+export async function replaceProjectSyncOperation(
+  projectId,
+  operationId,
+  replacement,
+  { workspaceId = storageWorkspaceId() } = {},
+) {
+  const value = normalizedProjectSyncOperation({ ...replacement, workspaceId });
+  if (value.projectId === projectId) {
+    throw new TypeError('A conflict replacement requires a new project identifier');
+  }
+  return transaction(SYNC_STORE, 'readwrite', async (store) => {
+    const current = await requestResult(store.get(projectId));
+    if (!current || current.operationId !== operationId) {
+      const existing = await requestResult(store.get(value.projectId));
+      return { replaced: false, operation: existing || null };
+    }
+    await requestResult(store.delete(projectId));
+    await requestResult(store.put(value));
+    return { replaced: true, operation: value };
+  }, workspaceId);
 }
 
 export async function loadProjectSync(projectId, { workspaceId = storageWorkspaceId() } = {}) {

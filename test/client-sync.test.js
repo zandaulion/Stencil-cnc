@@ -54,6 +54,20 @@ async function syncHarness() {
       state.sync.set(value.projectId, value);
       return value;
     };
+    export const replaceProjectSyncOperation = async (projectId, operationId, replacement) => {
+      const current = state.sync.get(projectId);
+      if (!current || current.operationId !== operationId) {
+        return { replaced: false, operation: state.sync.get(replacement.projectId) || null };
+      }
+      state.sync.delete(projectId);
+      const value = {
+        ...replacement,
+        workspaceId: replacement.workspaceId || state.workspaceId,
+        operationId: replacement.operationId || 'operation-' + (++state.sequence),
+      };
+      state.sync.set(value.projectId, value);
+      return { replaced: true, operation: value };
+    };
     export const loadProjectSync = async (id) => state.sync.get(id) || null;
     export const listProjectSync = async () => [...state.sync.values()];
     export const deleteProjectSync = async (id, operationId = null) => {
@@ -506,10 +520,13 @@ test('an offline edit of a permanently deleted project becomes a new conflict co
 
     const result = await sync.synchronizeProjectLibrary();
     assert.equal(result.conflicts, 1);
+    assert.equal(result.remapped.length, 1);
+    assert.equal(result.remapped[0].fromProjectId, record.id);
     assert.equal(storage.state.projects.has(record.id), false);
     assert.equal(storage.state.projects.size, 1);
     const [copy] = storage.state.projects.values();
     assert.notEqual(copy.id, record.id);
+    assert.equal(result.remapped[0].toProjectId, copy.id);
     assert.match(copy.name, /conflict/i);
     assert.equal(copy.serverRevision, 1);
     assert.equal(storage.state.sync.size, 0);
@@ -655,6 +672,56 @@ test('startup recovers a locally saved edit whose upload was never queued', asyn
   }
 });
 
+test('a damaged queued payload is rebuilt from the complete local project', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  const local = {
+    id: 'project-1', name: 'Recoverable local edit', serverRevision: 1,
+    localChangeId: 'recoverable-change', localSyncPending: true,
+  };
+  storage.state.projects.set(local.id, local);
+  storage.state.sync.set(local.id, {
+    projectId: local.id,
+    kind: 'put',
+    expectedRevision: 1,
+    payload: '{damaged',
+    localChangeId: local.localChangeId,
+    workspaceId: storage.state.workspaceId,
+    operationId: 'damaged-operation',
+    queuedAt: '2026-09-16T12:00:00.000Z',
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({
+        projects: [{ id: local.id, name: 'Older server copy', revision: 1, sha256: 'old' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    assert.equal(JSON.parse(options.body).project.name, local.name);
+    return response({ id: local.id, revision: 2, sha256: 'repaired' });
+  };
+
+  try {
+    const result = await sync.synchronizeProjectLibrary();
+    assert.equal(result.status, 'synced');
+    assert.equal(result.failures.length, 0);
+    assert.equal(storage.state.projects.get(local.id).serverRevision, 2);
+    assert.equal(storage.state.projects.get(local.id).localSyncPending, false);
+    assert.equal(storage.state.sync.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('a malformed downloaded asset cannot replace the last complete local revision', async () => {
   const originalFetch = globalThis.fetch;
   const originalNavigator = globalThis.navigator;
@@ -667,6 +734,10 @@ test('a malformed downloaded asset cannot replace the last complete local revisi
   const oldCheckpoint = { id: 'checkpoint-old', projectId: oldProject.id };
   const oldArtifact = { id: 'artifact-old', projectId: oldProject.id, blob: new Blob(['old']) };
   storage.state.projects.set(oldProject.id, oldProject);
+  storage.state.projects.set('project-2', {
+    id: 'project-2', name: 'Healthy queued edit', serverRevision: 0,
+    localSyncPending: true, localChangeId: 'healthy-change',
+  });
   storage.state.checkpoints.set(oldProject.id, [oldCheckpoint]);
   storage.state.artifacts.set(oldProject.id, [oldArtifact]);
   globalThis.fetch = async (url) => {
@@ -674,6 +745,9 @@ test('a malformed downloaded asset cannot replace the last complete local revisi
       return new Response(JSON.stringify({
         projects: [{ id: oldProject.id, name: 'Remote copy', revision: 2, sha256: 'new' }],
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url === '/api/projects/project-2') {
+      return response({ id: 'project-2', revision: 1, sha256: 'healthy' });
     }
     return new Response(JSON.stringify({
       schema: sync.PROJECT_BUNDLE_SCHEMA,
@@ -690,10 +764,16 @@ test('a malformed downloaded asset cannot replace the last complete local revisi
   };
 
   try {
-    await assert.rejects(sync.synchronizeProjectLibrary(), /Invalid project artefact/);
+    const result = await sync.synchronizeProjectLibrary();
+    assert.equal(result.status, 'partial');
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].projectId, oldProject.id);
+    assert.match(result.failures[0].message, /Invalid project artefact/);
     assert.strictEqual(storage.state.projects.get(oldProject.id), oldProject);
     assert.deepEqual(storage.state.checkpoints.get(oldProject.id), [oldCheckpoint]);
     assert.deepEqual(storage.state.artifacts.get(oldProject.id), [oldArtifact]);
+    assert.equal(storage.state.projects.get('project-2').serverRevision, 1);
+    assert.equal(storage.state.projects.get('project-2').localSyncPending, false);
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'navigator', {
@@ -742,7 +822,9 @@ test('a failed atomic cache replacement retains the prior revision and queued ed
   };
 
   try {
-    await assert.rejects(sync.synchronizeProjectLibrary(), { name: 'QuotaExceededError' });
+    const result = await sync.synchronizeProjectLibrary();
+    assert.equal(result.status, 'partial');
+    assert.ok(result.failures.some((failure) => failure.error?.name === 'QuotaExceededError'));
     assert.strictEqual(storage.state.projects.get(oldProject.id), oldProject);
     assert.strictEqual(storage.state.sync.get(queued.projectId), queued);
   } finally {
@@ -766,20 +848,23 @@ test('a conflict copy that cannot upload remains queued instead of claiming serv
   let requestCount = 0;
   globalThis.fetch = async () => {
     requestCount += 1;
-    if (requestCount === 1) {
+    if (requestCount === 1 || requestCount === 3) {
       return new Response(JSON.stringify({
         error: 'This project changed on another device.',
         code: 'revision_conflict',
         currentRevision: 2,
       }), { status: 409, headers: { 'Content-Type': 'application/json' } });
     }
-    throw new TypeError('offline');
+    if (requestCount === 2) throw new TypeError('offline');
+    const pending = [...storage.state.sync.values()].find((operation) => operation.projectId !== 'project-1');
+    return response({ id: pending.projectId, revision: 1, sha256: 'replacement' });
   };
 
   try {
     const record = { id: 'project-1', name: 'Portrait', serverRevision: 1 };
     storage.state.projects.set(record.id, record);
-    const result = await sync.syncProject(record);
+    const originalOperation = await sync.queueProjectSync(record);
+    const result = await sync.flushQueuedProjectSync(record.id);
 
     assert.equal(result.status, 'conflict-queued');
     assert.notEqual(result.projectId, record.id);
@@ -789,6 +874,19 @@ test('a conflict copy that cannot upload remains queued instead of claiming serv
     assert.equal(pending?.kind, 'put');
     assert.equal(conflict.localSyncPending, true);
     assert.equal(pending.localChangeId, conflict.localChangeId);
+
+    // Simulate a stale tab retrying the same original operation after the
+    // conflict copy was already created. It must converge on the same ID.
+    storage.state.sync.set(originalOperation.projectId, originalOperation);
+    const retried = await sync.flushQueuedProjectSync(originalOperation.projectId);
+    assert.equal(retried.status, 'conflict');
+    assert.equal(retried.projectId, result.projectId);
+    assert.equal(
+      [...storage.state.projects.keys()].filter((id) => id.startsWith('conflict-')).length,
+      1,
+    );
+    assert.equal(storage.state.projects.get(result.projectId).serverRevision, 1);
+    assert.equal(storage.state.sync.size, 0);
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'navigator', {

@@ -2962,7 +2962,9 @@ async function syncStoredProject(record) {
       if (activeId !== record.id) {
         state.projectId = activeId;
         state.name = result.name || current.name;
+        state.createdAt = current.createdAt;
         el('project-name').value = state.name;
+        await setLastProject(activeId);
         if (result.message) toast(result.message);
       }
       state.serverRevision = Number(current.serverRevision) || 0;
@@ -3148,7 +3150,9 @@ async function syncPendingSave() {
     if (activeId !== state.projectId && result.name) {
       state.projectId = activeId;
       state.name = result.name || current.name;
+      state.createdAt = current.createdAt;
       el('project-name').value = state.name;
+      await setLastProject(activeId);
       if (result.message) toast(result.message);
     }
     state.serverRevision = Number(current.serverRevision) || state.serverRevision || 0;
@@ -3235,14 +3239,21 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
           : message || 'Syncing projects…');
       }
     });
-    const current = state.projectId ? await loadProject(state.projectId) : null;
-    if (result.queued) {
-      await setPendingSaveState();
-      scheduleAutomaticSyncRetry();
-    } else {
-      resetAutomaticSyncRetry();
+    const activeRemap = result.remapped?.find((entry) => entry.fromProjectId === activeProjectId);
+    if (activeRemap && state.projectId === activeProjectId) {
+      const remappedProject = await loadProject(activeRemap.toProjectId);
+      if (remappedProject) {
+        state.projectId = remappedProject.id;
+        state.name = remappedProject.name;
+        state.createdAt = remappedProject.createdAt;
+        state.serverRevision = Number(remappedProject.serverRevision) || 0;
+        lastSavedRecord = remappedProject;
+        el('project-name').value = state.name;
+        await setLastProject(remappedProject.id);
+      }
     }
-    if (!result.queued && current?.serverRevision) {
+    const current = state.projectId ? await loadProject(state.projectId) : null;
+    if (current?.serverRevision) {
       const changedElsewhere = activeProjectId === state.projectId &&
         activeServerRevision > 0 && current.serverRevision > activeServerRevision;
       if (changedElsewhere && state.sourceMask && !state.dirty) {
@@ -3252,16 +3263,55 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
       } else {
         state.serverRevision = current.serverRevision;
         lastSavedRecord = current;
+      }
+    }
+
+    const attention = (result.failures || []).filter((failure) => !failure.retryable);
+    if (attention.length) {
+      pauseAutomaticSyncRetry();
+      const activeIds = new Set([activeProjectId, state.projectId].filter(Boolean));
+      const activeFailure = attention.find((failure) => activeIds.has(failure.projectId));
+      const activePending = Boolean(
+        state.dirty || current?.localSyncPending || (state.projectId && await hasPendingProjectSync(state.projectId))
+      );
+      const first = activeFailure || attention[0];
+      const shortName = String(first.name || 'Project').slice(0, 28);
+      const shortReason = String(first.message || 'Sync failed').slice(0, 52);
+      const pendingCount = await pendingProjectSyncCount();
+      if (activeFailure || activePending) {
+        setSaveState('error', `Current project not synced · ${shortReason}`, pendingCount);
+      } else {
+        setSaveState(
+          'warning',
+          `Saved · “${shortName}” needs sync attention`,
+          pendingCount,
+        );
+      }
+      if (announce) {
+        toast(activeFailure || activePending
+          ? `Could not sync the current project: ${first.message}`
+          : `Your current project is saved. Could not ${first.phase} “${shortName}”: ${first.message}`);
+      }
+    } else if (result.queued) {
+      await setPendingSaveState();
+      scheduleAutomaticSyncRetry();
+    } else {
+      resetAutomaticSyncRetry();
+      if (current?.serverRevision) {
         setSaveState('saved', savedAtLabel(new Date(current.serverSyncedAt || Date.now())));
       }
-    } else if (!result.queued && result.deleted?.includes(activeProjectId) && state.sourceMask) {
+    }
+
+    if (!attention.length && !result.queued && result.deleted?.includes(activeProjectId) && state.sourceMask) {
       pauseAutomaticSyncRetry();
       setSaveState('error', 'Deleted on another device — edit to save a copy');
       toast('This open project was deleted on another device. A new edit will be preserved as a separate copy.');
-    } else if (!result.queued && !state.sourceMask) {
+    } else if (!attention.length && !result.queued && !state.sourceMask) {
       setSaveState('saved', 'Server workspace synchronized');
     }
-    if (result.conflicts) toast(`${result.conflicts} edit conflict saved as a separate project.`);
+    if (result.conflicts) {
+      toast(`${result.conflicts} edit conflict saved as ${result.conflicts === 1 ? 'a separate project' : 'separate projects'}.`);
+    }
     return result;
   })();
   workspaceSyncInFlight = operation;
@@ -3306,6 +3356,9 @@ async function manuallySyncProjects() {
     toast(`${result.queued} ${result.queued === 1 ? 'change is' : 'changes are'} waiting for the server.`);
   } else if (result.status === 'retrying') {
     toast('The server is not reachable yet. Kerfloom will retry automatically.');
+  } else if (result.status === 'partial') {
+    // syncWorkspaceProjects already names the affected project and whether the
+    // open project itself is safe; avoid replacing that useful detail here.
   } else if (result.status === 'synced' && !result.conflicts) {
     toast('All projects are saved to the server.');
   }
