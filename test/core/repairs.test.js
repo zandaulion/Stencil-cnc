@@ -310,3 +310,29 @@ test("structural-warning repair is opt-in and thickens material only while valid
   assert.ok(withWarningRepair.outcome.afterThinAreaPixels < withWarningRepair.outcome.beforeThinAreaPixels);
   assert.equal(withWarningRepair.outcome.safeToApply, true);
 });
+
+test("repair planning counts one no-core material region instead of duplicate morphology warnings", () => {
+  const mask = createMask(9, 9);
+  for (let y = 1; y < 8; y += 1) {
+    for (let x = 3; x <= 5; x += 1) mask.data[y * mask.width + x] = RETAINED;
+  }
+  const plan = planManufacturingRepairs(mask, {
+    sheet: { widthMm: 9, heightMm: 9 },
+    kerfMm: 0,
+    minimumWebMm: 4,
+    minimumOpeningMm: 0,
+    targetWebMm: 4.4,
+    targetOpeningMm: 1,
+    strategy: "balanced",
+    categories: { slivers: false, gaps: false, webs: false, warnings: true },
+    bridgeWidthMm: 5,
+    maximumBridges: 8,
+  });
+
+  assert.equal(plan.beforeValidation.warnings.length, 1);
+  assert.equal(plan.beforeValidation.warnings[0].code, "MIN_WEB_NO_SURVIVING_CORE");
+  assert.equal(plan.beforeValidation.warnings[0].details.locations.length, 1);
+  assert.equal(plan.outcome.beforeWarnings, 1);
+  assert.equal(plan.outcome.beforeThinAreaPixels, 21);
+  assert.ok(plan.outcome.notes.every((note) => !/2 structural warning/.test(note)));
+});

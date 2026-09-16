@@ -2,7 +2,7 @@ import { physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
 import { applyCapsuleBridges } from "./bridges.js";
 import { dilateMaskPhysical } from "./morphology.js";
 import { suggestBridges, suggestKerfAwareBridges } from "./suggestions.js";
-import { validateDesign } from "./validation.js";
+import { countValidationLocations, validateDesign } from "./validation.js";
 import {
   REMOVED,
   RETAINED,
@@ -425,10 +425,10 @@ export function planManufacturingRepairs(mask, options) {
   const tryCleanupPlan = (plan, category, issueCode, pass) => {
     const previousMask = candidate;
     const previousValidation = validation;
-    const previousErrors = validationLocationCount(previousValidation, "error");
+    const previousErrors = countValidationLocations(previousValidation, "error");
     const stageItems = applyRawPlan(plan, category, issueCode, pass);
     if (!stageItems.length) return false;
-    if (validationLocationCount(validation, "error") < previousErrors) {
+    if (countValidationLocations(validation, "error") < previousErrors) {
       items.push(...stageItems);
       return true;
     }
@@ -447,7 +447,7 @@ export function planManufacturingRepairs(mask, options) {
     return accepted;
   };
   const runCheckedCleanup = () => {
-    const beforeErrors = validationLocationCount(validation, "error");
+    const beforeErrors = countValidationLocations(validation, "error");
     cleanupRound += 1;
     const stagePass = cleanupRound * 10;
     if (categories.slivers) {
@@ -468,7 +468,7 @@ export function planManufacturingRepairs(mask, options) {
         if (!accepted) break;
       }
     }
-    return validationLocationCount(validation, "error") < beforeErrors;
+    return countValidationLocations(validation, "error") < beforeErrors;
   };
   const runCleanupRounds = () => {
     for (let round = 0; round < 3; round += 1) {
@@ -484,7 +484,7 @@ export function planManufacturingRepairs(mask, options) {
     const previousValidation = validation;
     const previousItemsLength = items.length;
     const previousProtectedMask = protectedMask;
-    const previousErrors = validationLocationCount(validation, "error");
+    const previousErrors = countValidationLocations(validation, "error");
     const previousConnectivityErrors = connectivityErrorCount(validation);
     const supportPlan = suggestKerfAwareBridges(candidate, {
       sheet: options.sheet,
@@ -511,7 +511,7 @@ export function planManufacturingRepairs(mask, options) {
     }
     const improved = supportItem &&
       connectivityErrorCount(validation) < previousConnectivityErrors &&
-      validationLocationCount(validation, "error") < previousErrors;
+      countValidationLocations(validation, "error") < previousErrors;
     if (!improved) {
       candidate = previousMask;
       validation = previousValidation;
@@ -529,7 +529,7 @@ export function planManufacturingRepairs(mask, options) {
   // sparse filter-aware tree, then try one-pixel physical dilation shells.
   // Every candidate must keep the blocker count at zero and reduce the warning
   // count without making another structural-warning metric worse.
-  if (categories.warnings && validationLocationCount(validation, "error") === 0) {
+  if (categories.warnings && countValidationLocations(validation, "error") === 0) {
     for (let pass = 1; pass <= 3 && supportCount < maximumBridges; pass += 1) {
       if (!validation.minimumWebCoreMask || validation.minimumWebCore?.componentCount <= 1) break;
       const available = maximumBridges - supportCount;
@@ -566,7 +566,10 @@ export function planManufacturingRepairs(mask, options) {
     for (let pass = 1; pass <= maximumShells; pass += 1) {
       if (structuralWarningLocationCount(validation) === 0) break;
       const expanded = dilateMaskPhysical(candidate, shellRadiusMm, options.sheet);
-      const thickeningItem = materialAdditionRepairItem(candidate, expanded, pass, pixel);
+      const issueCode = validation.minimumWebCore?.retainedPixels === 0
+        ? "MIN_WEB_NO_SURVIVING_CORE"
+        : "MIN_WEB_THIN_AREAS";
+      const thickeningItem = materialAdditionRepairItem(candidate, expanded, pass, pixel, issueCode);
       if (!thickeningItem) break;
       const expandedValidation = validate(expanded);
       const rejection = structuralWarningRejectionReason(validation, expandedValidation);
@@ -588,10 +591,10 @@ export function planManufacturingRepairs(mask, options) {
   }
 
   const afterValidation = validation;
-  const beforeErrors = validationLocationCount(beforeValidation, "error");
-  const afterErrors = validationLocationCount(afterValidation, "error");
-  const beforeWarnings = validationLocationCount(beforeValidation, "warning");
-  const afterWarnings = validationLocationCount(afterValidation, "warning");
+  const beforeErrors = countValidationLocations(beforeValidation, "error");
+  const afterErrors = countValidationLocations(afterValidation, "error");
+  const beforeWarnings = countValidationLocations(beforeValidation, "warning");
+  const afterWarnings = countValidationLocations(afterValidation, "warning");
   const improved = afterErrors < beforeErrors ||
     (beforeErrors === 0 && afterErrors === 0 && afterWarnings < beforeWarnings);
   const safeToApply = items.length > 0 && afterErrors <= beforeErrors && improved;
@@ -759,32 +762,28 @@ function countRepairActions(items) {
   return counts;
 }
 
-function validationLocationCount(validation, severity, codes = null) {
-  return (validation?.issues ?? [])
-    .filter((issue) => issue.severity === severity && (!codes || codes.has(issue.code)))
-    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
-}
-
 function connectivityErrorCount(validation) {
-  return validationLocationCount(validation, "error", CONNECTIVITY_ERROR_CODES);
+  return countValidationLocations(validation, "error", CONNECTIVITY_ERROR_CODES);
 }
 
 function weakWebCount(validation) {
   const codes = new Set(["MIN_WEB_NO_SURVIVING_CORE", "MIN_WEB_DISCONNECT"]);
-  return validationLocationCount(validation, "warning", codes);
+  return countValidationLocations(validation, "warning", codes);
 }
 
 function structuralWarningLocationCount(validation) {
   const codes = new Set(["MIN_WEB_NO_SURVIVING_CORE", "MIN_WEB_DISCONNECT", "MIN_WEB_THIN_AREAS"]);
-  return validationLocationCount(validation, "warning", codes);
+  return countValidationLocations(validation, "warning", codes);
 }
 
 function thinAreaPixelCount(validation) {
-  return validation?.issues?.find((issue) => issue.code === "MIN_WEB_THIN_AREAS")?.details?.pixelCount ?? 0;
+  return validation?.issues?.find((issue) =>
+    issue.code === "MIN_WEB_THIN_AREAS" || issue.code === "MIN_WEB_NO_SURVIVING_CORE")
+    ?.details?.pixelCount ?? 0;
 }
 
 function structuralWarningRejectionReason(before, after) {
-  const afterErrors = validationLocationCount(after, "error");
+  const afterErrors = countValidationLocations(after, "error");
   if (afterErrors !== 0) {
     return `it would create ${afterErrors} blocking ${afterErrors === 1 ? "location" : "locations"}.`;
   }
@@ -824,7 +823,7 @@ function supportRepairItem(mask, bridges, sheet, role) {
   };
 }
 
-function materialAdditionRepairItem(mask, expanded, pass, pixel) {
+function materialAdditionRepairItem(mask, expanded, pass, pixel, issueCode = "MIN_WEB_THIN_AREAS") {
   const keep = [];
   for (let index = 0; index < expanded.data.length; index += 1) {
     if (expanded.data[index] === RETAINED && mask.data[index] !== RETAINED) keep.push(index);
@@ -833,7 +832,7 @@ function materialAdditionRepairItem(mask, expanded, pass, pixel) {
   return {
     id: `warning-${pass}-thin-material-thickening`,
     category: "warning",
-    issueCode: "MIN_WEB_THIN_AREAS",
+    issueCode,
     bounds: boundsForIndices(mask, keep),
     pixelCount: keep.length,
     addedAreaMm2: keep.length * pixel.x * pixel.y,

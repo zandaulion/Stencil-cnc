@@ -353,7 +353,7 @@ Checkboxes and status notes record verified local increments, not deployment. Sp
 K01 is a continuing test workstream: implement only the fixtures needed for the selected batch, and track later fixtures as pending. Demonstrate a regression against the old code, then deliver it passing with its associated fix. Do not leave the maintained suite knowingly failing or expand the batch just to fix unrelated new tests.
 
 - [x] Record current commit, test counts, and existing dirty files; run the baseline commands in the verification section for this batch.
-- [ ] Add synthetic geometry fixtures for the reproduced solid-panel warning and 4 mm / 2 mm kerf / 3 mm minimum gap. **Solid-panel and narrow-neck fixtures are complete; the gap fixture remains blocked on D01/K07.**
+- [ ] Add synthetic geometry fixtures for the reproduced solid-panel warning and 4 mm / 2 mm kerf / 3 mm minimum gap. **The K06 solid-panel, narrow-neck, anchor, no-core, diagonal-contact, post-kerf, and multi-resolution fixtures are complete; the finished-gap fixture remains blocked on D01/K07.**
 - [x] Add deterministic sync tests with deferred responses and isolated browser storage for the selected acknowledgement, response-revision, and conflict-queue defects. Existing server tests still do not cover the client's complete lifecycle.
 - [ ] Add browser interaction tests for candidate restoration, editable-field undo, rulers, preview export, and later mobile changes. Do not rely solely on HTML/source regular-expression assertions.
 - [ ] Keep fixtures synthetic or explicitly licensed; use semantic selectors and geometry assertions rather than brittle timing or pixel-only expectations.
@@ -424,10 +424,10 @@ Done when injected failure before/after commit yields a readable complete old or
 
 - [x] Distinguish unanchored components from components separated by insufficient-width connections for the editor's no-anchor mode.
 - [x] In single-component/no-anchor mode, compare full-width components against the main core rather than counting every unanchored core as a warning.
-- [ ] Keep genuine multiple-core bottlenecks, no-surviving-core cases, post-kerf separation, and explicitly anchored designs diagnosable.
-- [ ] Recheck warning counts consumed by repairs and issue-location navigation.
+- [x] Keep genuine multiple-core bottlenecks, no-surviving-core cases, post-kerf separation, and explicitly anchored designs diagnosable.
+- [x] Recheck warning counts consumed by repairs and issue-location navigation.
 
-**Status:** selected regression verified locally. Solid-panel and narrow-neck tests pass; the remaining topology/resolution and repair-consumer matrix stays open.
+**Status:** complete. Connectivity now exposes a main component and detached components independently from external anchor support. In no-anchor/single-piece mode, minimum-width cores are compared with the largest core; anchored mode still checks every core against its explicit support. A no-surviving-core condition is one grouped, locatable warning rather than a duplicate no-core plus thin-zone pair. Thin cells are grouped by their structural post-kerf material component, so a physical dumbbell produces the same occurrence count at 1×, 2×, and 4× raster resolution instead of fragmenting from 1 warning location into 9. The editor and repair planner now share the same occurrence-count helper. Regressions cover solid panels, genuine bottlenecks, absent cores, explicit anchors, post-kerf separation, diagonal point contact, repair consumption, and location bounds.
 
 Start at `web/core/connectivity.js` and `web/core/validation.js`.
 

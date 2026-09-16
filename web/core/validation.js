@@ -221,14 +221,6 @@ export function validateDesign(mask, config) {
       }
     }
 
-    if (minimumWebCore.retainedPixels === 0) {
-      issues.push(issue(
-        "MIN_WEB_NO_SURVIVING_CORE",
-        "warning",
-        "No material region contains the configured minimum web width after kerf.",
-        { minimumWebMm },
-      ));
-    }
     // In anchored mode, a surviving full-width core is weak when it no
     // longer reaches the configured support. In the editor's single-piece
     // mode no external anchor is required, so every component is technically
@@ -240,53 +232,68 @@ export function validateDesign(mask, config) {
       : config.requireSingleComponent === true
         ? disconnectedComponents(minimumWebCore)
         : [];
-    if (weakCoreComponents.length > 0) {
-      const locations = weakCoreComponents.map((component) => ({
-        componentId: component.id,
-        pixelCount: component.pixelCount,
-        bounds: component.bounds,
-      }));
-      const count = locations.length;
-      issues.push(issue(
-        "MIN_WEB_DISCONNECT",
-        "warning",
-        `${count} full-width material ${count === 1 ? "region relies" : "regions rely"} on connections narrower than ${minimumWebMm} mm.`,
-        {
-          phase: "minimumWeb",
-          componentCount: count,
-          minimumWebMm,
-          componentId: locations[0].componentId,
-          pixelCount: locations.reduce((sum, location) => sum + location.pixelCount, 0),
-          bounds: locations[0].bounds,
-          locations,
-        },
-      ));
-    }
     if (thinPixelCount > 0) {
-      thinAreaZones = analyzeConnectivity(thinAreaMask, {
-        anchorBoundary: false,
-        connectivity: 8,
-      });
-      const locations = thinAreaZones.components.map((component) => ({
-        componentId: component.id,
-        pixelCount: component.pixelCount,
-        bounds: component.bounds,
-      }));
-      const zoneCount = locations.length;
+      // Raw morphology can split the same physical edge band into many tiny
+      // raster fragments as resolution changes. Group thin cells by the
+      // structural post-kerf component they belong to. This keeps occurrence
+      // counts and Locate navigation stable while labels still cover only the
+      // actual thin cells.
+      thinAreaZones = groupMaskByReference(thinAreaMask, postKerf);
+    }
+
+    if (minimumWebCore.retainedPixels === 0) {
+      const locations = componentLocations(thinAreaZones?.components ?? postKerf.components);
       issues.push(issue(
-        "MIN_WEB_THIN_AREAS",
+        "MIN_WEB_NO_SURVIVING_CORE",
         "warning",
-        `${zoneCount} thin material ${zoneCount === 1 ? "zone contains" : "zones contain"} ${thinPixelCount} raster cells outside any full-width core.`,
+        `${locations.length} material ${locations.length === 1 ? "region contains" : "regions contain"} no area at the configured ${minimumWebMm} mm web width after kerf.`,
         {
           phase: "thinArea",
-          componentCount: zoneCount,
-          componentId: locations[0].componentId,
-          bounds: locations[0].bounds,
-          locations,
-          pixelCount: thinPixelCount,
+          componentCount: locations.length,
           minimumWebMm,
+          componentId: locations[0]?.componentId,
+          pixelCount: thinPixelCount,
+          bounds: locations[0]?.bounds,
+          locations,
         },
       ));
+    } else {
+      if (weakCoreComponents.length > 0) {
+        const locations = componentLocations(weakCoreComponents);
+        const count = locations.length;
+        issues.push(issue(
+          "MIN_WEB_DISCONNECT",
+          "warning",
+          `${count} full-width material ${count === 1 ? "region relies" : "regions rely"} on connections narrower than ${minimumWebMm} mm.`,
+          {
+            phase: "minimumWeb",
+            componentCount: count,
+            minimumWebMm,
+            componentId: locations[0].componentId,
+            pixelCount: locations.reduce((sum, location) => sum + location.pixelCount, 0),
+            bounds: locations[0].bounds,
+            locations,
+          },
+        ));
+      }
+      if (thinPixelCount > 0) {
+        const locations = componentLocations(thinAreaZones.components);
+        const zoneCount = locations.length;
+        issues.push(issue(
+          "MIN_WEB_THIN_AREAS",
+          "warning",
+          `${thinPixelCount} thin-material raster ${thinPixelCount === 1 ? "cell lies" : "cells lie"} outside a full-width core in ${zoneCount} material ${zoneCount === 1 ? "region" : "regions"}.`,
+          {
+            phase: "thinArea",
+            componentCount: zoneCount,
+            componentId: locations[0].componentId,
+            bounds: locations[0].bounds,
+            locations,
+            pixelCount: thinPixelCount,
+            minimumWebMm,
+          },
+        ));
+      }
     }
   }
 
@@ -419,7 +426,7 @@ function isRemovedBoundary(mask, x, y) {
 }
 
 function disconnectedComponents(analysis) {
-  return analysis.components
+  return analysis.detachedComponents ?? analysis.components
     .slice()
     .sort((first, second) => second.pixelCount - first.pixelCount || first.id - second.id)
     .slice(1);
@@ -431,6 +438,69 @@ function componentLocations(components) {
     pixelCount: component.pixelCount,
     bounds: component.bounds,
   }));
+}
+
+function groupMaskByReference(mask, reference) {
+  const labels = new Int32Array(mask.data.length);
+  const byId = new Map();
+  const referenceById = new Map(reference.components.map((component) => [component.id, component]));
+  let retainedPixels = 0;
+  for (let index = 0; index < mask.data.length; index += 1) {
+    if (mask.data[index] !== RETAINED) continue;
+    const componentId = reference.labels[index];
+    if (componentId <= 0) continue;
+    labels[index] = componentId;
+    retainedPixels += 1;
+    const x = index % mask.width;
+    const y = Math.floor(index / mask.width);
+    const component = byId.get(componentId) ?? {
+      id: componentId,
+      pixelCount: 0,
+      anchored: referenceById.get(componentId)?.anchored ?? false,
+      touchesBoundary: referenceById.get(componentId)?.touchesBoundary ?? false,
+      bounds: { minX: mask.width, minY: mask.height, maxX: -1, maxY: -1, width: 0, height: 0 },
+    };
+    component.pixelCount += 1;
+    component.bounds.minX = Math.min(component.bounds.minX, x);
+    component.bounds.minY = Math.min(component.bounds.minY, y);
+    component.bounds.maxX = Math.max(component.bounds.maxX, x);
+    component.bounds.maxY = Math.max(component.bounds.maxY, y);
+    byId.set(componentId, component);
+  }
+  const components = [...byId.values()].sort((first, second) => first.id - second.id);
+  for (const component of components) {
+    component.bounds.width = component.bounds.maxX - component.bounds.minX + 1;
+    component.bounds.height = component.bounds.maxY - component.bounds.minY + 1;
+  }
+  const orderedBySize = components
+    .slice()
+    .sort((first, second) => second.pixelCount - first.pixelCount || first.id - second.id);
+  const islands = components.filter((component) => !component.anchored);
+  return {
+    groupedBy: "postKerfComponent",
+    connectivity: reference.connectivity,
+    labels,
+    retainedPixels,
+    componentCount: components.length,
+    components,
+    mainComponent: orderedBySize[0] ?? null,
+    detachedComponents: orderedBySize.slice(1),
+    supportedComponents: components.filter((component) => component.anchored),
+    islands,
+    islandCount: islands.length,
+    islandComponentIds: islands.map((component) => component.id),
+    allSupported: islands.length === 0,
+  };
+}
+
+export function issueLocationCount(entry) {
+  return Math.max(1, Array.isArray(entry?.details?.locations) ? entry.details.locations.length : 1);
+}
+
+export function countValidationLocations(validation, severity, codes = null) {
+  return (validation?.issues ?? [])
+    .filter((entry) => entry.severity === severity && (!codes || codes.has(entry.code)))
+    .reduce((sum, entry) => sum + issueLocationCount(entry), 0);
 }
 
 function nonNegative(value, name) {

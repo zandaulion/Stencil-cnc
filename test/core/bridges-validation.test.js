@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   analyzeConnectivity,
   applyCapsuleBridge,
+  countValidationLocations,
   countRetained,
   createProject,
   createMask,
@@ -12,6 +13,35 @@ import {
   validateProject,
 } from "../../web/core/index.js";
 import { maskFromAscii, narrowBridgeFixture } from "./fixtures.js";
+
+function physicalDumbbell(scale = 1) {
+  const width = 16 * scale;
+  const height = 9 * scale;
+  const mask = createMask(width, height);
+  const retain = (minX, maxX, minY, maxY) => {
+    for (let y = minY * scale; y < maxY * scale; y += 1) {
+      for (let x = minX * scale; x < maxX * scale; x += 1) {
+        mask.data[y * width + x] = 1;
+      }
+    }
+  };
+  retain(1, 7, 1, 8);
+  retain(9, 15, 1, 8);
+  retain(7, 9, 4, 5);
+  return mask;
+}
+
+function diagonalBlocks(scale = 1) {
+  const size = 4 * scale;
+  const mask = createMask(size, size);
+  for (let y = 0; y < 2 * scale; y += 1) {
+    for (let x = 0; x < 2 * scale; x += 1) mask.data[y * size + x] = 1;
+  }
+  for (let y = 2 * scale; y < size; y += 1) {
+    for (let x = 2 * scale; x < size; x += 1) mask.data[y * size + x] = 1;
+  }
+  return mask;
+}
 
 test("a manual capsule bridge joins components with finite raster width", () => {
   const source = maskFromAscii([
@@ -66,7 +96,7 @@ test("minimum-web simulation warns about a narrow structural neck", () => {
   const thinZones = validation.warnings.find((entry) => entry.code === "MIN_WEB_THIN_AREAS");
   assert.ok(thinZones.details.componentCount > 0);
   assert.equal(thinZones.details.componentCount, thinZones.details.locations.length);
-  assert.equal(validation.thinAreaZones.connectivity, 8);
+  assert.equal(validation.thinAreaZones.groupedBy, "postKerfComponent");
 });
 
 test("a solid unanchored panel has no invented minimum-web disconnection", () => {
@@ -101,6 +131,121 @@ test("unanchored single-piece validation still finds cores split by a narrow nec
   assert.equal(validation.valid, true);
   assert.ok(validation.minimumWebCore.componentCount > 1);
   assert.ok(validation.warnings.some((entry) => entry.code === "MIN_WEB_DISCONNECT"));
+});
+
+test("minimum-web bottlenecks and thin-area locations stay stable across physical resolutions", () => {
+  for (const scale of [1, 2, 4]) {
+    const validation = validateDesign(physicalDumbbell(scale), {
+      sheet: { widthMm: 16, heightMm: 9 },
+      minimumWebMm: 2,
+      anchorBoundary: false,
+      requireAnchored: false,
+      requireSingleComponent: true,
+    });
+    const bottleneck = validation.warnings.find((entry) => entry.code === "MIN_WEB_DISCONNECT");
+    const thinArea = validation.warnings.find((entry) => entry.code === "MIN_WEB_THIN_AREAS");
+
+    assert.equal(validation.valid, true, `scale ${scale}`);
+    assert.equal(validation.minimumWebCore.componentCount, 2, `scale ${scale}`);
+    assert.equal(bottleneck.details.componentCount, 1, `scale ${scale}`);
+    assert.equal(bottleneck.details.locations.length, 1, `scale ${scale}`);
+    assert.equal(thinArea.details.componentCount, 1, `scale ${scale}`);
+    assert.equal(thinArea.details.locations.length, 1, `scale ${scale}`);
+    assert.equal(countValidationLocations(validation, "warning"), 2, `scale ${scale}`);
+    assert.equal(validation.thinAreaZones.groupedBy, "postKerfComponent");
+  }
+});
+
+test("a design with no surviving full-width core reports one locatable structural warning", () => {
+  const mask = createMask(9, 9);
+  for (let y = 1; y < 8; y += 1) {
+    for (let x = 3; x <= 5; x += 1) mask.data[y * mask.width + x] = 1;
+  }
+  const validation = validateDesign(mask, {
+    sheet: { widthMm: 9, heightMm: 9 },
+    minimumWebMm: 4,
+    anchorBoundary: false,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const structural = validation.warnings.filter((entry) => entry.code.startsWith("MIN_WEB_"));
+
+  assert.equal(validation.minimumWebCore.retainedPixels, 0);
+  assert.equal(structural.length, 1);
+  assert.equal(structural[0].code, "MIN_WEB_NO_SURVIVING_CORE");
+  assert.equal(structural[0].details.phase, "thinArea");
+  assert.equal(structural[0].details.componentCount, 1);
+  assert.equal(structural[0].details.locations.length, 1);
+  assert.equal(countValidationLocations(validation, "warning"), 1);
+  assert.deepEqual(structural[0].details.bounds, {
+    minX: 3, minY: 1, maxX: 5, maxY: 7, width: 3, height: 7,
+  });
+});
+
+test("an explicit anchor keeps its core while a narrow-connected payload remains diagnosable", () => {
+  const mask = narrowBridgeFixture();
+  const anchorMask = createMask(mask.width, mask.height);
+  anchorMask.data[0] = 1;
+  const validation = validateDesign(mask, {
+    sheet: { widthMm: 15, heightMm: 15 },
+    minimumWebMm: 2,
+    anchorMask,
+    anchorBoundary: false,
+    requireAnchored: true,
+    requireSingleComponent: true,
+  });
+  const bottleneck = validation.warnings.find((entry) => entry.code === "MIN_WEB_DISCONNECT");
+
+  assert.equal(validation.minimumWebCore.supportedComponents.length, 1);
+  assert.equal(validation.minimumWebCore.islandCount, 1);
+  assert.equal(bottleneck.details.componentCount, 1);
+  assert.equal(bottleneck.details.locations[0].componentId, validation.minimumWebCore.islands[0].id);
+});
+
+test("post-kerf separation stays a grouped blocker without an external anchor", () => {
+  const validation = validateDesign(narrowBridgeFixture(), {
+    sheet: { widthMm: 15, heightMm: 15 },
+    kerfMm: 1,
+    anchorBoundary: false,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const separated = validation.errors.find((entry) => entry.code === "KERF_DISCONNECTED_RETAINED_MATERIAL");
+
+  assert.ok(separated);
+  assert.equal(separated.details.phase, "postKerf");
+  assert.equal(separated.details.componentCount, validation.postKerf.componentCount - 1);
+  assert.equal(separated.details.locations.length, separated.details.componentCount);
+  assert.ok(separated.details.locations.every((location) => location.bounds.width > 0));
+});
+
+test("diagonal point contact remains disconnected at multiple raster resolutions", () => {
+  for (const scale of [1, 2, 4]) {
+    const validation = validateDesign(diagonalBlocks(scale), {
+      sheet: { widthMm: 4, heightMm: 4 },
+      anchorBoundary: false,
+      requireAnchored: false,
+      requireSingleComponent: true,
+    });
+    const disconnected = validation.errors.find((entry) => entry.code === "DISCONNECTED_RETAINED_MATERIAL");
+    assert.equal(validation.initial.componentCount, 2, `scale ${scale}`);
+    assert.equal(disconnected.details.locations.length, 1, `scale ${scale}`);
+  }
+});
+
+test("solid panels remain free of structural warnings at multiple raster resolutions", () => {
+  for (const [width, height] of [[50, 80], [100, 160], [200, 320]]) {
+    const validation = validateDesign(createMask(width, height, 1), {
+      sheet: { widthMm: 100, heightMm: 160 },
+      kerfMm: 1.2,
+      minimumWebMm: 3,
+      anchorBoundary: false,
+      requireAnchored: false,
+      requireSingleComponent: true,
+    });
+    assert.equal(validation.valid, true, `${width}x${height}`);
+    assert.ok(!validation.warnings.some((entry) => entry.code.startsWith("MIN_WEB_")), `${width}x${height}`);
+  }
 });
 
 test("cuts closer than the configured plasma gap block export", () => {

@@ -24,6 +24,7 @@ import {
   buildExportFilename,
   calculateArtworkPlacement,
   connectedRegionIndices,
+  countValidationLocations,
   createProject,
   createSyncRetryController,
   decodeMask,
@@ -50,6 +51,7 @@ import {
   zoomAroundPoint,
   isRetryableSyncError,
   isStorageQuotaError,
+  issueLocationCount,
   REMOVED,
   RETAINED,
 } from '/core/index.js';
@@ -1271,13 +1273,12 @@ function renderIssues(issues) {
   const list = el('issue-list');
   if (!list) return;
 
-  const occurrenceCount = (issue) => Math.max(1, issue.details?.locations?.length ?? 1);
   const errors = issues
     .filter((issue) => issue.severity === 'error')
-    .reduce((sum, issue) => sum + occurrenceCount(issue), 0);
+    .reduce((sum, issue) => sum + issueLocationCount(issue), 0);
   const warnings = issues
     .filter((issue) => issue.severity === 'warning')
-    .reduce((sum, issue) => sum + occurrenceCount(issue), 0);
+    .reduce((sum, issue) => sum + issueLocationCount(issue), 0);
   const total = errors + warnings;
   el('issue-total').textContent = String(total);
   el('filter-count-all').textContent = String(total);
@@ -1392,7 +1393,7 @@ const REPAIR_STRATEGY_COPY = Object.freeze({
 });
 
 function repairKindForIssue(issue) {
-  if (['KERF_DISCONNECTED_RETAINED_MATERIAL', 'MIN_WEB_DISCONNECT', 'MIN_WEB_THIN_AREAS']
+  if (['KERF_DISCONNECTED_RETAINED_MATERIAL', 'MIN_WEB_NO_SURVIVING_CORE', 'MIN_WEB_DISCONNECT', 'MIN_WEB_THIN_AREAS']
     .includes(issue?.code)) return 'manufacturing';
   if (issue?.code === 'DISCONNECTED_RETAINED_MATERIAL') return 'loose-pieces';
   if (issue?.code === 'MIN_OPENING_UNCUTTABLE') return 'small-openings';
@@ -1420,7 +1421,7 @@ function repairableIssue(kind = null) {
 }
 
 function repairIssueCount(issue) {
-  return issue?.details?.componentCount ?? issue?.details?.violationCount ?? issue?.details?.locations?.length ?? 0;
+  return issue ? issueLocationCount(issue) : 0;
 }
 
 function repairableValidationLocationCount(validation, severity = 'error') {
@@ -1433,9 +1434,7 @@ function repairableValidationLocationCount(validation, severity = 'error') {
     'MIN_WEB_DISCONNECT',
     'MIN_WEB_THIN_AREAS',
   ]);
-  return (validation?.issues ?? [])
-    .filter((issue) => issue.severity === severity && codes.has(issue.code))
-    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+  return countValidationLocations(validation, severity, codes);
 }
 
 function structuralWarningLocationCount(validation) {
@@ -1444,9 +1443,7 @@ function structuralWarningLocationCount(validation) {
     'MIN_WEB_DISCONNECT',
     'MIN_WEB_THIN_AREAS',
   ]);
-  return (validation?.issues ?? [])
-    .filter((issue) => issue.severity === 'warning' && codes.has(issue.code))
-    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+  return countValidationLocations(validation, 'warning', codes);
 }
 
 function selectedRepairStrategy() {
@@ -1482,12 +1479,6 @@ function repairValidation(mask) {
   });
 }
 
-function validationLocationCount(validation, severity) {
-  return (validation?.issues ?? [])
-    .filter((issue) => issue.severity === severity)
-    .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
-}
-
 function selectedRepairCategories(mode = 'errors') {
   if (mode === 'warnings') {
     return { slivers: false, gaps: false, webs: false, warnings: true };
@@ -1517,7 +1508,7 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
     toast('Import artwork before planning manufacturing repairs.');
     return false;
   }
-  if (mode === 'warnings' && (!state.validation || validationLocationCount(state.validation, 'error') > 0)) {
+  if (mode === 'warnings' && (!state.validation || countValidationLocations(state.validation, 'error') > 0)) {
     toast('Fix every blocking error before reducing structural warnings.');
     return false;
   }
@@ -1626,18 +1617,14 @@ function updateRepairPreviewMasks() {
   if (state.repairPlan.kind === 'manufacturing') {
     const validation = repairValidation(state.repairPreviewMask);
     const outcome = state.repairPlan.outcome;
-    outcome.afterErrors = validationLocationCount(validation, 'error');
-    outcome.afterWarnings = validationLocationCount(validation, 'warning');
-    outcome.afterConnectivityErrors = (validation.issues ?? [])
-      .filter((issue) => issue.severity === 'error' && [
-        'DISCONNECTED_RETAINED_MATERIAL', 'KERF_DISCONNECTED_RETAINED_MATERIAL',
-      ].includes(issue.code))
-      .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
-    outcome.afterWeakWebs = (validation.issues ?? [])
-      .filter((issue) => issue.severity === 'warning' && [
-        'MIN_WEB_NO_SURVIVING_CORE', 'MIN_WEB_DISCONNECT',
-      ].includes(issue.code))
-      .reduce((sum, issue) => sum + Math.max(1, issue.details?.locations?.length ?? 1), 0);
+    outcome.afterErrors = countValidationLocations(validation, 'error');
+    outcome.afterWarnings = countValidationLocations(validation, 'warning');
+    outcome.afterConnectivityErrors = countValidationLocations(validation, 'error', new Set([
+      'DISCONNECTED_RETAINED_MATERIAL', 'KERF_DISCONNECTED_RETAINED_MATERIAL',
+    ]));
+    outcome.afterWeakWebs = countValidationLocations(validation, 'warning', new Set([
+      'MIN_WEB_NO_SURVIVING_CORE', 'MIN_WEB_DISCONNECT',
+    ]));
     outcome.improved = outcome.afterErrors < outcome.beforeErrors ||
       (outcome.beforeErrors === 0 && outcome.afterErrors === 0 &&
         outcome.afterWarnings < outcome.beforeWarnings);
@@ -1698,7 +1685,7 @@ function renderRepairPanel() {
   if (panel.hidden) return;
   updateManufacturingRepairState();
 
-  const blockingLocations = validationLocationCount(state.validation, 'error');
+  const blockingLocations = countValidationLocations(state.validation, 'error');
   const warningLocations = structuralWarningLocationCount(state.validation);
   const validationReady = Boolean(state.validation);
   const errorStep = el('repair-error-step');
@@ -1935,8 +1922,8 @@ async function applyRepairPlan() {
   pushHistory();
   renderRepairPanel();
   await runValidation();
-  const remaining = validationLocationCount(state.validation, 'error');
-  const remainingWarnings = validationLocationCount(state.validation, 'warning');
+  const remaining = countValidationLocations(state.validation, 'error');
+  const remainingWarnings = countValidationLocations(state.validation, 'warning');
   state.repairResult = {
     kind: repairKind, mode: repairMode, count: repairCount, running: false, remaining, remainingWarnings,
   };

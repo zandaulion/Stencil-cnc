@@ -49,3 +49,18 @@ test("an explicit anchor mask defines support independently of the raster bounda
   assert.equal(result.islandCount, 1);
   assert.equal(result.islands[0].bounds.minX, 2);
 });
+
+test("main-versus-detached components remain distinct from external anchor support", () => {
+  const mask = maskFromAscii(["##..##"]);
+  const unanchored = analyzeConnectivity(mask, { anchorBoundary: false });
+
+  assert.equal(unanchored.islandCount, 2);
+  assert.equal(unanchored.mainComponent.id, 1);
+  assert.equal(unanchored.mainComponent.pixelCount, 2);
+  assert.deepEqual(unanchored.detachedComponents.map((component) => component.id), [2]);
+
+  const anchored = analyzeConnectivity(mask, { anchorBoundary: true });
+  assert.equal(anchored.islandCount, 0);
+  assert.equal(anchored.mainComponent.id, 1);
+  assert.deepEqual(anchored.detachedComponents.map((component) => component.id), [2]);
+});

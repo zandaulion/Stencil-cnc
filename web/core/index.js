@@ -35,7 +35,7 @@ export {
 } from "./repairs.js";
 export { suggestBridges, suggestKerfAwareBridges, suggestSlatStabilizers } from "./suggestions.js";
 export { dilateMaskPhysical, erodeMaskPhysical } from "./morphology.js";
-export { validateDesign } from "./validation.js";
+export { countValidationLocations, issueLocationCount, validateDesign } from "./validation.js";
 export { zoomAroundPoint } from "./viewport.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";

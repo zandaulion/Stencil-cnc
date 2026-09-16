@@ -87,6 +87,11 @@ export function analyzeConnectivity(mask, options = {}) {
   }
 
   const islands = components.filter((component) => !component.anchored);
+  const orderedBySize = components
+    .slice()
+    .sort((first, second) => second.pixelCount - first.pixelCount || first.id - second.id);
+  const mainComponent = orderedBySize[0] ?? null;
+  const detachedComponents = orderedBySize.slice(1);
   return {
     connectivity,
     labels,
@@ -94,6 +99,8 @@ export function analyzeConnectivity(mask, options = {}) {
     componentCount: components.length,
     islandCount: islands.length,
     components,
+    mainComponent,
+    detachedComponents,
     supportedComponents: components.filter((component) => component.anchored),
     islands,
     islandComponentIds: islands.map((component) => component.id),
