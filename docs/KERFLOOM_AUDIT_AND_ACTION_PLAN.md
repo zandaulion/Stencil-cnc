@@ -30,20 +30,21 @@ The main obstacle to frictionless creation is not a shortage of filters. It is c
 
 Recommended product direction: **a creative workspace guided by a remembered cutting profile, with reversible experiments and an explicit manufacturing-release review**. Most constraints should guide generation; repairs should handle exceptions. Drafts should remain easy to save, compare, and share without implying they are ready to cut.
 
-This document began as the audit and proposed implementation handoff for Sol. The implementation record below now distinguishes subsequent local code changes from the original findings. No production data, deployment, or hostname migration was changed. Decision-gated work below still requires the indicated agreement; recommendations are not evidence of completed fixes.
+This document began as the audit and proposed implementation handoff for Sol. The implementation record below now distinguishes subsequent code changes from the original findings. The trust milestone through K08 was deployed on 2026-09-16; each later item states whether it is only local. No production project data or hostname migration was changed. Decision-gated work below still requires the indicated agreement; recommendations are not evidence of completed fixes.
 
 ### First trust milestone implementation record
 
-This repository now contains a local, undeployed first increment:
+This repository now contains the following implementation increments:
 
 - **K02 — implemented, real-browser acceptance pending.** Browser databases are named by the server-verified workspace identifier. Offline startup requires a previously verified identifier. The former origin-wide database is quarantined and can only be copied into the current workspace through an explicit, reversible Projects-library action; it is never auto-uploaded. Every project API request also carries its originating workspace identity; the server rejects a stale tab after another tab changes the authentication cookie. A fresh-browser Chromium check verified separate A/B project stores and deliberate legacy import; HTTP integration tests verify the stale-session fence.
 - **K03 — implemented, real-browser acceptance pending.** Queued operations carry immutable IDs and workspace ownership. Server acknowledgement atomically removes only the exact operation or rebases a newer pending edit. Per-project writers use local serialization plus Web Locks where available. Actual upload/download responses provide the recorded revision. A conflict copy that cannot upload remains visibly queued. Tests now cover independent-tab serialization, an edit racing permanent deletion, tombstones, lost upload/delete responses, content-hash acknowledgement recovery, stale list metadata, and offline conflict copies. A physical two-tab/browser run plus quota and partial-cache interruption remain open.
 - **K06 — verified for the selected regression.** A solid panel in no-anchor/single-piece mode no longer receives an invented narrow-connection warning, while a real narrow-neck fixture still warns. The wider repair-count and multi-resolution matrix remains open.
 - **K08 — implemented, real-browser acceptance pending.** New candidates use a versioned complete snapshot containing style state, manual edits, supports, manufacturing repairs, raster-coordinate provenance, and a deterministic final-geometry fingerprint. Restore preserves those layers, verifies the resulting geometry, invalidates the old validation certificate, and remains one Undo step. Version-1 projects migrate without inventing repairs for legacy candidates; those candidates are labelled as legacy recipes requiring review. The outer project schema is now version 2 so an older offline client fails safely instead of silently rewriting and truncating the new candidate payload.
-- **K01 — partial, continuing.** Twenty JavaScript tests were added for the selected storage/sync/geometry/candidate defects. Later kerf-contract, broader browser interaction, quota, and cache-durability fixtures remain pending.
+- **K01 — partial, continuing.** Twenty-one JavaScript tests were added for the selected storage/sync/geometry/candidate/export defects. Later kerf-contract, broader browser interaction, quota, and cache-durability fixtures remain pending.
 - **K09 — partial.** Permanent-delete copy now states the server-workspace/all-linked-device effect. Other truth-in-copy items remain pending.
+- **K17 — implemented locally, app-level browser acceptance and deployment pending.** PNG preview is available whenever artwork geometry exists. A preview without a current passing validation receives a branded, high-contrast “not validated for cutting” watermark and a `draft-preview` filename; SVG and DXF remain blocked. Validated PNG remains unwatermarked. The existing artifact path retains and synchronizes either PNG through the authoritative project save flow. A Chromium rasterization smoke test verified that the watermark is visibly drawn and the canvas encodes a non-empty PNG.
 
-Verification after these increments: **160/160 JavaScript tests passed**, **71/71 Python tests passed**, syntax and diff checks passed, and the isolated Chromium workspace/legacy-import smoke test passed. No production server, real user library, hostname, or deployment was changed. The existing `portfolio-screenshots/` assets were left untouched.
+Verification after these increments: **161/161 JavaScript tests passed**; the most recent deployment also passed **71/71 Python tests**. Syntax and diff checks passed. The isolated Chromium workspace/legacy-import smoke test and the draft-watermark rasterization/PNG-encoding smoke test passed. K17 has not yet been deployed. The existing `portfolio-screenshots/` assets were left untouched.
 
 ## Scope and confidence
 
@@ -530,10 +531,12 @@ Done when interaction remains responsive on representative large/fragmented fixt
 
 ### K17 — Separate draft preview from cutting export
 
-- [ ] Allow PNG preview when artwork exists, even with blockers or missing validation.
-- [ ] Distinguish draft/unvalidated output clearly in the UI, filename, and a visible marking or accompanying presentation agreed with the owner.
-- [ ] Preserve strict current-revision checks for SVG/DXF; do not make “Export all” bypass them.
-- [ ] Ensure generating/retaining a preview artifact uses K03's authoritative save path.
+- [x] Allow PNG preview when artwork exists, even with blockers or missing validation.
+- [x] Distinguish draft/unvalidated output clearly in the UI, filename, and a visible marking or accompanying presentation agreed with the owner.
+- [x] Preserve strict current-revision checks for SVG/DXF; do not make “Export all” bypass them.
+- [x] Ensure generating/retaining a preview artifact uses K03's authoritative save path.
+
+Implementation note (2026-09-16): `currentGeometryIsValidated` is the single current-revision gate. It controls clean PNG, SVG, and DXF, while draft PNG bypasses only the cutting-export gate. Draft PNGs receive a diagonal `KERFLOOM DRAFT · NOT VALIDATED FOR CUTTING` band and `draft-preview` filename; the same downloaded blob continues through recovery-point, artifact, and project synchronization. Core tests cover watermark drawing, workflow tests cover gating/copy/filename wiring, and Chromium verified real canvas rasterization and PNG encoding. A complete click-through with a disconnected saved project remains an acceptance follow-up.
 
 Done when a disconnected draft exports a clearly labelled PNG while SVG/DXF remain unavailable, and a validated final preview accurately matches the current appearance.
 

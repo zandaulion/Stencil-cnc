@@ -39,7 +39,7 @@ export { validateDesign } from "./validation.js";
 export { zoomAroundPoint } from "./viewport.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";
-export { maskToRgba } from "./png.js";
+export { DRAFT_WATERMARK_LABEL, drawDraftWatermark, maskToRgba } from "./png.js";
 export { buildExportFilename, filenamePart, filenameTimestamp } from "./filenames.js";
 export {
   PROJECT_SCHEMA,

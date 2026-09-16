@@ -27,6 +27,7 @@ import {
   createProject,
   decodeMask,
   deserializeProject,
+  drawDraftWatermark,
   encodeMask,
   erodeMaskPhysical,
   exportDxf,
@@ -1207,6 +1208,15 @@ function geometryForExport() {
   };
 }
 
+function currentGeometryIsValidated() {
+  return Boolean(
+    state.designMask &&
+    state.validated &&
+    state.validation?.valid &&
+    state.validatedRevision === state.revision
+  );
+}
+
 async function runValidation() {
   if (!state.designMask) { toast('Import an image first.'); return; }
   setSidePanel('issues');
@@ -1237,7 +1247,7 @@ async function runValidation() {
   draw();
   toast(state.validation.valid
     ? 'Checks passed. The panel holds together.'
-    : 'Connectivity errors block export.');
+    : 'Connectivity errors block SVG and DXF; a watermarked draft PNG remains available.');
   markDirty();
   await createRecoveryPoint(state.validation.valid ? 'Validation passed' : 'Validation checked');
 }
@@ -2422,17 +2432,30 @@ function applyPanelSizePreset(value) {
 
 function updateExportReadiness() {
   const card = el('export-readiness');
-  const ready = state.validated && state.validatedRevision === state.revision && state.designMask;
+  const hasGeometry = Boolean(state.designMask);
+  const ready = currentGeometryIsValidated();
   if (card) {
-    card.dataset.state = ready ? 'ready' : 'blocked';
+    card.dataset.state = ready ? 'ready' : hasGeometry ? 'draft' : 'blocked';
     card.querySelector('span').innerHTML = ready
-      ? '<strong>Ready to export</strong><small>Checks passed for the current geometry.</small>'
-      : '<strong>Validation required</strong><small>Run all checks before exporting geometry.</small>';
+      ? '<strong>Ready for cutting export</strong><small>Checks passed for the current geometry. PNG has no watermark.</small>'
+      : hasGeometry
+        ? '<strong>Draft preview available</strong><small>PNG includes a validation watermark. Run all checks to enable SVG and DXF.</small>'
+        : '<strong>Artwork required</strong><small>Import or create artwork before exporting a preview.</small>';
   }
-  for (const id of ['btn-export-svg', 'btn-export-dxf', 'btn-export-png']) {
+  for (const id of ['btn-export-svg', 'btn-export-dxf']) {
     el(id)?.toggleAttribute('disabled', !ready);
   }
-  all('[data-next-stage="export"]').forEach((button) => button.toggleAttribute('disabled', !ready));
+  const pngButton = el('btn-export-png');
+  pngButton?.toggleAttribute('disabled', !hasGeometry);
+  const pngDescription = pngButton?.querySelector('small');
+  if (pngDescription) {
+    pngDescription.textContent = ready
+      ? 'Validated full-resolution preview · no watermark'
+      : hasGeometry
+        ? 'Draft preview · validation watermark included'
+        : 'Available after artwork is created';
+  }
+  all('[data-next-stage="export"]').forEach((button) => button.toggleAttribute('disabled', !hasGeometry));
 }
 
 /* ---------------------------------------------------------------- history */
@@ -4936,7 +4959,7 @@ function bridgeHandleAtPointer(event) {
 
 /* ----------------------------------------------------------------- export */
 
-function pngBlob(mask) {
+function pngBlob(mask, { draft = false } = {}) {
   const raster = maskToRgba(mask);
   const canvas = document.createElement('canvas');
   canvas.width = raster.width;
@@ -4946,6 +4969,7 @@ function pngBlob(mask) {
   const image = context.createImageData(raster.width, raster.height);
   image.data.set(raster.data);
   context.putImageData(image, 0, 0);
+  if (draft) drawDraftWatermark(context, raster.width, raster.height);
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
@@ -4955,12 +4979,19 @@ function pngBlob(mask) {
 }
 
 async function exportGeometry(kind) {
-  if (!state.designMask || !state.validated || state.validatedRevision !== state.revision) {
-    toast('Run the checks again for the current geometry.');
+  if (!state.designMask) {
+    toast('Import or create artwork before exporting.');
     return;
   }
-  // Validation and download deliberately use the same transformed mask. This
-  // prevents export-only options from bypassing the safety result.
+  const validated = currentGeometryIsValidated();
+  if (kind !== 'png' && !validated) {
+    toast('Run the checks again before exporting cutting geometry.');
+    return;
+  }
+  const draft = kind === 'png' && !validated;
+  // Cutting exports validate and download the same transformed mask. Draft
+  // PNG is the deliberate exception: it may show unsafe work, so the file is
+  // visibly watermarked and cannot be mistaken for released cut geometry.
   const mask = geometryForExport();
   try {
     const units = el('export-units')?.value === 'in' ? 'in' : 'mm';
@@ -4973,15 +5004,15 @@ async function exportGeometry(kind) {
       filename = exportFilename('dxf');
       blob = new Blob([exportDxf(mask, sheet(), { units })], { type: 'application/dxf' });
     } else if (kind === 'png') {
-      filename = exportFilename('png');
-      blob = await pngBlob(mask);
+      filename = exportFilename('png', undefined, { draft });
+      blob = await pngBlob(mask, { draft });
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
     downloadBlob(filename, blob);
     state.lastExportedAt = new Date().toISOString();
     markDirty();
-    await createRecoveryPoint(`${kind.toUpperCase()} exported`);
+    await createRecoveryPoint(draft ? 'Draft PNG exported' : `${kind.toUpperCase()} exported`);
     if (state.projectId) {
       try {
         await saveArtifact(state.projectId, {
@@ -4996,14 +5027,16 @@ async function exportGeometry(kind) {
         console.warn('The downloaded export could not be retained with the server project:', artifactError);
       }
     }
-    toast(`${kind.toUpperCase()} written.`);
+    toast(draft
+      ? 'Draft PNG written with a validation watermark.'
+      : `${kind.toUpperCase()} written.`);
   } catch (error) {
     console.error(error);
     toast(`The ${kind.toUpperCase()} could not be written.`);
   }
 }
 
-function exportFilename(kind, timestamp = state.exportTimestamp ?? new Date()) {
+function exportFilename(kind, timestamp = state.exportTimestamp ?? new Date(), { draft = false } = {}) {
   const style = selectedCutStyle();
   const projectFile = kind === 'project';
   return buildExportFilename({
@@ -5011,7 +5044,7 @@ function exportFilename(kind, timestamp = state.exportTimestamp ?? new Date()) {
     sheet: sheet(),
     styleName: CUT_STYLE_NAMES[style] || style,
     includeFrame: projectFile ? frameConfig().enabled : el('export-frame')?.checked !== false,
-    purpose: projectFile ? 'editable' : kind === 'png' ? 'preview' : 'cut',
+    purpose: projectFile ? 'editable' : kind === 'png' ? draft ? 'draft-preview' : 'preview' : 'cut',
     extension: projectFile ? 'stencil.json' : kind,
     timestamp,
   });

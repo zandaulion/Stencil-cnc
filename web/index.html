@@ -859,7 +859,7 @@
               Run all checks
             </button>
 
-            <p class="validation-note">Connectivity, uncuttable openings, and gaps below the Plasma profile block export. Non-critical edge-thickness findings remain visible as warnings.</p>
+            <p class="validation-note">Connectivity, uncuttable openings, and gaps below the Plasma profile block SVG and DXF cutting exports. A watermarked draft PNG remains available for review.</p>
 
             <button class="button button-primary button-full stage-next" type="button" data-next-stage="export" disabled>
               Review export
@@ -870,7 +870,7 @@
           <section class="stage-panel" id="panel-export" role="tabpanel" aria-labelledby="stage-export" data-panel="export" hidden>
             <div class="export-readiness" id="export-readiness" data-state="blocked">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
-              <span><strong>Validation required</strong><small>Run all checks before exporting geometry.</small></span>
+              <span><strong>Artwork required</strong><small>PNG previews are available before validation; cutting exports are not.</small></span>
             </div>
 
             <div class="control-section first-section">
@@ -902,7 +902,7 @@
               <small id="export-unit-scale">1 drawing unit = 1 mm</small>
             </div>
 
-            <p class="section-help">File names include the project, panel size, cut style, frame choice, purpose, and validation timestamp.</p>
+            <p class="section-help">File names include the project, panel size, cut style, frame choice, purpose, and validation or preview timestamp.</p>
 
             <div class="export-buttons">
               <button class="button button-primary button-full" id="btn-export-svg" type="button" disabled>
@@ -917,7 +917,7 @@
               </button>
               <button class="button button-secondary button-full" id="btn-export-png" type="button" disabled>
                 <span class="file-badge">PNG</span>
-                <span><strong>Export PNG</strong><small>Full-resolution black-and-white preview</small></span>
+                <span><strong>Export PNG</strong><small>Draft previews include a validation watermark</small></span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"></path></svg>
               </button>
             </div>

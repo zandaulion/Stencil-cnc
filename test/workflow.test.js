@@ -10,6 +10,7 @@ const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
 const storage = fs.readFileSync(path.join(projectRoot, 'web/storage.js'), 'utf8');
 const manifest = fs.readFileSync(path.join(projectRoot, 'web/manifest.webmanifest'), 'utf8');
 const projectSync = fs.readFileSync(path.join(projectRoot, 'web/project-sync.js'), 'utf8');
+const png = fs.readFileSync(path.join(projectRoot, 'web/core/png.js'), 'utf8');
 
 test('Kerfloom is the public brand while project compatibility remains stable', () => {
   assert.match(html, /<title>Kerfloom — Art that holds together<\/title>/);
@@ -108,13 +109,18 @@ test('server snapshots explicitly share complete projects and remain revocable',
   assert.match(css, /\.share-project-dialog/);
 });
 
-test('validated final geometry can be exported as a shareable PNG', () => {
+test('PNG previews remain available before validation and are visibly marked as drafts', () => {
   assert.match(html, /id="btn-export-png"[^>]*disabled/);
-  assert.match(html, /Full-resolution black-and-white preview/);
-  assert.match(html, /File names include the project, panel size, cut style, frame choice, purpose, and validation timestamp/);
-  assert.match(editor, /\['btn-export-svg', 'btn-export-dxf', 'btn-export-png'\]/);
+  assert.match(html, /Draft previews include a validation watermark/);
+  assert.match(html, /File names include the project, panel size, cut style, frame choice, purpose, and validation or preview timestamp/);
+  assert.match(editor, /for \(const id of \['btn-export-svg', 'btn-export-dxf'\]\)/);
+  assert.match(editor, /pngButton\?\.toggleAttribute\('disabled', !hasGeometry\)/);
   assert.match(editor, /const mask = geometryForExport\(\)/);
-  assert.match(editor, /filename = exportFilename\('png'\)[\s\S]*blob = await pngBlob\(mask\)[\s\S]*downloadBlob\(filename, blob\)/);
+  assert.match(editor, /const draft = kind === 'png' && !validated/);
+  assert.match(png, /KERFLOOM DRAFT · NOT VALIDATED FOR CUTTING/);
+  assert.match(editor, /filename = exportFilename\('png', undefined, \{ draft \}\)[\s\S]*blob = await pngBlob\(mask, \{ draft \}\)[\s\S]*downloadBlob\(filename, blob\)/);
+  assert.match(editor, /purpose: projectFile \? 'editable' : kind === 'png' \? draft \? 'draft-preview' : 'preview' : 'cut'/);
+  assert.match(editor, /if \(kind !== 'png' && !validated\)/);
   assert.match(editor, /state\.exportTimestamp = state\.validation\.valid \? new Date\(\) : null/);
   assert.match(editor, /el\('btn-export-png'\)\?\.addEventListener\('click', \(\) => exportGeometry\('png'\)\)/);
 });
