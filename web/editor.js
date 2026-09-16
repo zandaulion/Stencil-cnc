@@ -15,8 +15,10 @@
  */
 
 import {
+  CANDIDATE_PAYLOAD_VERSION,
   analyzeConnectivity,
   applyCapsuleBridges,
+  applyRasterLayers,
   applySmallOpeningRepairPlan,
   buildDesignMask,
   buildExportFilename,
@@ -30,6 +32,7 @@ import {
   exportDxf,
   exportSvg,
   maskFromImageData,
+  maskFingerprint,
   maskToRgba,
   mergeRepairLayerEdits,
   orientSheet,
@@ -576,18 +579,10 @@ function rebuildSource() {
     };
   }
   state.paintedFor = rasterKey;
-  if (state.paintedFor === rasterKey) {
-    for (const index of state.painted.keep) mask.data[index] = RETAINED;
-    for (const index of state.painted.remove) mask.data[index] = REMOVED;
-  }
-  if (state.manufacturingRepairs.enabled && !state.manufacturingRepairs.stale) {
-    for (const index of state.manufacturingRepairs.keep) {
-      if (index >= 0 && index < mask.data.length) mask.data[index] = RETAINED;
-    }
-    for (const index of state.manufacturingRepairs.remove) {
-      if (index >= 0 && index < mask.data.length) mask.data[index] = REMOVED;
-    }
-  }
+  mask = applyRasterLayers(mask, {
+    painted: state.paintedFor === rasterKey ? state.painted : null,
+    manufacturingRepairs: state.manufacturingRepairs,
+  }, { clone: false });
   state.sourceMask = mask;
 }
 
@@ -4074,6 +4069,12 @@ function candidateName(style) {
   return `${label} ${count + 1}`;
 }
 
+function candidatePayloadIsComplete(candidate) {
+  return candidate?.payloadVersion === CANDIDATE_PAYLOAD_VERSION &&
+    candidate.manufacturingRepairs !== null &&
+    Boolean(candidate.geometry?.designFingerprint);
+}
+
 async function saveCurrentCandidate() {
   if (!state.baseMask || !state.designMask) { toast('Import and render artwork first.'); return; }
   if (state.candidates.length >= CANDIDATE_LIMIT) {
@@ -4088,14 +4089,31 @@ async function saveCurrentCandidate() {
   }
 
   const style = selectedCutStyle();
+  rememberStyleSettings(style);
   const candidate = {
+    payloadVersion: CANDIDATE_PAYLOAD_VERSION,
     id: crypto.randomUUID(),
     name: candidateName(style),
     createdAt: new Date().toISOString(),
     controls: readControls(),
+    styleSettings: cloneStyleSettings(state.styleSettings),
     baseMask: encodeMask(state.baseMask),
     painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
+    paintedFor: state.paintedFor,
+    manufacturingRepairs: {
+      keep: [...state.manufacturingRepairs.keep],
+      remove: [...state.manufacturingRepairs.remove],
+      enabled: state.manufacturingRepairs.enabled,
+      stale: state.manufacturingRepairs.stale,
+      summary: state.manufacturingRepairs.summary
+        ? JSON.parse(JSON.stringify(state.manufacturingRepairs.summary))
+        : null,
+    },
     bridges: cloneBridges(),
+    geometry: {
+      sourceRasterKey: state.sourceMask ? `${state.sourceMask.width}x${state.sourceMask.height}` : null,
+      designFingerprint: maskFingerprint(state.designMask),
+    },
     thumbnail: maskThumbnail(state.designMask),
     automaticSupportsStale: state.automaticSupportsStale,
   };
@@ -4120,6 +4138,8 @@ function restoreCandidate(id) {
   setRenderProgress();
 
   rememberStyleSettings();
+  const completePayload = candidatePayloadIsComplete(candidate);
+  if (completePayload) state.styleSettings = cloneStyleSettings(candidate.styleSettings);
   applyControls(candidate.controls);
   state.baseMask = decodeMask(candidate.baseMask);
   state.sourceMask = null;
@@ -4136,24 +4156,44 @@ function restoreCandidate(id) {
     keep: new Set(candidate.painted?.keep ?? []),
     remove: new Set(candidate.painted?.remove ?? []),
   };
-  state.paintedFor = null;
-  resetManufacturingRepairs();
+  state.paintedFor = candidate.paintedFor ?? candidate.geometry?.sourceRasterKey ?? null;
+  if (completePayload) {
+    state.manufacturingRepairs = {
+      keep: new Set(candidate.manufacturingRepairs.keep ?? []),
+      remove: new Set(candidate.manufacturingRepairs.remove ?? []),
+      enabled: candidate.manufacturingRepairs.enabled !== false,
+      stale: candidate.manufacturingRepairs.stale === true,
+      summary: candidate.manufacturingRepairs.summary ?? null,
+    };
+  } else {
+    resetManufacturingRepairs();
+  }
   state.bridges = cloneBridges(candidate.bridges ?? []);
   state.selectedBridge = null;
   state.automaticSupportsStale = candidate.automaticSupportsStale === true;
-  refresh({ immediate: true });
+  refresh({ immediate: true, preserveManufacturingRepairs: completePayload });
   state.selectedCandidateId = candidate.id;
   state.automaticSupportsStale = candidate.automaticSupportsStale === true;
+  const expectedFingerprint = candidate.geometry?.designFingerprint ?? null;
+  const actualFingerprint = state.designMask ? maskFingerprint(state.designMask) : null;
+  const exact = completePayload && expectedFingerprint && expectedFingerprint === actualFingerprint;
   updateRangeOutputs();
   updateReadouts();
   updateAutomaticSupportState();
+  updateManufacturingRepairState();
   renderCandidates();
-  setStyleStatus(`${candidate.name} restored from saved processed geometry.`);
+  setStyleStatus(exact
+    ? `${candidate.name} restored exactly. Revalidate before export.`
+    : completePayload
+      ? `${candidate.name} restored, but its saved geometry signature differs. Review it before export.`
+      : `${candidate.name} is a legacy candidate saved before repair layers were captured. Review it before export.`);
   setView('material');
   setStage('prepare');
   fitToView();
   pushHistory();
-  toast(`${candidate.name} restored. You can continue editing it.`);
+  toast(exact
+    ? `${candidate.name} restored exactly. Run validation before export.`
+    : `${candidate.name} restored as an editable recipe; review the result before export.`);
 }
 
 function duplicateCandidate(id) {
@@ -4205,13 +4245,14 @@ function renderCandidates() {
     const when = savedAt && Number.isFinite(savedAt.getTime())
       ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(savedAt)
       : 'Saved candidate';
+    const snapshotLabel = candidatePayloadIsComplete(candidate) ? 'complete snapshot' : 'legacy recipe';
     return `<li class="candidate-item${candidate.id === state.selectedCandidateId ? ' is-selected' : ''}" data-candidate-id="${escapeAttribute(candidate.id)}">
       <button class="candidate-restore" type="button" data-candidate-action="restore" aria-label="Restore ${escapeAttribute(candidate.name)}">
         ${thumbnail ? `<img src="${escapeAttribute(thumbnail)}" alt="">` : ''}
       </button>
       <div class="candidate-body">
         <input class="candidate-name" value="${escapeAttribute(candidate.name)}" maxlength="60" aria-label="Candidate name">
-        <small class="candidate-meta">${escapeHtml(style)} · ${escapeHtml(when)}${candidate.automaticSupportsStale ? ' · supports need review' : ''}</small>
+        <small class="candidate-meta">${escapeHtml(style)} · ${escapeHtml(when)} · ${snapshotLabel}${candidate.automaticSupportsStale ? ' · supports need review' : ''}</small>
         <div class="candidate-actions">
           <button class="candidate-action" type="button" data-candidate-action="restore">Restore</button>
           <button class="candidate-action" type="button" data-candidate-action="duplicate">Duplicate</button>

@@ -1,13 +1,14 @@
 import { assertMask, createMask } from "./mask.js";
 import { validateBridge } from "./bridges.js";
+import { CANDIDATE_PAYLOAD_VERSION } from "./candidates.js";
 
 export const PROJECT_SCHEMA = "stencil-cnc.project";
-export const PROJECT_VERSION = 1;
+export const PROJECT_VERSION = 2;
 
 /**
  * @typedef {object} StencilProject
  * @property {'stencil-cnc.project'} schema
- * @property {1} version
+ * @property {2} version
  * @property {string | null} id
  * @property {string} name
  * @property {'mm'} units
@@ -174,6 +175,12 @@ export function migrateProject(input) {
       },
       raster: project.raster ?? { sourceMask: project.sourceMask ?? null },
     });
+  } else if (version === 1) {
+    // Version 2 makes complete candidate snapshots part of the persistence
+    // contract. Raising the outer version prevents an older offline client
+    // from opening a newer project and silently dropping candidate repair
+    // layers when it next serializes the project.
+    project.version = PROJECT_VERSION;
   }
   return project;
 }
@@ -307,6 +314,22 @@ function normalizeEditor(editor) {
   const normalizePaint = (values) => Array.isArray(values)
     ? values.filter((value) => Number.isInteger(value) && value >= 0)
     : [];
+  const normalizeRepairLayer = (input, { nullable = false } = {}) => {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return nullable ? null : {
+        keep: [], remove: [], enabled: true, stale: false, summary: null,
+      };
+    }
+    return {
+      keep: normalizePaint(input.keep),
+      remove: normalizePaint(input.remove),
+      enabled: input.enabled !== false,
+      stale: input.stale === true,
+      summary: input.summary && typeof input.summary === "object" && !Array.isArray(input.summary)
+        ? cloneJson(input.summary)
+        : null,
+    };
+  };
   const candidateInput = editor.candidates ?? [];
   if (!Array.isArray(candidateInput)) throw new TypeError("editor.candidates must be an array");
   if (candidateInput.length > 8) throw new RangeError("editor.candidates cannot contain more than 8 entries");
@@ -319,19 +342,41 @@ function normalizeEditor(editor) {
     const candidateControls = candidate.controls && typeof candidate.controls === "object" && !Array.isArray(candidate.controls)
       ? cloneJson(candidate.controls)
       : {};
+    const candidateStyleSettings = candidate.styleSettings && typeof candidate.styleSettings === "object" &&
+      !Array.isArray(candidate.styleSettings) ? cloneJson(candidate.styleSettings) : {};
+    const payloadVersion = candidate.payloadVersion ?? 1;
+    if (!Number.isInteger(payloadVersion) || payloadVersion < 1 || payloadVersion > CANDIDATE_PAYLOAD_VERSION) {
+      throw new RangeError(`Unsupported editor.candidates[${index}].payloadVersion: ${payloadVersion}`);
+    }
+    const geometryInput = candidate.geometry && typeof candidate.geometry === "object" &&
+      !Array.isArray(candidate.geometry) ? candidate.geometry : null;
     return {
+      payloadVersion,
       id: requiredString(candidate.id, `editor.candidates[${index}].id`),
       name: requiredString(candidate.name, `editor.candidates[${index}].name`),
       createdAt: nullableString(candidate.createdAt ?? null, `editor.candidates[${index}].createdAt`),
       controls: candidateControls,
+      styleSettings: candidateStyleSettings,
       baseMask,
       painted: {
         keep: normalizePaint(candidate.painted?.keep),
         remove: normalizePaint(candidate.painted?.remove),
       },
+      paintedFor: nullableString(candidate.paintedFor ?? null, `editor.candidates[${index}].paintedFor`),
+      manufacturingRepairs: normalizeRepairLayer(candidate.manufacturingRepairs, { nullable: true }),
       bridges: (candidate.bridges ?? []).map((bridge, bridgeIndex) => (
         normalizeProjectBridge(bridge, bridgeIndex)
       )),
+      geometry: geometryInput ? {
+        sourceRasterKey: nullableString(
+          geometryInput.sourceRasterKey ?? null,
+          `editor.candidates[${index}].geometry.sourceRasterKey`,
+        ),
+        designFingerprint: nullableString(
+          geometryInput.designFingerprint ?? null,
+          `editor.candidates[${index}].geometry.designFingerprint`,
+        ),
+      } : null,
       thumbnail: nullableString(candidate.thumbnail ?? null, `editor.candidates[${index}].thumbnail`),
       automaticSupportsStale: candidate.automaticSupportsStale === true,
     };
@@ -348,17 +393,7 @@ function normalizeEditor(editor) {
       keep: normalizePaint(editor.painted?.keep),
       remove: normalizePaint(editor.painted?.remove),
     },
-    manufacturingRepairs: {
-      keep: normalizePaint(editor.manufacturingRepairs?.keep),
-      remove: normalizePaint(editor.manufacturingRepairs?.remove),
-      enabled: editor.manufacturingRepairs?.enabled !== false,
-      stale: editor.manufacturingRepairs?.stale === true,
-      summary: editor.manufacturingRepairs?.summary &&
-        typeof editor.manufacturingRepairs.summary === "object" &&
-        !Array.isArray(editor.manufacturingRepairs.summary)
-        ? cloneJson(editor.manufacturingRepairs.summary)
-        : null,
-    },
+    manufacturingRepairs: normalizeRepairLayer(editor.manufacturingRepairs),
     candidates,
     selectedCandidateId: nullableString(editor.selectedCandidateId ?? null, "editor.selectedCandidateId"),
     automaticSupportsStale: editor.automaticSupportsStale === true,

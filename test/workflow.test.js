@@ -38,6 +38,14 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   }
   assert.match(editor, /const CANDIDATE_LIMIT = 8/);
   assert.match(editor, /baseMask: encodeMask\(state\.baseMask\)/);
+  assert.match(editor, /payloadVersion: CANDIDATE_PAYLOAD_VERSION/);
+  assert.match(editor, /manufacturingRepairs: \{/);
+  assert.match(editor, /designFingerprint: maskFingerprint\(state\.designMask\)/);
+  assert.match(editor, /preserveManufacturingRepairs: completePayload/);
+  assert.match(editor, /restored exactly\. Revalidate before export/);
+  assert.match(editor, /legacy candidate saved before repair layers were captured/);
+  assert.match(editor, /function restoreCandidate[\s\S]*?refresh\(\{ immediate: true, preserveManufacturingRepairs: completePayload \}\)[\s\S]*?pushHistory\(\)[\s\S]*?\n}\n\nfunction duplicateCandidate/);
+  assert.match(editor, /function refresh\([\s\S]*?invalidateValidation\(/);
 });
 
 test('server-backed project management is searchable, recoverable, and offline safe', () => {

@@ -39,10 +39,11 @@ This repository now contains a local, undeployed first increment:
 - **K02 — implemented, real-browser acceptance pending.** Browser databases are named by the server-verified workspace identifier. Offline startup requires a previously verified identifier. The former origin-wide database is quarantined and can only be copied into the current workspace through an explicit, reversible Projects-library action; it is never auto-uploaded. Every project API request also carries its originating workspace identity; the server rejects a stale tab after another tab changes the authentication cookie. A fresh-browser Chromium check verified separate A/B project stores and deliberate legacy import; HTTP integration tests verify the stale-session fence.
 - **K03 — implemented, real-browser acceptance pending.** Queued operations carry immutable IDs and workspace ownership. Server acknowledgement atomically removes only the exact operation or rebases a newer pending edit. Per-project writers use local serialization plus Web Locks where available. Actual upload/download responses provide the recorded revision. A conflict copy that cannot upload remains visibly queued. Tests now cover independent-tab serialization, an edit racing permanent deletion, tombstones, lost upload/delete responses, content-hash acknowledgement recovery, stale list metadata, and offline conflict copies. A physical two-tab/browser run plus quota and partial-cache interruption remain open.
 - **K06 — verified for the selected regression.** A solid panel in no-anchor/single-piece mode no longer receives an invented narrow-connection warning, while a real narrow-neck fixture still warns. The wider repair-count and multi-resolution matrix remains open.
-- **K01 — partial, continuing.** Fifteen JavaScript tests were added for the selected storage/sync/geometry defects. Later kerf-contract, candidate, broader browser interaction, quota, and cache-durability fixtures remain pending.
+- **K08 — implemented, real-browser acceptance pending.** New candidates use a versioned complete snapshot containing style state, manual edits, supports, manufacturing repairs, raster-coordinate provenance, and a deterministic final-geometry fingerprint. Restore preserves those layers, verifies the resulting geometry, invalidates the old validation certificate, and remains one Undo step. Version-1 projects migrate without inventing repairs for legacy candidates; those candidates are labelled as legacy recipes requiring review. The outer project schema is now version 2 so an older offline client fails safely instead of silently rewriting and truncating the new candidate payload.
+- **K01 — partial, continuing.** Twenty JavaScript tests were added for the selected storage/sync/geometry/candidate defects. Later kerf-contract, broader browser interaction, quota, and cache-durability fixtures remain pending.
 - **K09 — partial.** Permanent-delete copy now states the server-workspace/all-linked-device effect. Other truth-in-copy items remain pending.
 
-Verification after these increments: **155/155 JavaScript tests passed**, **71/71 Python tests passed**, syntax and diff checks passed, and the isolated Chromium workspace/legacy-import smoke test passed. No production server, real user library, hostname, or deployment was changed. The existing `portfolio-screenshots/` assets were left untouched.
+Verification after these increments: **160/160 JavaScript tests passed**, **71/71 Python tests passed**, syntax and diff checks passed, and the isolated Chromium workspace/legacy-import smoke test passed. No production server, real user library, hostname, or deployment was changed. The existing `portfolio-screenshots/` assets were left untouched.
 
 ## Scope and confidence
 
@@ -178,6 +179,8 @@ Candidate thumbnails are generated from final design geometry, but their saved p
 Evidence: [candidate capture](/home/opc/projects/stencil-cnc/web/editor.js:4045), [candidate restore](/home/opc/projects/stencil-cnc/web/editor.js:4095).
 
 A creative snapshot must preserve the complete appearance-producing state. Validation can be rerun after restore; silently losing visible repairs is different from invalidating a validation certificate. Add a repaired-candidate round-trip test comparing final geometry, not only controls.
+
+Local implementation status: K08 now stores the repair layer and final-geometry fingerprint, reproduces that geometry in core round-trip tests, and gives legacy candidates explicit review-required copy. A real-browser candidate save/restore acceptance pass remains open under K01.
 
 ### F6. Some physical and editing feedback is misleading — confirmed in code
 
@@ -435,10 +438,12 @@ Done when the agreed physical model produces the same dimensions in generation, 
 
 ### K08 — Restore complete creative state
 
-- [ ] Version candidate payloads to include all appearance-producing layers, including manufacturing repairs and their source/signature metadata.
-- [ ] Preserve compatibility with old candidates; never fabricate missing repairs or silently replace a candidate thumbnail with a different claimed state.
-- [ ] Compare final geometry across save → serialize → reopen → restore, and provide reversible restoration.
-- [ ] Keep validation certificates separate: invalidating an outdated certificate should not destroy the saved look.
+- [x] Version candidate payloads to include all appearance-producing layers, including manufacturing repairs and their source/signature metadata.
+- [x] Preserve compatibility with old candidates; never fabricate missing repairs or silently replace a candidate thumbnail with a different claimed state.
+- [x] Compare final geometry across save → serialize → reopen → restore, and provide reversible restoration.
+- [x] Keep validation certificates separate: invalidating an outdated certificate should not destroy the saved look.
+
+Implementation note (2026-09-16): candidate payload version 2 captures style recipes, base raster, touch-ups, raster key, supports, repair-layer state, and an FNV-1a final-mask fingerprint. Project schema version 2 protects that nested contract from older writers; project version 1 migrates additively and its candidates remain truthful legacy recipes. Restore checks the fingerprint, clears validation through the normal rebuild path, and records the restoration in history. Core tests compare final mask pixels across save/serialize/reopen reconstruction; workflow wiring tests cover restore, validation invalidation, and Undo. Browser interaction acceptance remains listed in K01.
 
 Start at `saveCurrentCandidate`, `restoreCandidate`, project encoding, and repair-layer restoration in `web/editor.js` / `web/core/project.js`.
 

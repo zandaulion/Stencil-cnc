@@ -2,12 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CANDIDATE_PAYLOAD_VERSION,
   PROJECT_SCHEMA,
   PROJECT_VERSION,
+  applyRasterLayers,
+  buildDesignMask,
   createProject,
   decodeMask,
   deserializeProject,
   encodeMask,
+  maskFingerprint,
   projectWithSourceMask,
   serializeProject,
 } from "../../web/core/index.js";
@@ -90,7 +94,7 @@ test("draft version 0 projects migrate and future versions fail safely", () => {
     threshold: 90,
     invert: true,
   }));
-  assert.equal(migrated.version, 1);
+  assert.equal(migrated.version, PROJECT_VERSION);
   assert.deepEqual(migrated.sheet, { widthMm: 200, heightMm: 120 });
   assert.equal(migrated.conversion.threshold, 90);
   assert.equal(migrated.conversion.invert, true);
@@ -100,6 +104,29 @@ test("draft version 0 projects migrate and future versions fail safely", () => {
     () => deserializeProject(JSON.stringify({ schema: PROJECT_SCHEMA, version: PROJECT_VERSION + 1 })),
     /newer than supported/,
   );
+});
+
+test("version 1 projects migrate without inventing candidate repair layers", () => {
+  const current = createProject({
+    editor: {
+      controls: {},
+      candidates: [{
+        id: "legacy-candidate",
+        name: "Legacy portrait",
+        createdAt: null,
+        controls: { cutStyle: "lamele" },
+        baseMask: encodeMask(maskFromAscii(["#."])),
+        painted: { keep: [], remove: [] },
+        bridges: [],
+      }],
+    },
+  });
+  const migrated = deserializeProject(JSON.stringify({ ...current, version: 1 }));
+
+  assert.equal(migrated.version, PROJECT_VERSION);
+  assert.equal(migrated.editor.candidates[0].payloadVersion, 1);
+  assert.equal(migrated.editor.candidates[0].manufacturingRepairs, null);
+  assert.equal(migrated.editor.candidates[0].geometry, null);
 });
 
 test("portable project files never include the browser-local source photograph", () => {
@@ -174,9 +201,90 @@ test("creative candidates round-trip as processed recipes without source photogr
   });
   assert.equal(restored.editor.candidates[0].name, "Graphic portrait 1");
   assert.deepEqual(restored.editor.candidates[0].painted, { keep: [1], remove: [4] });
+  assert.equal(restored.editor.candidates[0].payloadVersion, 1);
+  assert.equal(restored.editor.candidates[0].manufacturingRepairs, null);
+  assert.equal(restored.editor.candidates[0].geometry, null);
   assert.equal(restored.editor.selectedCandidateId, "candidate-a");
   assert.equal(serializeProject(project).includes("private.jpg"), true);
   assert.equal(serializeProject(project).includes("localSource"), false);
+});
+
+test("versioned candidates preserve repair layers and reproduce final geometry", () => {
+  const baseMask = maskFromAscii([
+    "##..",
+    ".##.",
+    "....",
+  ]);
+  const layers = {
+    painted: { keep: [2], remove: [5] },
+    manufacturingRepairs: {
+      keep: [8, 9],
+      remove: [0],
+      enabled: true,
+      stale: false,
+      summary: { strategy: "balanced", repairCount: 3 },
+    },
+  };
+  const bridges = [{
+    id: "bridge-a",
+    start: { x: 1, y: 1 },
+    end: { x: 3, y: 1 },
+    width: 3,
+    enabled: true,
+    source: "manual",
+  }];
+  const sheet = { widthMm: 40, heightMm: 30 };
+  const visibleSource = applyRasterLayers(baseMask, layers);
+  const originalDesign = buildDesignMask(visibleSource, {
+    sheet,
+    frame: { enabled: false },
+    bridges,
+  }).mask;
+  const signature = maskFingerprint(originalDesign);
+  const project = createProject({
+    sheet,
+    editor: {
+      controls: {},
+      candidates: [{
+        payloadVersion: CANDIDATE_PAYLOAD_VERSION,
+        id: "candidate-repaired",
+        name: "Repaired portrait",
+        createdAt: "2026-09-16T13:00:00.000Z",
+        controls: { cutStyle: "lamele" },
+        styleSettings: { lamele: { "style-gain": "3.2" } },
+        baseMask: encodeMask(baseMask),
+        painted: layers.painted,
+        paintedFor: "4x3",
+        manufacturingRepairs: layers.manufacturingRepairs,
+        bridges,
+        geometry: {
+          sourceRasterKey: "4x3",
+          designFingerprint: signature,
+        },
+        thumbnail: "data:image/png;base64,repaired",
+        automaticSupportsStale: false,
+      }],
+    },
+  });
+
+  const candidate = deserializeProject(serializeProject(project)).editor.candidates[0];
+  const restoredSource = applyRasterLayers(decodeMask(candidate.baseMask), {
+    painted: candidate.painted,
+    manufacturingRepairs: candidate.manufacturingRepairs,
+  });
+  const restoredDesign = buildDesignMask(restoredSource, {
+    sheet,
+    frame: { enabled: false },
+    bridges: candidate.bridges,
+  }).mask;
+
+  assert.equal(candidate.payloadVersion, CANDIDATE_PAYLOAD_VERSION);
+  assert.deepEqual(candidate.styleSettings, { lamele: { "style-gain": "3.2" } });
+  assert.equal(candidate.paintedFor, "4x3");
+  assert.deepEqual(candidate.manufacturingRepairs, layers.manufacturingRepairs);
+  assert.equal(candidate.geometry.designFingerprint, signature);
+  assert.deepEqual([...restoredDesign.data], [...originalDesign.data]);
+  assert.equal(maskFingerprint(restoredDesign), signature);
 });
 
 test("project-library summary data round-trips with the editable project", () => {
