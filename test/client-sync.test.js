@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -114,6 +115,22 @@ function lockManager() {
     },
   };
 }
+
+test('large project uploads are compressed without changing their canonical bundle', async () => {
+  const { directory, sync } = await syncHarness();
+  try {
+    const payload = JSON.stringify({
+      schema: sync.PROJECT_BUNDLE_SCHEMA,
+      project: { id: 'project-1', mask: '00110011'.repeat(600_000) },
+    });
+    const upload = await sync.prepareProjectUpload(payload, { compress: true });
+    assert.equal(upload.contentEncoding, 'gzip');
+    assert.ok(upload.uploadBytes < upload.uncompressedBytes / 20);
+    assert.equal(gunzipSync(Buffer.from(await upload.body.arrayBuffer())).toString(), payload);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('an older upload acknowledgement cannot remove a newer queued edit', async () => {
   const originalFetch = globalThis.fetch;

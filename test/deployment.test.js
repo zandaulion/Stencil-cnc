@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
+import { gzipSync } from 'node:zlib';
 
 import { AuthService, COOKIE_NAME } from '../server/auth.js';
 import { initDatabase } from '../server/db.js';
@@ -295,6 +296,24 @@ test('server projects synchronize complete encrypted bundles across linked works
   assert.equal(encryptedFile.includes(Buffer.from('Server portrait')), false);
   assert.equal(encryptedFile.includes(Buffer.from('private')), false);
 
+  const compressedBundle = {
+    ...bundle,
+    project: { ...bundle.project, name: 'Compressed server portrait' },
+  };
+  const compressed = await request(`/api/projects/${id}`, {
+    method: 'PUT',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/vnd.kerfloom.project-bundle+json',
+      'Content-Encoding': 'gzip',
+      'If-Match': '"1"',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+    },
+    body: gzipSync(JSON.stringify(compressedBundle)),
+  });
+  assert.equal(compressed.status, 200);
+  assert.equal((await compressed.json()).project.revision, 2);
+
   const listed = await request('/api/projects', { headers: {
     Cookie: linked.cookie,
     'X-Kerfloom-Workspace': linked.body.device.workspaceId,
@@ -306,27 +325,27 @@ test('server projects synchronize complete encrypted bundles across linked works
       'X-Kerfloom-Workspace': linked.body.device.workspaceId,
     },
   });
-  assert.equal(downloaded.headers.get('etag'), '"1"');
-  assert.deepEqual(await downloaded.json(), bundle);
+  assert.equal(downloaded.headers.get('etag'), '"2"');
+  assert.deepEqual(await downloaded.json(), compressedBundle);
 
   const conflict = await request(`/api/projects/${id}`, {
     method: 'PUT',
     headers: {
       Cookie: owner.cookie,
       'Content-Type': 'application/vnd.kerfloom.project-bundle+json',
-      'If-Match': '"0"',
+      'If-Match': '"1"',
       'X-Kerfloom-Workspace': owner.body.device.workspaceId,
     },
     body: JSON.stringify(bundle),
   });
   assert.equal(conflict.status, 409);
-  assert.equal((await conflict.json()).currentRevision, 1);
+  assert.equal((await conflict.json()).currentRevision, 2);
 
   const removed = await request(`/api/projects/${id}`, {
     method: 'DELETE',
     headers: {
       Cookie: linked.cookie,
-      'If-Match': '"1"',
+      'If-Match': '"2"',
       'X-Kerfloom-Workspace': linked.body.device.workspaceId,
     },
   });
@@ -338,7 +357,7 @@ test('server projects synchronize complete encrypted bundles across linked works
     },
   })).json()).projects[0];
   assert.equal(tombstone.id, id);
-  assert.equal(tombstone.revision, 2);
+  assert.equal(tombstone.revision, 3);
   assert.equal(typeof tombstone.deletedAt, 'string');
   assert.equal(tombstone.sizeBytes, 0);
   assert.equal((await request(`/api/projects/${id}/bundle`, {

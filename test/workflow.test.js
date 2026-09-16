@@ -80,6 +80,8 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(storage, /localSyncPending: record\.localSyncPending !== false/);
   assert.match(storage, /pending\.localChangeId === local\?\.localChangeId/);
   assert.match(projectSync, /export async function buildProjectBundle/);
+  assert.match(projectSync, /export async function prepareProjectUpload/);
+  assert.match(projectSync, /'Content-Encoding': upload\.contentEncoding/);
   assert.match(projectSync, /record\.localSyncPending && !pending\.has\(record\.id\)/);
   assert.match(projectSync, /!cached\?\.localSyncPending/);
   assert.match(projectSync, /export async function synchronizeProjectLibrary/);
@@ -88,6 +90,11 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(projectSync, /Offline|navigator\.onLine/);
   assert.match(html, /Encrypted server workspace/);
   assert.match(editor, /Saved to server at/);
+  const editorStartup = editor.slice(editor.indexOf('export async function startEditor'));
+  assert.ok(
+    editorStartup.indexOf('await loadLastProject()') < editorStartup.indexOf('syncWorkspaceProjects({ announce: false })'),
+    'the last local project must open before background server synchronization',
+  );
   assert.match(storage, /const \{ localSource: _localSource, \.\.\.portableProject \} = project/);
   assert.match(storage, /export async function trashProject/);
   assert.match(storage, /export async function restoreProject/);

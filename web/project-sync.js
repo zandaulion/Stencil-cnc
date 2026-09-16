@@ -18,6 +18,7 @@ import {
 export const PROJECT_BUNDLE_SCHEMA = 'stencil-cnc.share-bundle';
 export const PROJECT_BUNDLE_VERSION = 1;
 const PROJECT_CONTENT_TYPE = 'application/vnd.kerfloom.project-bundle+json';
+const COMPRESSED_UPLOAD_THRESHOLD_BYTES = 256 * 1024;
 const localOperationLocks = new Map();
 
 function blobToDataUrl(blob) {
@@ -62,6 +63,36 @@ async function sha256Text(value) {
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
+}
+
+export async function prepareProjectUpload(payload, { compress = typeof window !== 'undefined' } = {}) {
+  const source = new Blob([String(payload)], { type: PROJECT_CONTENT_TYPE });
+  const uncompressedBytes = source.size;
+  if (
+    !compress ||
+    uncompressedBytes < COMPRESSED_UPLOAD_THRESHOLD_BYTES ||
+    typeof CompressionStream !== 'function'
+  ) {
+    return { body: payload, contentEncoding: null, uncompressedBytes, uploadBytes: uncompressedBytes };
+  }
+
+  try {
+    const compressed = await new Response(
+      source.stream().pipeThrough(new CompressionStream('gzip')),
+    ).blob();
+    if (compressed.size >= uncompressedBytes) {
+      return { body: payload, contentEncoding: null, uncompressedBytes, uploadBytes: uncompressedBytes };
+    }
+    return {
+      body: compressed,
+      contentEncoding: 'gzip',
+      uncompressedBytes,
+      uploadBytes: compressed.size,
+    };
+  } catch (error) {
+    console.warn('Project upload compression failed; using the original bundle.', error);
+    return { body: payload, contentEncoding: null, uncompressedBytes, uploadBytes: uncompressedBytes };
+  }
 }
 
 async function acknowledgeMatchingUpload(operation, details) {
@@ -368,6 +399,7 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
       };
     }
 
+    const upload = await prepareProjectUpload(operation.payload);
     const response = await fetch(`/api/projects/${encodeURIComponent(operation.projectId)}`, {
       method: 'PUT',
       credentials: 'same-origin',
@@ -375,10 +407,11 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
       headers: {
         Accept: 'application/json',
         'Content-Type': PROJECT_CONTENT_TYPE,
+        ...(upload.contentEncoding ? { 'Content-Encoding': upload.contentEncoding } : {}),
         'If-Match': `"${operation.expectedRevision}"`,
         'X-Kerfloom-Workspace': operation.workspaceId,
       },
-      body: operation.payload,
+      body: upload.body,
     });
     if (!response.ok) {
       const error = await responseError(response, 'Could not save the server project');

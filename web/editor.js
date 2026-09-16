@@ -6515,15 +6515,15 @@ export async function startEditor({ device, offline = false } = {}) {
   renderCandidates();
   renderIssues([]);
 
-  // Pull server changes from this device's isolated workspace before deciding
-  // which panel to reopen. Legacy origin-wide projects remain quarantined and
-  // can only be copied in through the explicit Projects-library action.
-  if (!state.offline) await syncWorkspaceProjects({ announce: true });
+  // Reopen the complete local copy first so a slow mobile connection never
+  // blocks the editor. Server reconciliation continues safely in the background.
+  let reopenedFromCache = false;
   try {
     const previous = await loadLastProject();
     if (previous?.raster?.sourceMask) {
       await loadProjectState(previous);
-      toast('Reopened your last server-backed panel.');
+      reopenedFromCache = true;
+      toast('Reopened your last saved panel.');
     } else {
       setSaveState('saved', 'No artwork');
     }
@@ -6533,6 +6533,20 @@ export async function startEditor({ device, offline = false } = {}) {
   }
 
   await offerSharedProject();
+
+  // Legacy origin-wide projects remain quarantined and can only be copied in
+  // through the explicit Projects-library action. If this linked device has no
+  // local project yet, open the newest server project after the background pull.
+  if (!state.offline) {
+    void syncWorkspaceProjects({ announce: false }).then(async (result) => {
+      if (reopenedFromCache || result?.status !== 'synced' || state.sourceMask || state.shareBusy) return;
+      const syncedProject = await loadLastProject();
+      if (!syncedProject?.raster?.sourceMask || state.sourceMask) return;
+      await loadProjectState(syncedProject);
+      pushHistory();
+      toast('Opened your latest server project.');
+    }).catch((error) => console.error('Could not open the synchronized project:', error));
+  }
 
   pushHistory();
   window.stencilCncIsBusy = () => Boolean(
