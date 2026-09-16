@@ -17,7 +17,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and minimum-web strength.
 - Builds reversible manufacturing-repair previews before changing the artwork.
-- Saves projects and creative candidates locally in the browser, with a searchable project library, recoverable Trash, and recent recovery points.
+- Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
 - Exports validated geometry as SVG, DXF, or a shareable PNG.
 - Runs as an installable, offline-capable PWA after an authorised device has loaded it.
@@ -39,11 +39,11 @@ The default panel is 1250 × 2500 mm. The default plasma profile requires a 2 mm
 
 ## Project library
 
-Select **Projects** in the desktop header or the permanent mobile Tools bar to browse every panel stored in the current browser. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is still available on the device. Projects can be opened, renamed, duplicated, downloaded, shared, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
+Select **Projects** in the desktop header or the permanent mobile Tools bar to browse the encrypted server workspace. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is included. Projects can be opened, renamed, duplicated, downloaded, shared, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
 
-Autosave reports `Saving…`, the local save time, or a retry action if storage fails. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate local save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
+Autosave reports `Saving…`, `Saved to server`, an offline queued state, or a retry action if synchronization fails. Every change is written to IndexedDB first and placed in a durable upload queue; the UI reports a server save only after the server acknowledges the revision. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
 
-Recovery points and portable `.stencil.json` downloads contain the editable processed geometry and settings, but never the browser-local source photograph. A restored recovery point reuses the photograph only when that source is still available in the same browser project.
+The canonical encrypted package contains the editable geometry, original photograph, candidates, supports, repairs, recovery points, and retained SVG, DXF, and PNG exports. Portable `.stencil.json` downloads intentionally omit the source photograph.
 
 ### Private project sharing
 
@@ -51,19 +51,20 @@ Select **Share** on a project card to create a server-hosted snapshot. The share
 
 Share packages are encrypted at rest and protected by a random secret that appears only in the link and the creating browser. A recipient must open that link on an invited Kerfloom device. The first recipient device claims the snapshot and can import an independent editable local copy. Shares expire after 7, 30, or 90 days and the owner can revoke them from the same project's Share dialog. Revocation prevents another download but cannot erase a copy the recipient already imported.
 
-Sharing does not turn on cloud autosave or synchronization. Normal work remains device-only, and neither copy changes when the other person edits theirs.
+Sharing creates an independent copy for the recipient. It does not grant access to the owner's live server project, and neither copy changes when the other person edits theirs.
 
 ## Architecture
 
 ```text
 Browser PWA
-├── editor state, IndexedDB projects, canvas previews
+├── editor state, offline IndexedDB cache and durable sync outbox
 ├── deterministic geometry core (masks, topology, repair, export)
-└── authenticated requests for photographic styles
+└── authenticated project synchronization and photographic styles
           │
           ▼
 Node / Express service
 ├── invite-based device access
+├── isolated workspaces and encrypted canonical project bundles
 ├── encrypted, expiring project-share packages
 ├── static PWA and protected editor modules
 └── private proxy to the analysis service
@@ -103,6 +104,7 @@ Start the web service in another terminal. Use a newly generated development-onl
 
 ```bash
 ADMIN_TOKEN="$(openssl rand -hex 32)" \
+PROJECT_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
 ANALIZA_URL="http://127.0.0.1:8000" \
 DATA_DIR="$PWD/data" \
 BIND_HOST="127.0.0.1" \
@@ -149,14 +151,16 @@ See [deploy/README.md](deploy/README.md) for the complete Caddy, tunnel, invite-
 ## Privacy and security
 
 - Original photographs and generated previews are ignored by Git by default.
-- Browser projects stay in local IndexedDB; portable project files omit the private source photograph.
-- Server upload happens only when the user explicitly creates a private project link.
+- Complete projects are encrypted at rest in an isolated server workspace; IndexedDB is an offline cache and durable upload queue.
+- Original photographs, recovery points, and retained exports are included in canonical server packages. Portable project downloads still omit the photograph.
+- Revision checks prevent one device from silently overwriting another; a conflicting edit is preserved as a separate project.
 - Share secrets are stored as hashes on the server; encrypted bundle files live under the private data volume and are removed after revocation or expiry cleanup.
 - Invite redemption stores a random device credential only in a secure, host-only, HttpOnly cookie.
 - Server-side device records contain token hashes rather than plaintext credentials.
 - The Python analysis service is not exposed publicly.
 - Administration requires a separately configured secret and fails closed when it is absent.
 - Revocation takes effect on the next online request. Already cached offline application data cannot be remotely erased from a disconnected device.
+- Backups must include the SQLite database, the entire `/data/projects` directory, and the active project encryption key. Restore procedures should be tested regularly.
 
 Never commit `.env` files, the runtime `data/` directory, database files, photographs, generated previews, certificates, private keys, or real invite/admin credentials. The repository's [.gitignore](.gitignore) excludes these by default.
 

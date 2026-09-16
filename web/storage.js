@@ -1,9 +1,10 @@
 const DB_NAME = 'stencil-cnc';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const PROJECT_STORE = 'projects';
 const META_STORE = 'meta';
 const CHECKPOINT_STORE = 'checkpoints';
 const ARTIFACT_STORE = 'artifacts';
+const SYNC_STORE = 'projectSync';
 const CHECKPOINT_LIMIT = 10;
 const ARTIFACT_LIMIT = 30;
 
@@ -29,6 +30,10 @@ function openDatabase() {
         const artifacts = db.createObjectStore(ARTIFACT_STORE, { keyPath: 'id' });
         artifacts.createIndex('projectId', 'projectId');
         artifacts.createIndex('createdAt', 'createdAt');
+      }
+      if (!db.objectStoreNames.contains(SYNC_STORE)) {
+        const sync = db.createObjectStore(SYNC_STORE, { keyPath: 'projectId' });
+        sync.createIndex('queuedAt', 'queuedAt');
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -69,6 +74,14 @@ export async function saveProject(record, { makeCurrent = true } = {}) {
   await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   if (makeCurrent) await setLastProject(value.id);
   return value;
+}
+
+/** Update the browser cache without changing the project's canonical timestamps. */
+export async function cacheProject(record, { makeCurrent = false } = {}) {
+  if (!record?.id) throw new TypeError('A project identifier is required');
+  await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(record)));
+  if (makeCurrent) await setLastProject(record.id);
+  return record;
 }
 
 export async function setLastProject(id) {
@@ -113,6 +126,54 @@ export async function deleteProject(id) {
   }
   const meta = await transaction(META_STORE, 'readonly', (store) => requestResult(store.get('lastProjectId')));
   if (meta?.value === id) await clearLastProject();
+}
+
+export async function clearProjectAssets(id) {
+  const checkpoints = await listCheckpoints(id);
+  for (const checkpoint of checkpoints) {
+    await transaction(CHECKPOINT_STORE, 'readwrite', (store) => requestResult(store.delete(checkpoint.id)));
+  }
+  const artifacts = await listArtifacts(id);
+  for (const artifact of artifacts) {
+    await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.delete(artifact.id)));
+  }
+}
+
+export async function putProjectSync(operation) {
+  if (!operation?.projectId || !['put', 'delete'].includes(operation.kind)) {
+    throw new TypeError('A valid project sync operation is required');
+  }
+  const value = {
+    ...operation,
+    projectId: String(operation.projectId),
+    queuedAt: operation.queuedAt || new Date().toISOString(),
+  };
+  await transaction(SYNC_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  return value;
+}
+
+export async function loadProjectSync(projectId) {
+  if (!projectId) return null;
+  return transaction(SYNC_STORE, 'readonly', (store) => requestResult(store.get(projectId)));
+}
+
+export async function listProjectSync() {
+  const rows = await transaction(SYNC_STORE, 'readonly', (store) => requestResult(store.getAll()));
+  return rows.sort((a, b) => String(a.queuedAt).localeCompare(String(b.queuedAt)));
+}
+
+export async function deleteProjectSync(projectId) {
+  if (!projectId) return;
+  await transaction(SYNC_STORE, 'readwrite', (store) => requestResult(store.delete(projectId)));
+}
+
+export async function setStorageMeta(key, value) {
+  await transaction(META_STORE, 'readwrite', (store) => requestResult(store.put({ key, value })));
+}
+
+export async function loadStorageMeta(key) {
+  const row = await transaction(META_STORE, 'readonly', (store) => requestResult(store.get(key)));
+  return row?.value;
 }
 
 export async function updateProject(id, changes) {

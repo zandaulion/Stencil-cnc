@@ -56,7 +56,7 @@
 
       <div class="gate-assurance">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s8-3.5 8-10V5l-8-3-8 3v6c0 6.5 8 10 8 10Z"></path><path d="m9 11 2 2 4-4"></path></svg>
-        <span><strong>Private by default</strong>Your photos and projects stay on this machine.</span>
+        <span><strong>Private by default</strong>Your complete projects are encrypted in your server workspace.</span>
       </div>
     </section>
     <aside class="gate-visual" aria-label="Stencil design preview">
@@ -107,9 +107,9 @@
       <div class="project-identity">
         <label class="visually-hidden" for="project-name">Project name</label>
         <input id="project-name" name="projectName" value="Untitled stencil" autocomplete="off" spellcheck="false">
-        <button class="save-state" id="save-state" type="button" data-state="saved" title="Project is saved locally">
+        <button class="save-state" id="save-state" type="button" data-state="saved" title="Project is saved to the server">
           <span class="status-dot" aria-hidden="true"></span>
-          <span id="save-state-label" aria-live="polite">Saved locally</span>
+          <span id="save-state-label" aria-live="polite">Saved to server</span>
         </button>
       </div>
 
@@ -1253,7 +1253,7 @@
     <section class="project-library-shell">
       <header class="project-library-header">
         <div>
-          <span class="eyebrow">Stored privately on this device</span>
+          <span class="eyebrow">Encrypted server workspace</span>
           <h2 id="project-library-title">Projects</h2>
         </div>
         <button class="icon-button" id="btn-close-projects" type="button" aria-label="Close projects" title="Close">
@@ -1296,7 +1296,7 @@
       </div>
 
       <footer class="project-library-footer">
-        Original photographs remain in this browser unless you explicitly create an encrypted server share. Downloaded project files always omit them.
+        Complete projects, original photographs, recovery points, and retained exports are encrypted on the server. This device keeps an offline cache and upload queue.
       </footer>
     </section>
   </dialog>

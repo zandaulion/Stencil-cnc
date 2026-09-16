@@ -69,6 +69,15 @@ import {
   trashProject,
   updateProject,
 } from '/storage.js';
+import {
+  buildProjectBundle,
+  deleteServerProject,
+  pendingProjectSyncCount,
+  PROJECT_BUNDLE_SCHEMA,
+  PROJECT_BUNDLE_VERSION,
+  synchronizeProjectLibrary,
+  syncProject,
+} from '/project-sync.js';
 
 /* ------------------------------------------------------------------ state */
 
@@ -83,8 +92,8 @@ const PLASMA_MIN_OPENING_MM = 2;
 const PLASMA_MIN_WEB_MM = 3;
 const UNDO_DEPTH = 40;
 const CANDIDATE_LIMIT = 8;
-const SHARE_BUNDLE_SCHEMA = 'stencil-cnc.share-bundle';
-const SHARE_BUNDLE_VERSION = 1;
+const SHARE_BUNDLE_SCHEMA = PROJECT_BUNDLE_SCHEMA;
+const SHARE_BUNDLE_VERSION = PROJECT_BUNDLE_VERSION;
 const MANUAL_ONLY_STYLES = new Set(['icoana']);
 const PANEL_SIZE_PRESETS = Object.freeze({
   a0: Object.freeze({ widthMm: 841, heightMm: 1189 }),
@@ -137,6 +146,7 @@ const state = {
   device: null,
   offline: false,
   projectId: null,
+  serverRevision: 0,
   createdAt: null,
   name: 'Untitled panel',
   stage: 'prepare',
@@ -2647,14 +2657,20 @@ function setSaveState(kind, label) {
   badge.dataset.state = kind;
   text.textContent = label;
   badge.title = kind === 'error'
-    ? 'Local save failed. Select to try again.'
+    ? 'Server synchronization needs attention. Select to retry.'
     : label;
 }
 
 function savedAtLabel(value = new Date()) {
-  return `Saved locally at ${new Intl.DateTimeFormat(undefined, {
+  return `Saved to server at ${new Intl.DateTimeFormat(undefined, {
     hour: '2-digit', minute: '2-digit',
   }).format(value)}`;
+}
+
+function cachedAtLabel() {
+  return navigator.onLine
+    ? 'Saved locally — waiting for server'
+    : 'Offline — changes queued';
 }
 
 function scheduleSave() {
@@ -2738,21 +2754,42 @@ async function persist() {
   }
   const generation = dirtyGeneration;
   const operation = (async () => {
-    // The original image is kept as a browser-local Blob so an automatic PWA
-    // refresh does not turn an editable photograph into frozen geometry. It is
-    // deliberately outside the portable project schema: project downloads do
-    // not contain the private photograph, and nothing sends it to the web app.
     const record = {
       ...projectFromState(),
       localSource: state.source?.file ?? null,
+      serverRevision: state.serverRevision,
     };
-    const saved = await saveProject(record);
+    let saved = await saveProject(record);
     state.projectId = saved.id;
     state.createdAt = saved.createdAt;
     lastSavedRecord = saved;
+    let syncResult;
+    try {
+      syncResult = await syncProject(saved);
+      if (syncResult.projectId !== saved.id) {
+        saved = await loadProject(syncResult.projectId) || saved;
+        state.projectId = syncResult.projectId;
+        state.name = syncResult.name || saved.name;
+        el('project-name').value = state.name;
+        toast(syncResult.message);
+      } else {
+        saved = await loadProject(saved.id) || saved;
+      }
+      state.serverRevision = Number(saved.serverRevision) || 0;
+      lastSavedRecord = saved;
+    } catch (error) {
+      console.error('Server project synchronization failed:', error);
+      syncResult = { status: 'error' };
+    }
     if (generation === dirtyGeneration) {
       state.dirty = false;
-      setSaveState('saved', savedAtLabel(new Date(saved.updatedAt)));
+      if (syncResult.status === 'synced' || syncResult.status === 'conflict') {
+        setSaveState('saved', savedAtLabel(new Date(saved.serverSyncedAt || Date.now())));
+      } else if (syncResult.status === 'queued') {
+        setSaveState('saving', cachedAtLabel());
+      } else {
+        setSaveState('error', 'Server sync failed — Retry');
+      }
     } else {
       scheduleSave();
     }
@@ -2764,8 +2801,8 @@ async function persist() {
   } catch (error) {
     console.error(error);
     state.dirty = true;
-    setSaveState('error', 'Save failed — Retry');
-    toast('Could not save locally. Your current work remains open.');
+    setSaveState('error', 'Local cache failed — Retry');
+    toast('Could not cache this project. Your current work remains open.');
     return null;
   } finally {
     if (saveInFlight === operation) saveInFlight = null;
@@ -2780,6 +2817,63 @@ async function flushPendingSave() {
   return !state.dirty;
 }
 
+let workspaceSyncInFlight = null;
+async function syncWorkspaceProjects({ announce = false } = {}) {
+  if (workspaceSyncInFlight) return workspaceSyncInFlight;
+  if (!navigator.onLine) {
+    state.offline = true;
+    setSaveState('saving', cachedAtLabel());
+    return { status: 'offline' };
+  }
+  state.offline = false;
+  const operation = (async () => {
+    const activeProjectId = state.projectId;
+    const activeServerRevision = state.serverRevision;
+    if (state.dirty) await persist();
+    const result = await synchronizeProjectLibrary(({ completed, total, message }) => {
+      if (announce || total > 1) {
+        setSaveState('saving', total
+          ? `Syncing projects ${Math.min(completed + 1, total)}/${total}…`
+          : message || 'Syncing projects…');
+      }
+    });
+    const current = state.projectId ? await loadProject(state.projectId) : null;
+    if (current?.serverRevision) {
+      const changedElsewhere = activeProjectId === state.projectId &&
+        activeServerRevision > 0 && current.serverRevision > activeServerRevision;
+      if (changedElsewhere && state.sourceMask && !state.dirty) {
+        await loadProjectState(current);
+        pushHistory();
+        toast('This project was updated from another device.');
+      } else {
+        state.serverRevision = current.serverRevision;
+        lastSavedRecord = current;
+        setSaveState('saved', savedAtLabel(new Date(current.serverSyncedAt || Date.now())));
+      }
+    } else if (result.deleted?.includes(activeProjectId) && state.sourceMask) {
+      setSaveState('error', 'Deleted on another device — edit to save a copy');
+      toast('This open project was deleted on another device. A new edit will be preserved as a separate copy.');
+    } else if (result.queued) {
+      setSaveState('saving', `${result.queued} changes waiting for server`);
+    } else if (!state.sourceMask) {
+      setSaveState('saved', 'Server workspace synchronized');
+    }
+    if (result.conflicts) toast(`${result.conflicts} edit conflict saved as a separate project.`);
+    return result;
+  })();
+  workspaceSyncInFlight = operation;
+  try {
+    return await operation;
+  } catch (error) {
+    console.error('Workspace synchronization failed:', error);
+    setSaveState('error', 'Server sync failed — Retry');
+    if (announce) toast('Projects remain safely cached and will retry when the server is available.');
+    return { status: 'error', error };
+  } finally {
+    if (workspaceSyncInFlight === operation) workspaceSyncInFlight = null;
+  }
+}
+
 async function createRecoveryPoint(label) {
   if (!state.sourceMask) return false;
   try {
@@ -2787,6 +2881,7 @@ async function createRecoveryPoint(label) {
     const project = await loadProject(state.projectId);
     if (!project) return false;
     await saveCheckpoint(project, label);
+    await syncProject(project);
     return true;
   } catch (error) {
     console.warn('Could not create a local recovery point:', error);
@@ -2935,7 +3030,9 @@ function buildProjectCard(record) {
     formatProjectDate(record.updatedAt),
     `${record.sheet.widthMm} × ${record.sheet.heightMm} mm`,
     CUT_STYLE_NAMES[style] || style,
-    sourceSize ? `Source on device · ${sourceSize}` : 'Processed geometry only',
+    sourceSize
+      ? `${record.serverRevision ? 'Source on server' : 'Source queued'} · ${sourceSize}`
+      : 'Processed geometry only',
   ]) {
     const span = document.createElement('span');
     span.textContent = value;
@@ -3015,20 +3112,17 @@ async function refreshProjectLibrary() {
     tab.setAttribute('aria-selected', String(selected));
   }
   if (el('project-status-filter')) el('project-status-filter').disabled = projectLibraryView === 'trash';
-  try {
-    const estimate = await navigator.storage?.estimate?.();
-    el('project-storage-summary').textContent = estimate?.usage
-      ? `${formatStorage(estimate.usage)} used by this site`
-      : 'Stored locally';
-  } catch {
-    el('project-storage-summary').textContent = 'Stored locally';
-  }
+  const queued = await pendingProjectSyncCount();
+  el('project-storage-summary').textContent = queued
+    ? `${queued} ${queued === 1 ? 'change' : 'changes'} waiting to sync`
+    : navigator.onLine ? 'Encrypted server storage · synchronized' : 'Offline cache · synchronized';
   renderProjectLibrary();
 }
 
 async function openProjectLibrary({ flush = true } = {}) {
   if (flush && !await flushPendingSave()) return;
   try {
+    if (navigator.onLine) await syncWorkspaceProjects();
     await refreshProjectLibrary();
     const dialog = el('project-library-dialog');
     if (!dialog?.open) {
@@ -3038,7 +3132,7 @@ async function openProjectLibrary({ flush = true } = {}) {
     requestAnimationFrame(() => el('project-search')?.focus());
   } catch (error) {
     console.error(error);
-    toast('The local project library could not be opened on this device.');
+    toast('The project library could not be opened.');
   }
 }
 
@@ -3063,7 +3157,9 @@ async function openStoredProject(id) {
   await loadProjectState(project);
   await setLastProject(project.id);
   state.dirty = false;
-  setSaveState('saved', savedAtLabel(new Date(project.updatedAt)));
+  setSaveState(project.serverRevision ? 'saved' : 'saving', project.serverRevision
+    ? savedAtLabel(new Date(project.serverSyncedAt || project.updatedAt))
+    : cachedAtLabel());
   closeProjectLibrary();
   pushHistory();
   toast(`Opened “${project.name}”.`);
@@ -3140,14 +3236,18 @@ async function handleProjectAction(action, record) {
     let suffix = 2;
     while (names.has(name)) name = `${record.name} copy ${suffix++}`;
     const { checkpointCount: _checkpointCount, ...original } = record;
-    await saveProject({
+    const duplicate = await saveProject({
       ...original,
       id: null,
+      serverRevision: 0,
+      serverSyncedAt: null,
+      serverSha256: null,
       name,
       createdAt: null,
       updatedAt: null,
       trashedAt: null,
     }, { makeCurrent: false });
+    await syncProject(duplicate);
     await refreshProjectLibrary();
     toast(`Duplicated as “${name}”.`);
     return;
@@ -3166,7 +3266,8 @@ async function handleProjectAction(action, record) {
     return;
   }
   if (action === 'restore') {
-    await restoreProject(record.id);
+    const restored = await restoreProject(record.id);
+    await syncProject(restored);
     projectLibraryView = 'active';
     await refreshProjectLibrary();
     toast(`Restored “${record.name}”.`);
@@ -3183,7 +3284,8 @@ async function handleProjectAction(action, record) {
       return;
     }
     if (record.id === state.projectId && !await flushPendingSave()) return;
-    await trashProject(record.id);
+    const trashed = await trashProject(record.id);
+    await syncProject(trashed);
     if (record.id === state.projectId) {
       location.reload();
       return;
@@ -3200,6 +3302,12 @@ async function handleProjectAction(action, record) {
       'Delete forever',
     )) {
       await openProjectLibrary({ flush: false });
+      return;
+    }
+    const deletion = await deleteServerProject(record);
+    if (deletion.status === 'conflict') {
+      await refreshProjectLibrary();
+      toast(deletion.message);
       return;
     }
     await deleteProject(record.id);
@@ -3254,44 +3362,7 @@ async function requestShareJson(path, options = {}) {
 }
 
 async function buildShareBundle(record) {
-  const [checkpoints, artifacts] = await Promise.all([
-    listCheckpoints(record.id),
-    listArtifacts(record.id),
-  ]);
-  const sourceBlob = record.localSource instanceof Blob && record.localSource.size
-    ? record.localSource
-    : null;
-  const sourceType = sourceBlob?.type || record.source?.mimeType || 'image/jpeg';
-  const typedSource = sourceBlob && sourceBlob.type
-    ? sourceBlob
-    : sourceBlob ? new Blob([sourceBlob], { type: sourceType }) : null;
-  const source = typedSource ? {
-    name: record.source?.name || 'source-image',
-    mimeType: sourceType,
-    size: typedSource.size,
-    dataUrl: await blobToDataUrl(typedSource),
-  } : null;
-  const encodedArtifacts = await Promise.all(artifacts.map(async (artifact) => ({
-    filename: artifact.filename,
-    kind: artifact.kind,
-    mimeType: artifact.mimeType,
-    createdAt: artifact.createdAt,
-    dataUrl: await blobToDataUrl(artifact.blob),
-  })));
-  return {
-    schema: SHARE_BUNDLE_SCHEMA,
-    version: SHARE_BUNDLE_VERSION,
-    createdAt: new Date().toISOString(),
-    clientProjectId: record.id,
-    project: JSON.parse(serializeProject(record)),
-    source,
-    checkpoints: checkpoints.map((checkpoint) => ({
-      label: checkpoint.label,
-      createdAt: checkpoint.createdAt,
-      project: checkpoint.project,
-    })),
-    artifacts: encodedArtifacts,
-  };
+  return buildProjectBundle(record);
 }
 
 function shareLink(id, token) {
@@ -3518,6 +3589,8 @@ async function importReceivedShare() {
         blob: dataUrlToBlob(artifact.dataUrl),
       });
     }
+    await syncProject(saved);
+    saved = await loadProject(saved.id) || saved;
     styleAbort?.abort();
     await loadProjectState(saved);
     await setLastProject(saved.id);
@@ -3527,7 +3600,7 @@ async function importReceivedShare() {
     receivedShare = null;
     history.replaceState({}, document.title, '/');
     pushHistory();
-    toast('Shared project imported as a complete editable local copy.');
+    toast('Shared project imported as a complete editable server project.');
   } catch (error) {
     console.error(error);
     if (saved?.id) await deleteProject(saved.id).catch(() => {});
@@ -3609,6 +3682,7 @@ async function loadProjectState(project, { imported = false } = {}) {
     rememberStyleSettings(state.activeStyle);
   }
   state.projectId = imported ? null : project.id;
+  state.serverRevision = imported ? 0 : Number(project.serverRevision) || 0;
   state.createdAt = imported ? null : project.createdAt;
   state.name = project.name || 'Untitled panel';
   state.lastValidatedAt = project.editor?.projectSummary?.lastValidatedAt ?? null;
@@ -3673,7 +3747,7 @@ async function loadProjectState(project, { imported = false } = {}) {
   }
   el('source-name').textContent = project.source?.name || 'Restored processed artwork';
   el('source-meta').textContent = state.source
-    ? `${state.source.originalWidth} × ${state.source.originalHeight} · restored from this browser`
+    ? `${state.source.originalWidth} × ${state.source.originalHeight} · encrypted server copy available`
     : 'Processed geometry · re-import the photograph to change its style';
   if (state.baseMask) rebuildSource();
   rebuildDesign();
@@ -3689,9 +3763,11 @@ async function loadProjectState(project, { imported = false } = {}) {
   renderCandidates();
   selectBridge(null);
   resetHistory();
-  setSaveState(imported ? 'saving' : 'saved', imported
-    ? 'Saving as a new project…'
-    : savedAtLabel(new Date(project.updatedAt ?? Date.now())));
+  setSaveState(imported ? 'saving' : project.serverRevision ? 'saved' : 'saving', imported
+    ? 'Saving as a new server project…'
+    : project.serverRevision
+      ? savedAtLabel(new Date(project.serverSyncedAt ?? project.updatedAt ?? Date.now()))
+      : cachedAtLabel());
   if (state.source && state.mode === 'line-art' && !state.offline) void renderStyle();
 }
 
@@ -4810,8 +4886,10 @@ async function exportGeometry(kind) {
           mimeType: blob.type,
           blob,
         });
+        const withArtifact = await loadProject(state.projectId);
+        if (withArtifact) await syncProject(withArtifact);
       } catch (artifactError) {
-        console.warn('The downloaded export could not be retained with the local project:', artifactError);
+        console.warn('The downloaded export could not be retained with the server project:', artifactError);
       }
     }
     toast(`${kind.toUpperCase()} written.`);
@@ -5640,6 +5718,7 @@ function wire() {
   el('btn-library-new-project')?.addEventListener('click', () => void startNewProject());
   el('save-state')?.addEventListener('click', () => {
     if (state.dirty) void flushPendingSave();
+    else void syncWorkspaceProjects({ announce: true });
   });
   for (const id of ['btn-projects', 'btn-projects-mobile']) {
     el(id)?.addEventListener('click', () => void openProjectLibrary());
@@ -5727,7 +5806,8 @@ function wire() {
     if (event.currentTarget.returnValue === 'confirm' && id) {
       const name = el('rename-project-input').value.trim();
       if (name) {
-        await updateProject(id, { name });
+        const renamed = await updateProject(id, { name });
+        await syncProject(renamed);
         if (id === state.projectId) {
           state.name = name;
           el('project-name').value = name;
@@ -5777,10 +5857,16 @@ function wire() {
       createdAt: current.createdAt,
       localSource: current.localSource ?? null,
       trashedAt: null,
+      serverRevision: current.serverRevision || 0,
     });
+    await syncProject(restored);
     styleAbort?.abort();
     await loadProjectState(restored);
-    setSaveState('saved', savedAtLabel(new Date(restored.updatedAt)));
+    const syncedRestore = await loadProject(restored.id) || restored;
+    state.serverRevision = Number(syncedRestore.serverRevision) || 0;
+    setSaveState(syncedRestore.serverRevision ? 'saved' : 'saving', syncedRestore.serverRevision
+      ? savedAtLabel(new Date(syncedRestore.serverSyncedAt || Date.now()))
+      : cachedAtLabel());
     pushHistory();
     toast(`Restored “${checkpoint.label}”.`);
   });
@@ -6165,7 +6251,7 @@ function updateRangeOutputs() {
 
 export async function startEditor({ device, offline = false } = {}) {
   state.device = device;
-  state.offline = offline;
+  state.offline = offline || !navigator.onLine;
 
   wire();
   enforcePlasmaLimits();
@@ -6182,27 +6268,35 @@ export async function startEditor({ device, offline = false } = {}) {
   renderCandidates();
   renderIssues([]);
 
-  // A panel left open yesterday should still be there. Only the settings and
-  // the source mask come back -- the photograph itself never left the machine
-  // and is not ours to keep.
+  // Pull server changes and migrate every legacy browser-only project before
+  // deciding which panel to reopen. IndexedDB remains the offline cache.
+  if (!state.offline) await syncWorkspaceProjects({ announce: true });
   try {
     const previous = await loadLastProject();
     if (previous?.raster?.sourceMask) {
       await loadProjectState(previous);
-      toast('Reopened your last panel.');
+      toast('Reopened your last server-backed panel.');
     } else {
       setSaveState('saved', 'No artwork');
     }
   } catch (error) {
     console.error(error);
-    setSaveState('error', 'Could not open local project');
+    setSaveState('error', 'Could not open cached project');
   }
 
   await offerSharedProject();
 
   pushHistory();
   window.stencilCncIsBusy = () => Boolean(
-    state.dirty || state.styleBusy || state.shareBusy || rebuildTimer || saveTimer || styleTimer,
+    state.dirty || state.styleBusy || state.shareBusy || workspaceSyncInFlight || rebuildTimer || saveTimer || styleTimer,
   );
   window.addEventListener('resize', () => fitToView());
+  window.addEventListener('offline', () => {
+    state.offline = true;
+    if (state.projectId) setSaveState('saving', 'Offline — changes queued');
+  });
+  window.addEventListener('online', () => {
+    state.offline = false;
+    void syncWorkspaceProjects({ announce: true });
+  });
 }

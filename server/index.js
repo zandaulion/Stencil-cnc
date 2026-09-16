@@ -14,12 +14,14 @@ import {
 } from './auth.js';
 import { versionedWeb } from './serve-sw.js';
 import { ShareError, ShareService } from './shares.js';
+import { ProjectError, ProjectService } from './projects.js';
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_DIR = path.join(moduleDirectory, '../web');
 const PROTECTED_CLIENT_PATHS = [
   /^\/editor\.js$/,
   /^\/storage\.js$/,
+  /^\/project-sync\.js$/,
   /^\/core(?:\/|$)/,
   /^\/workers(?:\/|$)/
 ];
@@ -80,6 +82,13 @@ export function createApp(options = {}) {
     directory: options.shareDirectory,
     encryptionSecret: configuredShareKey || auth.adminToken,
     maximumBytes: options.shareMaximumBytes,
+  });
+  const projects = options.projects || new ProjectService(database, {
+    directory: options.projectDirectory,
+    encryptionSecret: (options.projectEncryptionKey ?? process.env.PROJECT_ENCRYPTION_KEY)
+      || configuredShareKey
+      || auth.adminToken,
+    maximumBytes: options.projectMaximumBytes,
   });
   const limiter = options.limiter || new RedemptionLimiter({
     maxPerKey: envInteger('REDEEM_MAX_FAILURES_PER_MINUTE', 8),
@@ -188,6 +197,93 @@ export function createApp(options = {}) {
       return res.json({ shares: shares.list(req.device.id) });
     } catch (error) {
       return shareFailure(res, error);
+    }
+  });
+
+  const projectFailure = (res, error) => {
+    if (error instanceof ProjectError) {
+      setPrivateNoStore(res);
+      return res.status(error.status).json({
+        error: error.message,
+        code: error.code,
+        ...error.details,
+      });
+    }
+    throw error;
+  };
+
+  app.get('/api/projects', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      return res.json({ projects: projects.list(req.device.workspaceId) });
+    } catch (error) {
+      return projectFailure(res, error);
+    }
+  });
+
+  app.get('/api/projects/:id/bundle', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      const result = projects.bundle(req.device.workspaceId, req.params.id);
+      res.setHeader('ETag', `"${result.row.revision}"`);
+      res.type('application/vnd.kerfloom.project-bundle+json');
+      return res.send(result.buffer);
+    } catch (error) {
+      return projectFailure(res, error);
+    }
+  });
+
+  app.put(
+    '/api/projects/:id',
+    requireDevice,
+    express.raw({
+      type: ['application/vnd.kerfloom.project-bundle+json', 'application/octet-stream'],
+      limit: projects.maximumBytes,
+    }),
+    (req, res) => {
+      setPrivateNoStore(res);
+      try {
+        const project = projects.save(
+          req.device.workspaceId,
+          req.params.id,
+          req.body,
+          req.get('if-match'),
+        );
+        res.setHeader('ETag', `"${project.revision}"`);
+        return res.status(project.revision === 1 ? 201 : 200).json({ project });
+      } catch (error) {
+        return projectFailure(res, error);
+      }
+    },
+  );
+
+  app.delete('/api/projects/:id', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      return res.json(projects.delete(
+        req.device.workspaceId,
+        req.params.id,
+        req.get('if-match'),
+      ));
+    } catch (error) {
+      return projectFailure(res, error);
+    }
+  });
+
+  // A linked device can issue a one-use invite into its own workspace. Admin
+  // invites still create isolated workspaces unless a workspace is explicit.
+  app.post('/api/workspace/device-invites', requireDevice, (req, res) => {
+    if (req.body?.label !== undefined && typeof req.body.label !== 'string') {
+      return errorResponse(res, 400, 'label must be a string', 'bad_request');
+    }
+    try {
+      setPrivateNoStore(res);
+      return res.status(201).json(auth.createInvite(req.body?.label, req.device.workspaceId));
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return errorResponse(res, error.status, error.message, error.code);
+      }
+      throw error;
     }
   });
 
@@ -335,7 +431,14 @@ export function createApp(options = {}) {
       return errorResponse(res, 400, 'label must be a string', 'bad_request');
     }
     setPrivateNoStore(res);
-    return res.status(201).json(auth.createInvite(req.body?.label));
+    try {
+      return res.status(201).json(auth.createInvite(req.body?.label, req.body?.workspaceId));
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return errorResponse(res, error.status, error.message, error.code);
+      }
+      throw error;
+    }
   });
 
   app.post('/api/admin/invites/:id/revoke', requireAdmin, (req, res) => {
@@ -414,6 +517,7 @@ export function createApp(options = {}) {
 
   app.locals.auth = auth;
   app.locals.shares = shares;
+  app.locals.projects = projects;
   app.locals.db = database;
   app.locals.webVersion = versioned.version;
   return app;

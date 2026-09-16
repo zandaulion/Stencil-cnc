@@ -17,6 +17,7 @@ fs.writeFileSync(path.join(webDirectory, 'index.html'), '<!doctype html><title>_
 fs.writeFileSync(path.join(webDirectory, 'app.js'), 'globalThis.bootstrap = true;');
 fs.writeFileSync(path.join(webDirectory, 'editor.js'), 'export const editor = true;');
 fs.writeFileSync(path.join(webDirectory, 'storage.js'), 'export const storage = true;');
+fs.writeFileSync(path.join(webDirectory, 'project-sync.js'), 'export const sync = true;');
 fs.writeFileSync(path.join(webDirectory, 'core', 'geometry.js'), 'export const geometry = true;');
 fs.writeFileSync(path.join(webDirectory, 'workers', 'image.js'), 'postMessage(true);');
 fs.writeFileSync(path.join(webDirectory, 'bust.html'), '<!doctype html><title>Bust</title>');
@@ -28,7 +29,15 @@ const auth = new AuthService(db, {
   publicBaseUrl: 'https://stencil-cnc.zandaulion.com'
 });
 const shareDirectory = path.join(temporaryRoot, 'shares');
-const app = createApp({ db, auth, webDir: webDirectory, shareDirectory });
+const projectDirectory = path.join(temporaryRoot, 'projects');
+const app = createApp({
+  db,
+  auth,
+  webDir: webDirectory,
+  shareDirectory,
+  projectDirectory,
+  projectEncryptionKey: 'server-project-test-key'.repeat(4),
+});
 const server = app.listen(0, '127.0.0.1');
 await new Promise((resolve) => server.once('listening', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -94,14 +103,14 @@ test('redemption uses only a secure HttpOnly host cookie', async () => {
 });
 
 test('operational modules require the cookie while gate assets do not', async () => {
-  for (const pathname of ['/editor.js', '/storage.js', '/core/geometry.js', '/workers/image.js']) {
+  for (const pathname of ['/editor.js', '/storage.js', '/project-sync.js', '/core/geometry.js', '/workers/image.js']) {
     const response = await request(pathname);
     assert.equal(response.status, 401, pathname);
     assert.match(response.headers.get('cache-control'), /no-store/);
   }
 
   const session = await register('Authorised laptop');
-  for (const pathname of ['/editor.js', '/storage.js', '/core/geometry.js', '/workers/image.js']) {
+  for (const pathname of ['/editor.js', '/storage.js', '/project-sync.js', '/core/geometry.js', '/workers/image.js']) {
     const response = await request(pathname, { headers: { Cookie: session.cookie } });
     assert.equal(response.status, 200, pathname);
     assert.match(response.headers.get('cache-control'), /private/);
@@ -209,6 +218,96 @@ test('encrypted project snapshots are claimable by one invited recipient and rev
   assert.equal((await request(`/api/shares/${share.id}/bundle`, {
     headers: { Cookie: recipient.cookie, 'X-Share-Token': share.token },
   })).status, 404);
+});
+
+test('server projects synchronize complete encrypted bundles across linked workspace devices', async () => {
+  const owner = await register('Workspace owner');
+  const linkedInviteResponse = await request('/api/workspace/device-invites', {
+    method: 'POST',
+    headers: { Cookie: owner.cookie },
+    body: JSON.stringify({ label: 'Linked laptop' }),
+  });
+  assert.equal(linkedInviteResponse.status, 201);
+  const linkedInvite = await linkedInviteResponse.json();
+  const linkedResponse = await request('/api/auth/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code: linkedInvite.code, label: 'Linked laptop' }),
+  });
+  const linked = {
+    body: await linkedResponse.json(),
+    cookie: linkedResponse.headers.get('set-cookie').split(';')[0],
+  };
+  assert.equal(linked.body.device.workspaceId, owner.body.device.workspaceId);
+
+  const id = 'b1518649-d420-44fd-a18c-1ac71c706166';
+  const bundle = {
+    schema: 'stencil-cnc.share-bundle',
+    version: 1,
+    clientProjectId: id,
+    trashedAt: null,
+    project: {
+      schema: 'stencil-cnc.project',
+      version: 1,
+      id,
+      name: 'Server portrait',
+      sheet: { widthMm: 297, heightMm: 420 },
+      editor: { projectSummary: { cutStyle: 'lamele', status: 'ready' } },
+    },
+    source: { name: 'portrait.jpg', mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,cHJpdmF0ZQ==' },
+    checkpoints: [],
+    artifacts: [],
+  };
+  const saved = await request(`/api/projects/${id}`, {
+    method: 'PUT',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/vnd.kerfloom.project-bundle+json',
+      'If-Match': '"0"',
+    },
+    body: JSON.stringify(bundle),
+  });
+  assert.equal(saved.status, 201);
+  assert.equal((await saved.json()).project.revision, 1);
+  const encryptedFile = fs.readFileSync(path.join(projectDirectory, fs.readdirSync(projectDirectory)[0]));
+  assert.equal(encryptedFile.includes(Buffer.from('Server portrait')), false);
+  assert.equal(encryptedFile.includes(Buffer.from('private')), false);
+
+  const listed = await request('/api/projects', { headers: { Cookie: linked.cookie } });
+  assert.equal((await listed.json()).projects[0].id, id);
+  const downloaded = await request(`/api/projects/${id}/bundle`, {
+    headers: { Cookie: linked.cookie },
+  });
+  assert.equal(downloaded.headers.get('etag'), '"1"');
+  assert.deepEqual(await downloaded.json(), bundle);
+
+  const conflict = await request(`/api/projects/${id}`, {
+    method: 'PUT',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/vnd.kerfloom.project-bundle+json',
+      'If-Match': '"0"',
+    },
+    body: JSON.stringify(bundle),
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).currentRevision, 1);
+
+  const removed = await request(`/api/projects/${id}`, {
+    method: 'DELETE',
+    headers: { Cookie: linked.cookie, 'If-Match': '"1"' },
+  });
+  assert.equal(removed.status, 200);
+  const tombstone = (await (await request('/api/projects', {
+    headers: { Cookie: owner.cookie },
+  })).json()).projects[0];
+  assert.equal(tombstone.id, id);
+  assert.equal(tombstone.revision, 2);
+  assert.equal(typeof tombstone.deletedAt, 'string');
+  assert.equal(tombstone.sizeBytes, 0);
+  assert.equal((await request(`/api/projects/${id}/bundle`, {
+    headers: { Cookie: owner.cookie },
+  })).status, 404);
+  assert.equal(fs.readdirSync(projectDirectory).length, 0);
 });
 
 test('pwa-kit worker is content-stamped and the escape hatch has hard headers', async () => {

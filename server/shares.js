@@ -29,7 +29,7 @@ function encryptionKey(secret) {
     .digest();
 }
 
-function parseBundle(buffer) {
+export function parseBundle(buffer) {
   let bundle;
   try {
     bundle = JSON.parse(buffer.toString('utf8'));

@@ -9,6 +9,7 @@ const editor = fs.readFileSync(path.join(projectRoot, 'web/editor.js'), 'utf8');
 const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
 const storage = fs.readFileSync(path.join(projectRoot, 'web/storage.js'), 'utf8');
 const manifest = fs.readFileSync(path.join(projectRoot, 'web/manifest.webmanifest'), 'utf8');
+const projectSync = fs.readFileSync(path.join(projectRoot, 'web/project-sync.js'), 'utf8');
 
 test('Kerfloom is the public brand while project compatibility remains stable', () => {
   assert.match(html, /<title>Kerfloom — Art that holds together<\/title>/);
@@ -20,7 +21,7 @@ test('Kerfloom is the public brand while project compatibility remains stable', 
   assert.match(manifest, /"src": "\/icons\/kerfloom-256\.png"/);
   assert.match(manifest, /"src": "\/icons\/kerfloom-maskable-512\.png"/);
   assert.doesNotMatch(manifest, /"type": "image\/svg\+xml"/);
-  assert.match(editor, /const SHARE_BUNDLE_SCHEMA = 'stencil-cnc\.share-bundle'/);
+  assert.match(projectSync, /export const PROJECT_BUNDLE_SCHEMA = 'stencil-cnc\.share-bundle'/);
   assert.match(storage, /const DB_NAME = 'stencil-cnc'/);
 });
 
@@ -35,7 +36,7 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   assert.match(editor, /baseMask: encodeMask\(state\.baseMask\)/);
 });
 
-test('local project management is searchable, recoverable, and privacy preserving', () => {
+test('server-backed project management is searchable, recoverable, and offline safe', () => {
   for (const id of [
     'btn-projects', 'btn-projects-mobile', 'btn-undo-mobile', 'btn-redo-mobile',
     'project-library-dialog', 'project-search', 'project-status-filter',
@@ -46,7 +47,8 @@ test('local project management is searchable, recoverable, and privacy preservin
     assert.match(editor, new RegExp(`projectAction\\([^\\n]+['"]${action}['"]`), action);
   }
   assert.match(editor, /async function flushPendingSave\(\)/);
-  assert.match(editor, /Save failed — Retry/);
+  assert.match(editor, /Local cache failed — Retry/);
+  assert.match(editor, /Server sync failed — Retry/);
   assert.match(editor, /await flushPendingSave\(\)/);
   assert.match(editor, /serializeProject\(record, \{ pretty: true \}\)/);
   assert.match(editor, /saveCheckpoint\(project, label\)/);
@@ -54,6 +56,15 @@ test('local project management is searchable, recoverable, and privacy preservin
   assert.match(editor, /encodedProjectMaskThumbnail\([\s\S]*record\.sheet/);
   assert.match(editor, /hydrateProjectThumbnails\(rows, renderToken\)/);
   assert.match(storage, /const CHECKPOINT_LIMIT = 10/);
+  assert.match(storage, /const SYNC_STORE = 'projectSync'/);
+  assert.match(storage, /export async function putProjectSync/);
+  assert.match(projectSync, /export async function buildProjectBundle/);
+  assert.match(projectSync, /export async function synchronizeProjectLibrary/);
+  assert.match(projectSync, /'If-Match': `"\$\{operation\.expectedRevision\}"`/);
+  assert.match(projectSync, /status: 'conflict'/);
+  assert.match(projectSync, /Offline|navigator\.onLine/);
+  assert.match(html, /Encrypted server workspace/);
+  assert.match(editor, /Saved to server at/);
   assert.match(storage, /const \{ localSource: _localSource, \.\.\.portableProject \} = project/);
   assert.match(storage, /export async function trashProject/);
   assert.match(storage, /export async function restoreProject/);
@@ -71,7 +82,8 @@ test('server snapshots explicitly share complete projects and remain revocable',
     'share-project-dialog', 'share-expiry', 'btn-create-share', 'share-link',
     'share-history', 'received-share-dialog', 'btn-import-shared-project',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
-  assert.match(editor, /schema: SHARE_BUNDLE_SCHEMA[\s\S]*project: JSON\.parse\(serializeProject\(record\)\)[\s\S]*source,[\s\S]*checkpoints:[\s\S]*artifacts:/);
+  assert.match(editor, /return buildProjectBundle\(record\)/);
+  assert.match(projectSync, /schema: PROJECT_BUNDLE_SCHEMA[\s\S]*project: JSON\.parse\(serializeProject\(record\)\)[\s\S]*source,[\s\S]*checkpoints:[\s\S]*artifacts:/);
   assert.match(editor, /application\/vnd\.stencil-cnc\.share\+json/);
   assert.match(editor, /\/api\/shares\?expiresDays=/);
   assert.match(editor, /X-Share-Token/);

@@ -55,7 +55,7 @@ async function openEditor(device, { offline = false } = {}) {
   document.getElementById('app-main')?.removeAttribute('hidden');
   const deviceLabel = document.getElementById('device-label');
   if (deviceLabel) deviceLabel.textContent = device?.label || (offline ? 'Offline workspace' : 'Linked device');
-  showStatus(offline ? 'Offline — changes stay on this device' : 'Ready', offline ? 'warning' : 'success');
+  showStatus(offline ? 'Offline — changes will sync when connected' : 'Server workspace ready', offline ? 'warning' : 'success');
 
   if (!state.editorLoaded) {
     state.editorLoaded = true;

@@ -42,6 +42,25 @@ device. Expired package files are removed during later share operations and
 revoked packages are removed immediately. Include the named Podman volume in
 normal encrypted backups if active project links must survive host loss.
 
+## Canonical project storage
+
+Normal editing uses encrypted server projects under `/data/projects`, indexed
+by SQLite in `/data/stencil-cnc.db`. `PROJECT_ENCRYPTION_KEY` should be a stable
+32-byte hexadecimal secret generated with `openssl rand -hex 32`. If it is
+blank, Kerfloom derives a separate domain key from `SHARE_ENCRYPTION_KEY` or
+`ADMIN_TOKEN`. Rotating the active source key without re-encrypting stored
+bundles makes those bundles unreadable.
+
+`PROJECT_MAX_BYTES` limits one complete project package and
+`PROJECT_WORKSPACE_MAX_BYTES` bounds one workspace. Browser IndexedDB is only
+an offline cache and durable upload queue: a save is labelled "Saved to server"
+only after the encrypted bundle and its matching SQLite revision are committed.
+
+Back up the complete named volume and the active encryption key together. A
+usable recovery test must restore the database and project files as one point
+in time, start the service with the same key, and successfully download and
+decrypt at least one project bundle.
+
 ## Invite console
 
 The shared console needs this entry in `pwa-invite-console/apps.json`:
@@ -76,7 +95,7 @@ next online request.
 
 The public shell, CSS, manifest, icons, `app.js`, and pwa-kit bootstrap remain
 reachable so a new device can display the invite gate. The server requires a
-valid cookie for `/editor.js`, `/storage.js`, everything under `/core/`, and
+valid cookie for `/editor.js`, `/storage.js`, `/project-sync.js`, everything under `/core/`, and
 everything under `/workers/`. Put every future operational module or WASM
 worker under one of those protected prefixes.
 

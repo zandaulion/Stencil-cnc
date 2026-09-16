@@ -98,8 +98,14 @@ export class AuthService {
     this.clock = options.clock || (() => new Date());
   }
 
-  createInvite(label = null) {
+  createInvite(label = null, workspaceId = null) {
     const cleanedLabel = cleanLabel(label);
+    const linkedWorkspace = typeof workspaceId === 'string' && workspaceId
+      ? this.db.prepare('SELECT id FROM workspaces WHERE id = ?').get(workspaceId)?.id ?? null
+      : null;
+    if (workspaceId && !linkedWorkspace) {
+      throw new AuthError(404, 'Workspace not found.', 'workspace_not_found');
+    }
     const createdAt = this.clock().toISOString();
     const expiresAt = new Date(
       Date.parse(createdAt) + this.inviteTtlDays * 24 * 60 * 60 * 1000
@@ -115,15 +121,16 @@ export class AuthService {
       try {
         const result = this.db.prepare(`
           INSERT INTO invites
-            (code_hash, code, label, url, created_at, expires_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(hashSecret(code), code, cleanedLabel, url, createdAt, expiresAt);
+            (code_hash, code, label, url, created_at, expires_at, workspace_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(hashSecret(code), code, cleanedLabel, url, createdAt, expiresAt, linkedWorkspace);
 
         return {
           id: Number(result.lastInsertRowid),
           code,
           url,
           label: cleanedLabel,
+          workspace_id: linkedWorkspace,
           expires_at: expiresAt,
           expires_in_days: this.inviteTtlDays
         };
@@ -145,7 +152,7 @@ export class AuthService {
 
     const rows = this.db.prepare(`
       SELECT id, label, code, url, created_at, expires_at,
-             used_at, revoked, device_id
+             used_at, revoked, device_id, workspace_id
       FROM invites ORDER BY id DESC
     `).all();
 
@@ -160,7 +167,8 @@ export class AuthService {
         expires_at: row.expires_at,
         used_at: row.used_at,
         revoked: Boolean(row.revoked),
-        device_id: row.device_id
+        device_id: row.device_id,
+        workspace_id: row.workspace_id
       }))
     };
   }
@@ -213,6 +221,7 @@ export class AuthService {
       const token = crypto.randomBytes(32).toString('base64url');
       const tokenHash = hashSecret(token);
       let deviceId;
+      let workspaceId;
       let deviceLabel;
       let createdAt;
 
@@ -229,6 +238,7 @@ export class AuthService {
         }
 
         deviceId = device.id;
+        workspaceId = device.workspace_id;
         deviceLabel = label || device.label || invite.label || 'Linked device';
         createdAt = device.created_at;
         this.db.prepare(`
@@ -237,13 +247,18 @@ export class AuthService {
         `).run(tokenHash, deviceLabel, nowString, deviceId);
       } else {
         deviceId = crypto.randomUUID();
+        workspaceId = invite.workspace_id || crypto.randomUUID();
         deviceLabel = label || invite.label || 'Linked device';
         createdAt = nowString;
+        if (!invite.workspace_id) {
+          this.db.prepare('INSERT INTO workspaces (id, label, created_at) VALUES (?, ?, ?)')
+            .run(workspaceId, `${deviceLabel} workspace`, createdAt);
+        }
         this.db.prepare(`
           INSERT INTO devices
-            (id, token_hash, label, created_at, last_seen)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(deviceId, tokenHash, deviceLabel, createdAt, nowString);
+            (id, token_hash, workspace_id, label, created_at, last_seen)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(deviceId, tokenHash, workspaceId, deviceLabel, createdAt, nowString);
 
         // The guarded claim is the single-use authority. BEGIN IMMEDIATE also
         // serialises separate processes should the service ever be scaled.
@@ -267,6 +282,7 @@ export class AuthService {
         token,
         device: {
           id: deviceId,
+          workspaceId,
           label: deviceLabel,
           created_at: createdAt,
           last_seen: nowString
@@ -283,7 +299,7 @@ export class AuthService {
   deviceForToken(token, { touch = true } = {}) {
     if (typeof token !== 'string' || token.length < 32 || token.length > 256) return null;
     const row = this.db.prepare(`
-      SELECT id, label, created_at, last_seen, revoked
+      SELECT id, workspace_id, label, created_at, last_seen, revoked
       FROM devices WHERE token_hash = ?
     `).get(hashSecret(token));
     if (!row || row.revoked) return null;
@@ -301,6 +317,7 @@ export class AuthService {
 
     return {
       id: row.id,
+      workspaceId: row.workspace_id,
       label: row.label || 'Linked device',
       created_at: row.created_at,
       last_seen: lastSeen
@@ -310,10 +327,11 @@ export class AuthService {
   listDevices() {
     return {
       devices: this.db.prepare(`
-        SELECT id, label, created_at, last_seen, revoked, has_push
+        SELECT id, workspace_id, label, created_at, last_seen, revoked, has_push
         FROM devices ORDER BY created_at DESC
       `).all().map((row) => ({
         id: row.id,
+        workspace_id: row.workspace_id,
         label: row.label || 'Unnamed device',
         created_at: row.created_at,
         last_seen: row.last_seen,
