@@ -1,6 +1,6 @@
 import { REMOVED, RETAINED, assertMask, cloneMask } from './mask.js';
 
-export const CANDIDATE_PAYLOAD_VERSION = 2;
+export const CANDIDATE_PAYLOAD_VERSION = 3;
 
 function validIndices(values) {
   if (!values || typeof values[Symbol.iterator] !== 'function') return [];

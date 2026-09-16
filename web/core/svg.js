@@ -1,4 +1,5 @@
 import { RETAINED, assertMask, assertSheet } from "./mask.js";
+import { separateCircleContours } from "./vector-dots.js";
 
 /**
  * Extracts deterministic grid-aligned boundary loops from retained material.
@@ -63,7 +64,7 @@ export function traceMaskContours(mask) {
  *
  * @param {import('./mask.js').RasterMask} mask
  * @param {{ widthMm: number, heightMm: number }} sheet
- * @param {{ precision?: number, title?: string, fill?: string, includeXmlDeclaration?: boolean, units?: 'mm'|'in' }} [options]
+ * @param {{ precision?: number, title?: string, fill?: string, includeXmlDeclaration?: boolean, units?: 'mm'|'in', exactCircleHoles?:Array<{cxMm:number,cyMm:number,radiusMm:number}> }} [options]
  */
 export function exportSvg(mask, sheet, options = {}) {
   assertMask(mask);
@@ -80,11 +81,15 @@ export function exportSvg(mask, sheet, options = {}) {
   const width = formatNumber(widthInUnits, precision);
   const height = formatNumber(heightInUnits, precision);
   const fill = options.fill ?? "#000000";
-  const contours = traceMaskContours(mask);
-  const pathData = contours.map((contour) => contourToPath(
+  const separated = separateCircleContours(traceMaskContours(mask), mask, sheet, options.exactCircleHoles);
+  const pathData = separated.contours.map((contour) => contourToPath(
     contour,
     widthInUnits / mask.width,
     heightInUnits / mask.height,
+    precision,
+  )).join("") + separated.matchedCircles.map((circle) => circleHoleToPath(
+    circle,
+    millimetresPerUnit,
     precision,
   )).join("");
 
@@ -161,6 +166,17 @@ function contourToPath(contour, scaleX, scaleY, precision) {
     result += `L${formatNumber(point.x * scaleX, precision)} ${formatNumber(point.y * scaleY, precision)}`;
   }
   return `${result}Z`;
+}
+
+function circleHoleToPath(circle, millimetresPerUnit, precision) {
+  const cx = circle.cxMm / millimetresPerUnit;
+  const cy = circle.cyMm / millimetresPerUnit;
+  const radius = circle.radiusMm / millimetresPerUnit;
+  const left = formatNumber(cx - radius, precision);
+  const right = formatNumber(cx + radius, precision);
+  const y = formatNumber(cy, precision);
+  const r = formatNumber(radius, precision);
+  return `M${right} ${y}A${r} ${r} 0 1 0 ${left} ${y}A${r} ${r} 0 1 0 ${right} ${y}Z`;
 }
 
 function formatNumber(value, precision) {

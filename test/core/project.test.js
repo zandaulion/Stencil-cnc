@@ -158,6 +158,15 @@ test("version 2 projects preserve legacy kerf meaning and invalidate stale readi
   assert.deepEqual([...decodeMask(migrated.raster.sourceMask).data], [1, 1]);
 });
 
+test("version 3 projects migrate as raster-only until Variable Dots are rendered again", () => {
+  const legacy = createProject();
+  legacy.version = 3;
+  const migrated = deserializeProject(JSON.stringify(legacy));
+
+  assert.equal(migrated.version, PROJECT_VERSION);
+  assert.equal(migrated.editor, null);
+});
+
 test("portable project files never include the browser-local source photograph", () => {
   const project = {
     ...createProject(),
@@ -338,4 +347,30 @@ test("project-library summary data round-trips with the editable project", () =>
     lastValidatedAt: '2026-09-15T10:00:00.000Z',
     lastExportedAt: '2026-09-15T10:05:00.000Z',
   });
+});
+
+test("exact Variable Dot primitives survive project and candidate round-trips", () => {
+  const vectorDots = {
+    version: 1,
+    coordinateSpace: 'normalized-source',
+    radiusSpace: 'normalized-source-width',
+    circles: [[0.25, 0.5, 0.0125], [0.75, 0.5, 0.025]],
+  };
+  const project = createProject({
+    editor: {
+      controls: { cutStyle: 'puncte' },
+      vectorDots,
+      candidates: [{
+        payloadVersion: CANDIDATE_PAYLOAD_VERSION,
+        id: 'dots-candidate',
+        name: 'Exact dots',
+        controls: { cutStyle: 'puncte' },
+        vectorDots,
+      }],
+    },
+  });
+
+  const restored = deserializeProject(serializeProject(project));
+  assert.deepEqual(restored.editor.vectorDots, vectorDots);
+  assert.deepEqual(restored.editor.candidates[0].vectorDots, vectorDots);
 });

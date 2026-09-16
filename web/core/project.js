@@ -1,6 +1,7 @@
 import { assertMask, createMask } from "./mask.js";
 import { validateBridge } from "./bridges.js";
 import { CANDIDATE_PAYLOAD_VERSION } from "./candidates.js";
+import { normalizeVectorDots } from "./vector-dots.js";
 import {
   FINISHED_BOUNDARY_CAM,
   LEGACY_UNCOMPENSATED_CENTERLINE,
@@ -8,12 +9,12 @@ import {
 } from "./geometry-contract.js";
 
 export const PROJECT_SCHEMA = "stencil-cnc.project";
-export const PROJECT_VERSION = 3;
+export const PROJECT_VERSION = 4;
 
 /**
  * @typedef {object} StencilProject
  * @property {'stencil-cnc.project'} schema
- * @property {3} version
+ * @property {4} version
  * @property {string | null} id
  * @property {string} name
  * @property {'mm'} units
@@ -25,7 +26,7 @@ export const PROJECT_VERSION = 3;
  * @property {{kind:'none'|'image',name:string|null,mimeType:string|null,widthPx:number|null,heightPx:number|null,imageDataUrl:string|null}} source
  * @property {{sourceMask:EncodedMask|null,baseMask:EncodedMask|null}} raster
  * @property {Array<object>} bridges
- * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,painted:{keep:number[],remove:number[]},manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean,projectSummary:{thumbnail:string|null,cutStyle:string,status:'draft'|'needs-validation'|'ready',lastValidatedAt:string|null,lastExportedAt:string|null}}|null} editor
+ * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,vectorDots:object|null,painted:{keep:number[],remove:number[]},manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean,projectSummary:{thumbnail:string|null,cutStyle:string,status:'draft'|'needs-validation'|'ready',lastValidatedAt:string|null,lastExportedAt:string|null}}|null} editor
  * @property {string|null} createdAt
  * @property {string|null} updatedAt
  */
@@ -215,6 +216,12 @@ export function migrateProject(input) {
       };
     }
   }
+  if (version < 4) {
+    // Version 4 preserves exact Variable Dots primitives alongside the
+    // conservative validation raster. Older projects remain raster-only until
+    // the style is rendered again.
+    project.version = PROJECT_VERSION;
+  }
   return project;
 }
 
@@ -393,6 +400,7 @@ function normalizeEditor(editor) {
       createdAt: nullableString(candidate.createdAt ?? null, `editor.candidates[${index}].createdAt`),
       controls: candidateControls,
       styleSettings: candidateStyleSettings,
+      vectorDots: normalizeVectorDots(candidate.vectorDots),
       baseMask,
       painted: {
         keep: normalizePaint(candidate.painted?.keep),
@@ -425,6 +433,7 @@ function normalizeEditor(editor) {
   return {
     controls,
     styleSettings,
+    vectorDots: normalizeVectorDots(editor.vectorDots),
     painted: {
       keep: normalizePaint(editor.painted?.keep),
       remove: normalizePaint(editor.painted?.remove),

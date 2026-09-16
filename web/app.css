@@ -2905,11 +2905,18 @@ select:focus {
 }
 
 #editor-canvas,
+#vector-dot-layer,
 #overlay-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+#vector-dot-layer {
+  z-index: 1;
+  overflow: visible;
+  pointer-events: none;
 }
 
 #overlay-canvas {

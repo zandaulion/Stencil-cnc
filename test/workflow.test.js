@@ -155,7 +155,7 @@ test('PNG previews remain available before validation and are visibly marked as 
   assert.match(editor, /const mask = geometryForExport\(\)/);
   assert.match(editor, /const draft = kind === 'png' && !validated/);
   assert.match(png, /KERFLOOM DRAFT · NOT VALIDATED FOR CUTTING/);
-  assert.match(editor, /filename = exportFilename\('png', undefined, \{ draft \}\)[\s\S]*blob = await pngBlob\(mask, \{ draft \}\)[\s\S]*downloadBlob\(filename, blob\)/);
+  assert.match(editor, /filename = exportFilename\('png', undefined, \{ draft \}\)[\s\S]*blob = await pngBlob\(mask, \{ draft, exactCircleHoles: previewCircleHoles \}\)[\s\S]*downloadBlob\(filename, blob\)/);
   assert.match(editor, /purpose: projectFile \? 'editable' : kind === 'png' \? draft \? 'draft-preview' : 'preview' : 'cut'/);
   assert.match(editor, /if \(kind !== 'png' && !validated\)/);
   assert.match(editor, /state\.exportTimestamp = state\.validation\.valid \? new Date\(\) : null/);

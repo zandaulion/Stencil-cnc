@@ -72,3 +72,4 @@ export {
   SYNC_RETRY_DELAYS_MS,
 } from "./sync-policy.js";
 export { CANDIDATE_PAYLOAD_VERSION, applyRasterLayers, maskFingerprint } from "./candidates.js";
+export { normalizeVectorDots, placeVectorDots, separateCircleContours } from "./vector-dots.js";

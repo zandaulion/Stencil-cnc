@@ -40,3 +40,19 @@ test("SVG export expresses both dimensions and paths in inches", () => {
   assert.match(svg, /width="2in" height="1in" viewBox="0 0 2 1"/);
   assert.match(svg, /d="M0 0L2 0L2 1L0 1Z"/);
 });
+
+test("SVG replaces a sampled Variable Dot contour with an exact circular arc", () => {
+  const mask = maskFromAscii([
+    "#####",
+    "#...#",
+    "#...#",
+    "#...#",
+    "#####",
+  ]);
+  const svg = exportSvg(mask, { widthMm: 5, heightMm: 5 }, {
+    exactCircleHoles: [{ cxMm: 2.5, cyMm: 2.5, radiusMm: 1.5 }],
+  });
+
+  assert.match(svg, /A1\.5 1\.5 0 1 0/);
+  assert.doesNotMatch(svg, /M1 1L4 1L4 4L1 4Z/);
+});

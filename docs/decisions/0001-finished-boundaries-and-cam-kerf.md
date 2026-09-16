@@ -19,7 +19,8 @@ Cutting the exported contours as uncompensated centre paths would be wrong for t
 
 ## Compatibility
 
-Project schema version 3 records `manufacturing.geometryInterpretation`.
+Project schema version 3 introduced `manufacturing.geometryInterpretation`;
+the current schema (version 4) continues to record it unchanged.
 
 - `finished-boundary-cam-v1` is the default for new projects.
 - Projects created by schema versions 0–2 migrate to `legacy-uncompensated-centerline-v1`. Their raster pixels are preserved and their validation certificate is invalidated. They continue to use the former full-kerf web allowance and erosion preview.

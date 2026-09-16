@@ -42,6 +42,8 @@ import {
   orientSheet,
   physicalDiscIndices,
   physicalStrokeIndices,
+  normalizeVectorDots,
+  placeVectorDots,
   planManufacturingRepairs,
   placeMaskOnSheet,
   serializeProject,
@@ -185,6 +187,8 @@ const state = {
   styleMask: null,       // what the analysis service returned, before touch-ups
   styleMaskFor: null,    // cut style that produced styleMask
   styleMaskFresh: false, // false while controls have changed or a refinement is pending
+  vectorDots: null,      // exact source-space circles for Variable Dots
+  placedVectorDots: [],  // the same circles after crop and panel placement, in mm
   tonePreviewCanvas: null, // exact server interpretation before pattern generation
   tonePreviewFor: null,
   toneStatistics: null,
@@ -558,6 +562,23 @@ function visibleContentValue() {
   return style === 'grafic' || style === 'lamele' ? RETAINED : REMOVED;
 }
 
+function availableVectorDotHoles() {
+  const sourceIsCurrent = !state.source || state.styleMaskFresh;
+  if (selectedCutStyle() !== 'puncte' || !state.vectorDots || !state.placedVectorDots.length ||
+      !sourceIsCurrent) return [];
+  return state.placedVectorDots;
+}
+
+function exactVectorDotHoles() {
+  const circles = availableVectorDotHoles();
+  const repairEditsActive = state.manufacturingRepairs.enabled !== false &&
+    state.manufacturingRepairs.stale !== true &&
+    (state.manufacturingRepairs.keep.size > 0 || state.manufacturingRepairs.remove.size > 0);
+  if (!circles.length || state.painted.keep.size || state.painted.remove.size ||
+      repairEditsActive || state.bridges.some((bridge) => bridge.enabled !== false)) return [];
+  return circles;
+}
+
 function remapPaintedSet(indices, fromKey, toWidth, toHeight) {
   const match = /^(\d+)x(\d+)$/.exec(fromKey || '');
   if (!match) return new Set();
@@ -585,6 +606,7 @@ function rebuildSource() {
   } else if (state.source && state.mode === 'photo') {
     state.sourceMask = null;
     state.baseMask = null;
+    state.placedVectorDots = [];
     return;
   } else if (state.source) {
     const threshold = Math.round((numberField('threshold', 50) / 100) * 255);
@@ -605,6 +627,7 @@ function rebuildSource() {
     state.placement = null;
     state.contentBounds = null;
     state.contentSourceSize = null;
+    state.placedVectorDots = [];
     return;
   }
 
@@ -632,6 +655,9 @@ function rebuildSource() {
   });
   mask = placed.mask;
   state.placement = placed.placement;
+  state.placedVectorDots = selectedCutStyle() === 'puncte' && state.vectorDots
+    ? placeVectorDots(state.vectorDots, state.contentSourceSize, state.contentBounds, state.placement)
+    : [];
 
   // Touch-ups last, so a deliberate correction is never undone by a slider.
   // Their coordinates are remapped when the manufacturing raster changes;
@@ -984,6 +1010,9 @@ async function renderStyle() {
     state.styleMask = decodeMask(payload.sourceMask);
     state.styleMaskFor = requestedStyle;
     state.styleMaskFresh = true;
+    state.vectorDots = requestedStyle === 'puncte'
+      ? normalizeVectorDots(payload.info?.vectorDots)
+      : null;
     state.tonePreviewCanvas = decodedTone;
     state.tonePreviewFor = decodedTone ? requestedStyle : null;
     state.toneStatistics = payload.tonePreview?.statistics ?? null;
@@ -2133,6 +2162,7 @@ function updateToneInspector(preview = null) {
 function draw() {
   const canvas = el('editor-canvas');
   const overlay = el('overlay-canvas');
+  const vectorLayer = el('vector-dot-layer');
   if (!canvas || !overlay) return;
   const mask = state.designMask;
   const stage = el('canvas-stage');
@@ -2143,6 +2173,7 @@ function draw() {
   stage?.classList.toggle('has-design', Boolean(mask));
   if (!mask) {
     if (stage) { stage.style.width = ''; stage.style.height = ''; stage.style.transform = ''; }
+    clearVectorDotPreview(vectorLayer);
     clear(canvas); clear(overlay); return;
   }
 
@@ -2159,12 +2190,14 @@ function draw() {
 
   const context = canvas.getContext('2d');
   if (state.view === 'original' && state.source?.previewCanvas && state.placement) {
+    clearVectorDotPreview(vectorLayer);
     drawPlacedImage(context, state.source.previewCanvas, mask);
     drawOverlay(overlay, mask);
     applyTransform();
     return;
   }
   if (state.view === 'tone' && tonePreview?.canvas && state.placement) {
+    clearVectorDotPreview(vectorLayer);
     drawPlacedImage(context, tonePreview.canvas, mask, '#f4f4f1');
     drawOverlay(overlay, mask);
     applyTransform();
@@ -2221,8 +2254,59 @@ function draw() {
   }
   context.putImageData(image, 0, 0);
 
+  drawVectorDotPreview(vectorLayer, mask, {
+    visible: !repairPreviewVisible && ['source', 'material', 'backlit'].includes(state.view),
+    afterKerf: Boolean(kerf),
+  });
+
   drawOverlay(overlay, mask);
   applyTransform();
+}
+
+function clearVectorDotPreview(layer) {
+  if (!layer) return;
+  layer.replaceChildren();
+  layer.hidden = true;
+}
+
+function drawVectorDotPreview(layer, mask, { visible = true, afterKerf = false } = {}) {
+  const circles = visible ? exactVectorDotHoles() : [];
+  if (!layer || !circles.length) {
+    clearVectorDotPreview(layer);
+    return;
+  }
+  const currentSheet = sheet();
+  const scaleX = mask.width / currentSheet.widthMm;
+  const scaleY = mask.height / currentSheet.heightMm;
+  const kerfExpansionMm = afterKerf
+    ? kerfErosionMm(toMm(numberField('kerf', 1.2)), state.geometryInterpretation) / 2
+    : 0;
+  let patchPath = '';
+  let circlePath = '';
+  for (const circle of circles) {
+    const cx = circle.cxMm * scaleX;
+    const cy = circle.cyMm * scaleY;
+    const rx = (circle.radiusMm + kerfExpansionMm) * scaleX;
+    const ry = (circle.radiusMm + kerfExpansionMm) * scaleY;
+    const patchRx = rx + 1.25;
+    const patchRy = ry + 1.25;
+    patchPath += `M${(cx - patchRx).toFixed(3)} ${(cy - patchRy).toFixed(3)}h${(patchRx * 2).toFixed(3)}v${(patchRy * 2).toFixed(3)}h-${(patchRx * 2).toFixed(3)}Z`;
+    circlePath += `M${(cx + rx).toFixed(3)} ${cy.toFixed(3)}A${rx.toFixed(3)} ${ry.toFixed(3)} 0 1 0 ${(cx - rx).toFixed(3)} ${cy.toFixed(3)}A${rx.toFixed(3)} ${ry.toFixed(3)} 0 1 0 ${(cx + rx).toFixed(3)} ${cy.toFixed(3)}Z`;
+  }
+  const namespace = 'http://www.w3.org/2000/svg';
+  const patch = document.createElementNS(namespace, 'path');
+  const holes = document.createElementNS(namespace, 'path');
+  const metal = state.view === 'backlit' ? '#141c21' : '#2a2e34';
+  const removed = state.view === 'backlit' ? '#fff1be' : '#f5f4f0';
+  patch.setAttribute('d', patchPath);
+  patch.setAttribute('fill', metal);
+  holes.setAttribute('d', circlePath);
+  holes.setAttribute('fill', removed);
+  layer.setAttribute('viewBox', `0 0 ${mask.width} ${mask.height}`);
+  layer.setAttribute('width', String(mask.width));
+  layer.setAttribute('height', String(mask.height));
+  layer.replaceChildren(patch, holes);
+  layer.hidden = false;
 }
 
 function drawOverlay(overlay, mask) {
@@ -3041,6 +3125,7 @@ function projectFromState() {
     editor: {
       controls: readControls(),
       styleSettings: cloneStyleSettings(state.styleSettings),
+      vectorDots: state.vectorDots,
       painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
       manufacturingRepairs: {
         keep: [...state.manufacturingRepairs.keep],
@@ -4211,6 +4296,8 @@ async function loadProjectState(project, { imported = false } = {}) {
   state.styleMask = null;
   state.styleMaskFor = null;
   state.styleMaskFresh = false;
+  state.vectorDots = normalizeVectorDots(project.editor?.vectorDots);
+  state.placedVectorDots = [];
   state.tonePreviewCanvas = null;
   state.tonePreviewFor = null;
   state.toneStatistics = null;
@@ -4339,6 +4426,8 @@ async function importFile(file) {
     state.styleMask = null;
     state.styleMaskFor = null;
     state.styleMaskFresh = false;
+    state.vectorDots = null;
+    state.placedVectorDots = [];
     state.tonePreviewCanvas = null;
     state.tonePreviewFor = null;
     state.toneStatistics = null;
@@ -4568,6 +4657,7 @@ async function saveCurrentCandidate() {
     createdAt: new Date().toISOString(),
     controls: readControls(),
     styleSettings: cloneStyleSettings(state.styleSettings),
+    vectorDots: state.vectorDots,
     baseMask: encodeMask(state.baseMask),
     painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
     paintedFor: state.paintedFor,
@@ -4613,6 +4703,8 @@ function restoreCandidate(id) {
   if (completePayload) state.styleSettings = cloneStyleSettings(candidate.styleSettings);
   applyControls(candidate.controls);
   state.baseMask = decodeMask(candidate.baseMask);
+  state.vectorDots = normalizeVectorDots(candidate.vectorDots);
+  state.placedVectorDots = [];
   state.sourceMask = null;
   state.tonePreviewCanvas = null;
   state.tonePreviewFor = null;
@@ -5420,17 +5512,50 @@ function bridgeHandleAtPointer(event) {
 
 /* ----------------------------------------------------------------- export */
 
-function pngBlob(mask, { draft = false } = {}) {
+function pngBlob(mask, { draft = false, exactCircleHoles = [] } = {}) {
   const raster = maskToRgba(mask);
+  const scale = exactCircleHoles.length ? Math.min(2, 5200 / Math.max(raster.width, raster.height)) : 1;
   const canvas = document.createElement('canvas');
-  canvas.width = raster.width;
-  canvas.height = raster.height;
+  canvas.width = Math.max(1, Math.round(raster.width * scale));
+  canvas.height = Math.max(1, Math.round(raster.height * scale));
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Canvas rendering is unavailable');
-  const image = context.createImageData(raster.width, raster.height);
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = raster.width;
+  sourceCanvas.height = raster.height;
+  const sourceContext = sourceCanvas.getContext('2d');
+  if (!sourceContext) throw new Error('Canvas rendering is unavailable');
+  const image = sourceContext.createImageData(raster.width, raster.height);
   image.data.set(raster.data);
-  context.putImageData(image, 0, 0);
-  if (draft) drawDraftWatermark(context, raster.width, raster.height);
+  sourceContext.putImageData(image, 0, 0);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
+  if (exactCircleHoles.length) {
+    const currentSheet = sheet();
+    const scaleX = canvas.width / currentSheet.widthMm;
+    const scaleY = canvas.height / currentSheet.heightMm;
+    context.fillStyle = '#2a2e34';
+    for (const circle of exactCircleHoles) {
+      const cx = circle.cxMm * scaleX;
+      const cy = circle.cyMm * scaleY;
+      const rx = circle.radiusMm * scaleX;
+      const ry = circle.radiusMm * scaleY;
+      context.fillRect(cx - rx - scale, cy - ry - scale, rx * 2 + scale * 2, ry * 2 + scale * 2);
+    }
+    context.fillStyle = '#f5f4f0';
+    for (const circle of exactCircleHoles) {
+      context.beginPath();
+      context.ellipse(
+        circle.cxMm * scaleX,
+        circle.cyMm * scaleY,
+        circle.radiusMm * scaleX,
+        circle.radiusMm * scaleY,
+        0, 0, Math.PI * 2,
+      );
+      context.fill();
+    }
+  }
+  if (draft) drawDraftWatermark(context, canvas.width, canvas.height);
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
@@ -5454,19 +5579,21 @@ async function exportGeometry(kind) {
   // PNG is the deliberate exception: it may show unsafe work, so the file is
   // visibly watermarked and cannot be mistaken for released cut geometry.
   const mask = geometryForExport();
+  const vectorCircleHoles = availableVectorDotHoles();
+  const previewCircleHoles = exactVectorDotHoles();
   try {
     const units = el('export-units')?.value === 'in' ? 'in' : 'mm';
     let blob;
     let filename;
     if (kind === 'svg') {
       filename = exportFilename('svg');
-      blob = new Blob([exportSvg(mask, sheet(), { title: state.name, units })], { type: 'image/svg+xml' });
+      blob = new Blob([exportSvg(mask, sheet(), { title: state.name, units, exactCircleHoles: vectorCircleHoles })], { type: 'image/svg+xml' });
     } else if (kind === 'dxf') {
       filename = exportFilename('dxf');
-      blob = new Blob([exportDxf(mask, sheet(), { units })], { type: 'application/dxf' });
+      blob = new Blob([exportDxf(mask, sheet(), { units, exactCircleHoles: vectorCircleHoles })], { type: 'application/dxf' });
     } else if (kind === 'png') {
       filename = exportFilename('png', undefined, { draft });
-      blob = await pngBlob(mask, { draft });
+      blob = await pngBlob(mask, { draft, exactCircleHoles: previewCircleHoles });
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
@@ -5918,6 +6045,7 @@ function wire() {
     styleAbort?.abort();
     state.source = null; state.styleMask = null; state.styleMaskFor = null;
     state.styleMaskFresh = false; state.baseMask = null;
+    state.vectorDots = null; state.placedVectorDots = [];
     state.tonePreviewCanvas = null; state.tonePreviewFor = null;
     state.toneStatistics = null; state.lineToneCache = null;
     state.sourceMask = null; state.designMask = null; state.frameMask = null; state.kerfPreviewMask = null;

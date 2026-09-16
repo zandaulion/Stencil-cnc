@@ -1,5 +1,6 @@
 import { assertMask, assertSheet } from "./mask.js";
 import { traceMaskContours } from "./svg.js";
+import { separateCircleContours } from "./vector-dots.js";
 
 const DXF_UNITS = Object.freeze({
   mm: { code: 4, millimetresPerUnit: 1, measurement: 1 },
@@ -13,7 +14,7 @@ const DXF_UNITS = Object.freeze({
  *
  * @param {import('./mask.js').RasterMask} mask
  * @param {{widthMm:number,heightMm:number}} sheet
- * @param {{units?:'mm'|'in',title?:string,precision?:number}} [options]
+ * @param {{units?:'mm'|'in',title?:string,precision?:number,exactCircleHoles?:Array<{cxMm:number,cyMm:number,radiusMm:number}>}} [options]
  */
 export function exportDxf(mask, sheet, options = {}) {
   assertMask(mask);
@@ -71,7 +72,8 @@ export function exportDxf(mask, sheet, options = {}) {
 
   pair(0, "SECTION");
   pair(2, "ENTITIES");
-  for (const contour of traceMaskContours(mask)) {
+  const separated = separateCircleContours(traceMaskContours(mask), mask, sheet, options.exactCircleHoles);
+  for (const contour of separated.contours) {
     pair(0, "LWPOLYLINE");
     pair(100, "AcDbEntity");
     pair(8, "CUT");
@@ -82,6 +84,16 @@ export function exportDxf(mask, sheet, options = {}) {
       pair(10, formatNumber(point.x * scaleX, precision));
       pair(20, formatNumber(height - point.y * scaleY, precision));
     }
+  }
+  for (const circle of separated.matchedCircles) {
+    pair(0, "CIRCLE");
+    pair(100, "AcDbEntity");
+    pair(8, "CUT");
+    pair(100, "AcDbCircle");
+    pair(10, formatNumber(circle.cxMm / unit.millimetresPerUnit, precision));
+    pair(20, formatNumber(height - circle.cyMm / unit.millimetresPerUnit, precision));
+    pair(30, "0");
+    pair(40, formatNumber(circle.radiusMm / unit.millimetresPerUnit, precision));
   }
   pair(0, "ENDSEC");
   pair(0, "EOF");

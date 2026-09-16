@@ -20,7 +20,9 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Builds reversible manufacturing-repair previews before changing the artwork.
 - Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
-- Exports validated geometry as SVG, DXF, or a shareable PNG.
+- Exports validated geometry as SVG, DXF, or a shareable PNG. Variable Dots
+  retain their generated circle primitives, so zoomed previews and CNC vector
+  exports remain round instead of tracing raster stair steps.
 - Runs as an installable, offline-capable PWA after an authorised device has loaded it.
 
 ## Workflow

@@ -308,6 +308,27 @@ class TestPuncteVariabile(unittest.TestCase):
         )
         self.assertGreater((~luminos).sum(), (~intunecat).sum() * 2)
 
+    def test_geometria_vectoriala_pastreaza_raze_continue_si_puntea_fizica(self):
+        _, cercuri = puncte_variabile(
+            camp_uniform(240, 240, 0.0), MM_PE_PX,
+            pas_mm=12, diametru_max_mm=7,
+            fanta_min_mm=2, punte_min_mm=3,
+            returneaza_geometrie=True,
+        )
+        self.assertGreater(len(cercuri), 4)
+        raze_mm = [cerc[2] * 240 * MM_PE_PX for cerc in cercuri]
+        self.assertTrue(all(1.0 <= raza <= 3.501 for raza in raze_mm))
+        # The authoritative primitives preserve the requested 7 mm diameter;
+        # they are not collapsed to one of a handful of integer pixel radii.
+        self.assertTrue(any(abs(raza - 3.5) < 0.01 for raza in raze_mm))
+        puncte_mm = [(c[0] * 240 * MM_PE_PX, c[1] * 240 * MM_PE_PX, c[2] * 240 * MM_PE_PX)
+                     for c in cercuri]
+        for index, (x, y, raza) in enumerate(puncte_mm):
+            distante = [np.hypot(x - ox, y - oy) - raza - oraza
+                         for j, (ox, oy, oraza) in enumerate(puncte_mm) if j != index]
+            if distante:
+                self.assertGreaterEqual(min(distante), 3.0 - 1e-4)
+
     def test_umbra_sub_prag_ramane_metal_plin(self):
         masca = puncte_variabile(
             camp_uniform(160, 160, 0.95), MM_PE_PX,
@@ -327,9 +348,10 @@ class TestPuncteVariabile(unittest.TestCase):
         for index in range(1, numar):
             latime = statistici[index, cv2.CC_STAT_WIDTH]
             inaltime = statistici[index, cv2.CC_STAT_HEIGHT]
-            self.assertEqual(latime, inaltime, "each opening must remain a complete circle")
-            self.assertGreaterEqual(latime * MM_PE_PX, 2.0)
-            self.assertLessEqual(latime * MM_PE_PX, 7.0)
+            self.assertLessEqual(abs(int(latime) - int(inaltime)), 1,
+                                 "sampling an exact circle may differ by at most one edge pixel")
+            self.assertGreaterEqual(max(latime, inaltime) * MM_PE_PX, 2.0)
+            self.assertLessEqual(max(latime, inaltime) * MM_PE_PX, 7.0 + MM_PE_PX)
 
     def test_fundalul_din_afara_subiectului_ramane_metal(self):
         camp = camp_uniform(200, 200, 0.0)

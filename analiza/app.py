@@ -334,13 +334,21 @@ async def analizeaza(
                            celula_mm=celula_mm, fanta_min_mm=fanta_min_mm,
                            punte_min_mm=punte_min_mm, gamma=gamma, zona=masca_subiect)
         elif stil == "puncte":
-            masca = puncte_variabile(
+            masca, cercuri = puncte_variabile(
                 camp, mm_pe_px, pas_mm=pas_puncte_mm,
                 diametru_max_mm=diametru_max_puncte_mm,
                 fanta_min_mm=fanta_min_mm, punte_min_mm=punte_min_mm,
                 gamma=gamma, prag=prag_puncte, unghi=unghi_puncte,
-                zona=masca_subiect,
+                zona=masca_subiect, returneaza_geometrie=True,
             )
+            info_suplimentar = {
+                "vectorDots": {
+                    "version": 1,
+                    "coordinateSpace": "normalized-source",
+                    "radiusSpace": "normalized-source-width",
+                    "circles": cercuri,
+                },
+            }
         elif stil == "linii":
             masca = linii_negative(camp, masca_subiect, mm_pe_px,
                                     detaliu=detaliu_linii,

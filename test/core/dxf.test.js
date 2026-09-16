@@ -43,3 +43,20 @@ test("DXF preserves holes as separate closed contours and supports inches", () =
   assert.match(dxf, /\n9\n\$INSUNITS\n70\n1\n/);
   assert.match(dxf, /\n9\n\$EXTMAX\n10\n1\n20\n1\n30\n0\n/);
 });
+
+test("DXF emits exact CIRCLE entities for matched Variable Dot holes", () => {
+  const mask = maskFromAscii([
+    "#####",
+    "#...#",
+    "#...#",
+    "#...#",
+    "#####",
+  ]);
+  const dxf = exportDxf(mask, { widthMm: 5, heightMm: 5 }, {
+    exactCircleHoles: [{ cxMm: 2.5, cyMm: 2.5, radiusMm: 1.5 }],
+  });
+
+  assert.equal((dxf.match(/\n0\nLWPOLYLINE\n/g) ?? []).length, 1);
+  assert.equal((dxf.match(/\n0\nCIRCLE\n/g) ?? []).length, 1);
+  assert.match(dxf, /\n40\n1\.5\n/);
+});
