@@ -208,7 +208,7 @@
               </span>
               <label for="manufacturing-profile"><span>Manufacturing profile</span>
                 <select id="manufacturing-profile" name="manufacturingProfile" disabled title="Custom profiles are planned for a later version">
-                  <option value="plasma" selected>Plasma · 2 mm holes · 3 mm gaps</option>
+                  <option value="plasma" selected>Plasma · 2 mm holes · 3 mm gap default</option>
                 </select>
               </label>
             </div>
@@ -220,8 +220,8 @@
                 <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-web">
-                <span>Minimum gap between cuts <small>Finished metal between compensated cuts</small></span>
-                <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="3" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
+                <span>Minimum gap between cuts <small>Finished metal; 3 mm default, 2 mm machine-verified minimum</small></span>
+                <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="2" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-opening">
                 <span>Minimum opening <small>Smallest removable feature</small></span>
@@ -761,7 +761,7 @@
               </div>
               <label class="field-row" for="bridge-width">
                 <span>Bridge width <small>Width before kerf</small></span>
-                <span class="number-field compact"><input id="bridge-width" name="bridgeWidth" type="number" min="3" max="100" step="0.1" value="6"><span data-unit-label>mm</span></span>
+                <span class="number-field compact"><input id="bridge-width" name="bridgeWidth" type="number" min="2" max="100" step="0.1" value="6"><span data-unit-label>mm</span></span>
               </label>
               <div class="range-control">
                 <label for="bridge-count"><span>Support strategy</span><output id="bridge-count-value" for="bridge-count">Aesthetic</output></label>
@@ -826,7 +826,7 @@
                 <p class="bridge-edit-hint"><strong>Drag the support</strong> to move it. Drag either round endpoint freely to rotate it and change its length.</p>
                 <label class="field-row" for="selected-bridge-width">
                   <span>Selected width</span>
-                  <span class="number-field compact"><input id="selected-bridge-width" type="number" min="3" step="0.1"><span data-unit-label>mm</span></span>
+                  <span class="number-field compact"><input id="selected-bridge-width" type="number" min="2" step="0.1"><span data-unit-label>mm</span></span>
                 </label>
                 <label class="field-row" for="selected-bridge-length">
                   <span>Length</span>

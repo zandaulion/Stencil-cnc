@@ -107,7 +107,9 @@ const RASTER_LONG_EDGE = 900;
 const MAX_SHEET_LONG_EDGE = 2600;
 const MM_PER_INCH = 25.4;
 const PLASMA_MIN_OPENING_MM = 2;
-const PLASMA_MIN_WEB_MM = 3;
+// New projects retain the conservative 3 mm default from the profile, while
+// calibrated machines may use a verified finished web down to 2 mm.
+const PLASMA_MIN_WEB_MM = 2;
 const UNDO_DEPTH = 40;
 const CANDIDATE_LIMIT = 8;
 const LOCAL_SAVE_DELAY_MS = 160;

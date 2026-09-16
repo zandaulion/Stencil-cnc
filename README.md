@@ -36,7 +36,7 @@ portable names: `project_297x420mm_slats_frame_cut_2026-09-15-162005.dxf`.
 PNG files use `preview`, editable projects use `editable`, and exports without a
 perimeter frame use `no-frame`.
 
-The default panel is 1250 × 2500 mm. The default plasma profile requires a 2 mm minimum opening and a 3 mm finished gap/web. New projects store and export intended finished-part boundaries: apply inside/outside kerf compensation exactly once in CAM. Older projects remain explicitly marked as legacy until the user upgrades and re-renders them.
+The default panel is 1250 × 2500 mm. The default plasma profile starts with a 2 mm minimum opening and a conservative 3 mm finished gap/web; a machine-verified gap/web may be reduced to 2 mm. New projects store and export intended finished-part boundaries: apply inside/outside kerf compensation exactly once in CAM. Older projects remain explicitly marked as legacy until the user upgrades and re-renders them.
 
 ## Project library
 

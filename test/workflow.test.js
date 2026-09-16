@@ -376,19 +376,20 @@ test('panel presets provide standard sizes and remain orientation-aware', () => 
   assert.match(editor, /el\('panel-size-preset'\)\?\.addEventListener\('change'/);
 });
 
-test('the plasma profile drives every filter with 2 mm openings and 3 mm webs', () => {
-  assert.match(html, /value="plasma" selected>Plasma · 2 mm holes · 3 mm gaps/);
-  assert.match(html, /id="min-web"[^>]*value="3"/);
+test('the plasma profile defaults to 3 mm webs while permitting a verified 2 mm minimum', () => {
+  assert.match(html, /value="plasma" selected>Plasma · 2 mm holes · 3 mm gap default/);
+  assert.match(html, /id="min-web"[^>]*min="2"[^>]*value="3"/);
+  assert.match(html, /3 mm default, 2 mm machine-verified minimum/);
   assert.match(html, /id="min-opening"[^>]*value="2"/);
   assert.match(editor, /const PLASMA_MIN_OPENING_MM = 2/);
-  assert.match(editor, /const PLASMA_MIN_WEB_MM = 3/);
+  assert.match(editor, /const PLASMA_MIN_WEB_MM = 2/);
   assert.match(editor, /function enforcePlasmaLimits\(\)/);
   const prepareStart = html.indexOf('id="panel-prepare"');
   const validateStart = html.indexOf('id="panel-validate"');
   const profile = html.indexOf('id="manufacturing-profile"');
   assert.ok(profile > prepareStart && profile < validateStart, 'plasma controls belong in Prepare');
-  assert.match(html, /id="bridge-width"[^>]*min="3"/);
-  assert.match(html, /id="selected-bridge-width"[^>]*min="3"/);
+  assert.match(html, /id="bridge-width"[^>]*min="2"/);
+  assert.match(html, /id="selected-bridge-width"[^>]*min="2"/);
   assert.match(editor, /form\.set\('punte_min_mm', String\(toMm\(numberField\('min-web', 3\)\)\)\)/);
   assert.match(editor, /form\.set\('kerf_mm', String\(toMm\(numberField\('kerf', 1\.2\)\)\)\)/);
   assert.match(editor, /form\.set\('interpretare_geometrie', state\.geometryInterpretation\)/);
