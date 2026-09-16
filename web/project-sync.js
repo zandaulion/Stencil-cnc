@@ -535,7 +535,7 @@ export async function synchronizeProjectLibrary(onProgress = null) {
   for (const operation of (await listProjectSync())) {
     progress(operation.kind === 'delete' ? 'Removing a deleted project…' : 'Saving a project to the server…');
     const result = await flushProjectOperation(operation);
-    if (result.status === 'queued') queued += 1;
+    if (result.status === 'queued' || result.status === 'conflict-queued') queued += 1;
     if (result.status === 'conflict' || result.status === 'conflict-queued') conflicts += 1;
     completed += 1;
   }
@@ -544,7 +544,16 @@ export async function synchronizeProjectLibrary(onProgress = null) {
 }
 
 export async function pendingProjectSyncCount() {
-  return (await listProjectSync()).length;
+  const [operations, active, trash] = await Promise.all([
+    listProjectSync(),
+    listProjects(),
+    listProjects({ trashed: true }),
+  ]);
+  const pendingIds = new Set(operations.map((operation) => operation.projectId));
+  for (const project of [...active, ...trash]) {
+    if (project.localSyncPending || !project.serverRevision) pendingIds.add(project.id);
+  }
+  return pendingIds.size;
 }
 
 export async function hasPendingProjectSync(projectId) {

@@ -25,6 +25,7 @@ import {
   calculateArtworkPlacement,
   connectedRegionIndices,
   createProject,
+  createSyncRetryController,
   decodeMask,
   deserializeProject,
   drawDraftWatermark,
@@ -47,6 +48,8 @@ import {
   trimMaskToContent,
   validateDesign,
   zoomAroundPoint,
+  isRetryableSyncError,
+  isStorageQuotaError,
   REMOVED,
   RETAINED,
 } from '/core/index.js';
@@ -2664,6 +2667,7 @@ function redo() {
 
 function markDirty() {
   if (!state.source && !state.baseMask && !state.sourceMask) return;
+  resetAutomaticSyncRetry();
   state.dirty = true;
   dirtyGeneration += 1;
   setSaveState('saving', 'Saving…');
@@ -2676,16 +2680,16 @@ let localSaveInFlight = null;
 let serverSyncInFlight = null;
 let lastSavedRecord = null;
 let dirtyGeneration = 0;
+let saveStateToken = 0;
+let automaticSyncRetry = null;
 
-function setSaveState(kind, label) {
+function renderSaveState(kind, label, pendingCount = 0) {
   const badge = el('save-state');
   const text = el('save-state-label');
   if (badge && text) {
     badge.dataset.state = kind;
     text.textContent = label;
-    badge.title = kind === 'error'
-      ? 'Server synchronization needs attention. Select to retry.'
-      : label;
+    badge.title = label;
   }
   const mobile = el('btn-sync-mobile');
   if (mobile) {
@@ -2693,6 +2697,16 @@ function setSaveState(kind, label) {
     mobile.title = label;
     mobile.setAttribute('aria-label', `Sync projects. ${label}`);
   }
+  const count = el('sync-pending-count');
+  if (count) {
+    count.hidden = pendingCount < 1;
+    count.textContent = pendingCount > 99 ? '99+' : String(pendingCount || '');
+  }
+}
+
+function setSaveState(kind, label, pendingCount = 0) {
+  saveStateToken += 1;
+  renderSaveState(kind, label, pendingCount);
 }
 
 function savedAtLabel(value = new Date()) {
@@ -2701,14 +2715,95 @@ function savedAtLabel(value = new Date()) {
   }).format(value)}`;
 }
 
-function cachedAtLabel() {
-  return navigator.onLine
-    ? 'Saved locally — waiting for server'
-    : 'Offline — changes queued';
+function retryDelayLabel(delayMs) {
+  if (delayMs >= 60_000) return `${Math.ceil(delayMs / 60_000)} min`;
+  return `${Math.max(1, Math.ceil(delayMs / 1_000))} sec`;
+}
+
+async function setPendingSaveState({ retryDelayMs = null, exhausted = false } = {}) {
+  const token = ++saveStateToken;
+  let pendingCount = 0;
+  try {
+    pendingCount = await pendingProjectSyncCount();
+  } catch (error) {
+    console.warn('Could not count pending project changes:', error);
+  }
+  if (token !== saveStateToken) return pendingCount;
+  const noun = pendingCount === 1 ? 'project' : 'projects';
+  const waiting = pendingCount
+    ? `${pendingCount} ${noun} waiting to sync`
+    : retryDelayMs !== null ? 'Server unavailable' : 'Saved locally — waiting for server';
+  if (!navigator.onLine) {
+    renderSaveState('offline', pendingCount ? `Offline · ${waiting}` : 'Offline · saved locally', pendingCount);
+  } else if (exhausted) {
+    renderSaveState(
+      'error',
+      pendingCount ? `${pendingCount} ${noun} not synced — Tap Sync` : 'Server unavailable — Tap Sync',
+      pendingCount,
+    );
+  } else if (retryDelayMs !== null) {
+    renderSaveState('queued', `${waiting} · retry in ${retryDelayLabel(retryDelayMs)}`, pendingCount);
+  } else {
+    renderSaveState('queued', waiting, pendingCount);
+  }
+  return pendingCount;
+}
+
+function reportStorageFailure(error, { projectCached = false } = {}) {
+  if (!isStorageQuotaError(error)) return false;
+  setSaveState(
+    'error',
+    projectCached
+      ? 'Device storage full — sync queue needs space'
+      : 'Device storage full — latest edit not cached',
+  );
+  toast(projectCached
+    ? 'The project is cached, but its server queue needs more device space. Free space, then tap Sync.'
+    : 'The latest edit is still open but could not be cached. Free device space, then tap Sync before closing Kerfloom.');
+  return true;
+}
+
+function syncRetryController() {
+  if (!automaticSyncRetry) {
+    automaticSyncRetry = createSyncRetryController({
+      canRun: () => navigator.onLine && document.visibilityState !== 'hidden',
+      onRetry: () => syncWorkspaceProjects({ announce: false }),
+      onState: ({ status, delayMs }) => {
+        if (status === 'scheduled') void setPendingSaveState({ retryDelayMs: delayMs });
+        else if (status === 'exhausted') void setPendingSaveState({ exhausted: true });
+        else void setPendingSaveState();
+      },
+    });
+  }
+  return automaticSyncRetry;
+}
+
+function scheduleAutomaticSyncRetry() {
+  return syncRetryController().schedule();
+}
+
+function pauseAutomaticSyncRetry() {
+  return automaticSyncRetry?.pause();
+}
+
+function resetAutomaticSyncRetry() {
+  return automaticSyncRetry?.reset();
 }
 
 async function syncStoredProject(record) {
-  const result = await syncProject(record);
+  let result;
+  try {
+    result = await syncProject(record);
+  } catch (error) {
+    console.error('Server project synchronization failed:', error);
+    if (reportStorageFailure(error, { projectCached: true })) return { status: 'storage-full', error };
+    if (isRetryableSyncError(error)) {
+      await setPendingSaveState();
+      scheduleAutomaticSyncRetry();
+      return { status: 'retrying', error };
+    }
+    throw error;
+  }
   if (record.id === state.projectId) {
     const activeId = result.projectId || record.id;
     const current = await loadProject(activeId);
@@ -2722,12 +2817,15 @@ async function syncStoredProject(record) {
       state.serverRevision = Number(current.serverRevision) || 0;
       lastSavedRecord = current;
     }
-    if (state.dirty || current?.localSyncPending) {
-      setSaveState('saving', cachedAtLabel());
+    const pendingCount = await pendingProjectSyncCount();
+    if (state.dirty || current?.localSyncPending || pendingCount) {
+      await setPendingSaveState();
+      if (result.status === 'queued' || result.status === 'conflict-queued') {
+        scheduleAutomaticSyncRetry();
+      }
     } else if (result.status === 'synced' || result.status === 'conflict') {
+      resetAutomaticSyncRetry();
       setSaveState('saved', savedAtLabel(new Date(current?.serverSyncedAt || Date.now())));
-    } else if (result.status === 'queued' || result.status === 'superseded' || result.status === 'conflict-queued') {
-      setSaveState('saving', cachedAtLabel());
     }
   }
   return result;
@@ -2836,7 +2934,7 @@ async function persistLocally() {
     lastSavedRecord = saved;
     if (generation === dirtyGeneration) {
       state.dirty = false;
-      setSaveState('saving', cachedAtLabel());
+      await setPendingSaveState();
     } else {
       scheduleLocalSave();
     }
@@ -2844,7 +2942,9 @@ async function persistLocally() {
       await queueProjectSync(saved);
     } catch (error) {
       console.error('Could not queue the locally saved project for synchronization:', error);
-      setSaveState('error', 'Saved locally — Sync queue needs attention');
+      if (!reportStorageFailure(error, { projectCached: true })) {
+        setSaveState('error', 'Saved locally — Sync queue needs attention');
+      }
     }
     return saved;
   })();
@@ -2854,8 +2954,10 @@ async function persistLocally() {
   } catch (error) {
     console.error(error);
     state.dirty = true;
-    setSaveState('error', 'Local cache failed — Retry');
-    toast('Could not cache this project. Your current work remains open.');
+    if (!reportStorageFailure(error)) {
+      setSaveState('error', 'Local cache failed — Retry');
+      toast('Could not cache this project. Your current work remains open.');
+    }
     return null;
   } finally {
     if (localSaveInFlight === operation) localSaveInFlight = null;
@@ -2901,15 +3003,22 @@ async function syncPendingSave() {
     lastSavedRecord = current;
     const stillPending = state.dirty || current.localSyncPending || await hasPendingProjectSync(current.id);
     if (stillPending) {
-      setSaveState('saving', cachedAtLabel());
+      await setPendingSaveState();
       // A superseded upload means a newer local generation is already queued;
-      // follow it promptly. Network failures stay durable for online/manual
-      // retry instead of creating an unbounded retry loop.
+      // follow it promptly. Transient failures use the bounded retry policy.
       if (state.dirty || result.status === 'superseded') scheduleServerSync();
+      else if (result.status === 'queued' || result.status === 'conflict-queued') {
+        scheduleAutomaticSyncRetry();
+      }
     } else if (result.status === 'synced' || result.status === 'conflict') {
-      setSaveState('saved', savedAtLabel(new Date(current.serverSyncedAt || Date.now())));
-    } else if (result.status === 'queued') {
-      setSaveState('saving', cachedAtLabel());
+      const pendingCount = await pendingProjectSyncCount();
+      if (pendingCount) {
+        await setPendingSaveState();
+        scheduleAutomaticSyncRetry();
+      } else {
+        resetAutomaticSyncRetry();
+        setSaveState('saved', savedAtLabel(new Date(current.serverSyncedAt || Date.now())));
+      }
     }
     return current;
   })();
@@ -2918,10 +3027,17 @@ async function syncPendingSave() {
     return await operation;
   } catch (error) {
     console.error('Server project synchronization failed:', error);
-    if (error.code === 'workspace_changed') {
+    if (reportStorageFailure(error, { projectCached: true })) {
+      pauseAutomaticSyncRetry();
+    } else if (error.code === 'workspace_changed') {
+      pauseAutomaticSyncRetry();
       setSaveState('error', 'Workspace changed — Reload');
       toast('This browser tab belongs to the previous workspace. Reload before synchronizing.');
+    } else if (isRetryableSyncError(error)) {
+      await setPendingSaveState();
+      scheduleAutomaticSyncRetry();
     } else {
+      pauseAutomaticSyncRetry();
       setSaveState('error', 'Saved locally — Server sync failed');
     }
     return null;
@@ -2947,14 +3063,19 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
   if (workspaceSyncInFlight) return workspaceSyncInFlight;
   if (!navigator.onLine) {
     state.offline = true;
-    setSaveState('saving', cachedAtLabel());
+    pauseAutomaticSyncRetry();
+    await setPendingSaveState();
     return { status: 'offline' };
   }
   state.offline = false;
   const operation = (async () => {
+    setSaveState('saving', 'Syncing projects…');
     const activeProjectId = state.projectId;
     const activeServerRevision = state.serverRevision;
-    if (state.dirty) await flushPendingLocalSave();
+    if (state.dirty) {
+      const locallySaved = await flushPendingLocalSave();
+      if (!locallySaved || state.dirty) return { status: 'local-save-failed' };
+    }
     const result = await synchronizeProjectLibrary(({ completed, total, message }) => {
       if (announce || total > 1) {
         setSaveState('saving', total
@@ -2964,8 +3085,12 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
     });
     const current = state.projectId ? await loadProject(state.projectId) : null;
     if (result.queued) {
-      setSaveState('saving', `${result.queued} ${result.queued === 1 ? 'change' : 'changes'} waiting for server`);
-    } else if (current?.serverRevision) {
+      await setPendingSaveState();
+      scheduleAutomaticSyncRetry();
+    } else {
+      resetAutomaticSyncRetry();
+    }
+    if (!result.queued && current?.serverRevision) {
       const changedElsewhere = activeProjectId === state.projectId &&
         activeServerRevision > 0 && current.serverRevision > activeServerRevision;
       if (changedElsewhere && state.sourceMask && !state.dirty) {
@@ -2977,10 +3102,11 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
         lastSavedRecord = current;
         setSaveState('saved', savedAtLabel(new Date(current.serverSyncedAt || Date.now())));
       }
-    } else if (result.deleted?.includes(activeProjectId) && state.sourceMask) {
+    } else if (!result.queued && result.deleted?.includes(activeProjectId) && state.sourceMask) {
+      pauseAutomaticSyncRetry();
       setSaveState('error', 'Deleted on another device — edit to save a copy');
       toast('This open project was deleted on another device. A new edit will be preserved as a separate copy.');
-    } else if (!state.sourceMask) {
+    } else if (!result.queued && !state.sourceMask) {
       setSaveState('saved', 'Server workspace synchronized');
     }
     if (result.conflicts) toast(`${result.conflicts} edit conflict saved as a separate project.`);
@@ -2991,13 +3117,27 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
     return await operation;
   } catch (error) {
     console.error('Workspace synchronization failed:', error);
+    if (reportStorageFailure(error, { projectCached: true })) {
+      pauseAutomaticSyncRetry();
+      return { status: 'storage-full', error };
+    }
     if (error.code === 'workspace_changed') {
+      pauseAutomaticSyncRetry();
       setSaveState('error', 'Workspace changed — Reload');
       if (announce) toast('This browser tab belongs to the previous workspace. Reload before synchronizing.');
       return { status: 'workspace-changed', error };
     }
-    setSaveState('error', 'Server sync failed — Retry');
-    if (announce) toast('Projects remain safely cached and will retry when the server is available.');
+    if (isRetryableSyncError(error)) {
+      await setPendingSaveState();
+      const retry = scheduleAutomaticSyncRetry();
+      if (announce) toast(retry.status === 'exhausted'
+        ? 'Projects remain cached. Tap Sync to try the server again.'
+        : 'Projects remain cached and will retry automatically.');
+      return { status: retry.status === 'exhausted' ? 'error' : 'retrying', error };
+    }
+    pauseAutomaticSyncRetry();
+    setSaveState('error', 'Server sync failed — Tap Sync');
+    if (announce) toast('Projects remain safely cached. Tap Sync after reviewing the connection.');
     return { status: 'error', error };
   } finally {
     if (workspaceSyncInFlight === operation) workspaceSyncInFlight = null;
@@ -3005,11 +3145,15 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
 }
 
 async function manuallySyncProjects() {
+  resetAutomaticSyncRetry();
+  setSaveState('saving', 'Syncing projects…');
   const result = await syncWorkspaceProjects({ announce: true });
   if (result.status === 'offline') {
     toast('You are offline. Changes are safely queued and will sync when connected.');
   } else if (result.status === 'queued') {
     toast(`${result.queued} ${result.queued === 1 ? 'change is' : 'changes are'} waiting for the server.`);
+  } else if (result.status === 'retrying') {
+    toast('The server is not reachable yet. Kerfloom will retry automatically.');
   } else if (result.status === 'synced' && !result.conflicts) {
     toast('All projects are saved to the server.');
   }
@@ -3304,9 +3448,11 @@ async function openStoredProject(id) {
   await loadProjectState(project);
   await setLastProject(project.id);
   state.dirty = false;
-  setSaveState(project.serverRevision ? 'saved' : 'saving', project.serverRevision
-    ? savedAtLabel(new Date(project.serverSyncedAt || project.updatedAt))
-    : cachedAtLabel());
+  if (project.localSyncPending || !project.serverRevision) {
+    await setPendingSaveState();
+  } else {
+    setSaveState('saved', savedAtLabel(new Date(project.serverSyncedAt || project.updatedAt)));
+  }
   closeProjectLibrary();
   pushHistory();
   toast(`Opened “${project.name}”.`);
@@ -3915,11 +4061,13 @@ async function loadProjectState(project, { imported = false } = {}) {
   renderCandidates();
   selectBridge(null);
   resetHistory();
-  setSaveState(imported ? 'saving' : project.serverRevision ? 'saved' : 'saving', imported
-    ? 'Saving as a new server project…'
-    : project.serverRevision
-      ? savedAtLabel(new Date(project.serverSyncedAt ?? project.updatedAt ?? Date.now()))
-      : cachedAtLabel());
+  if (imported) {
+    setSaveState('saving', 'Saving as a new server project…');
+  } else if (project.localSyncPending || !project.serverRevision) {
+    await setPendingSaveState();
+  } else {
+    setSaveState('saved', savedAtLabel(new Date(project.serverSyncedAt ?? project.updatedAt ?? Date.now())));
+  }
   if (state.source && state.mode === 'line-art' && !state.offline) void renderStyle();
 }
 
@@ -6098,9 +6246,11 @@ function wire() {
     await loadProjectState(restored);
     const syncedRestore = await loadProject(restored.id) || restored;
     state.serverRevision = Number(syncedRestore.serverRevision) || 0;
-    setSaveState(syncedRestore.serverRevision ? 'saved' : 'saving', syncedRestore.serverRevision
-      ? savedAtLabel(new Date(syncedRestore.serverSyncedAt || Date.now()))
-      : cachedAtLabel());
+    if (syncedRestore.localSyncPending || !syncedRestore.serverRevision) {
+      await setPendingSaveState();
+    } else {
+      setSaveState('saved', savedAtLabel(new Date(syncedRestore.serverSyncedAt || Date.now())));
+    }
     pushHistory();
     toast(`Restored “${checkpoint.label}”.`);
   });
@@ -6452,6 +6602,7 @@ function wire() {
   });
 
   const flushLocalForLifecycle = () => {
+    pauseAutomaticSyncRetry();
     if (!state.dirty && !localSaveTimer) return;
     void flushPendingLocalSave();
   };
@@ -6459,7 +6610,7 @@ function wire() {
     if (document.visibilityState === 'hidden') {
       flushLocalForLifecycle();
     } else if (navigator.onLine && state.projectId) {
-      void syncPendingSave();
+      void syncWorkspaceProjects({ announce: false });
     }
   });
   window.addEventListener('pagehide', flushLocalForLifecycle);
@@ -6556,10 +6707,12 @@ export async function startEditor({ device, offline = false } = {}) {
   window.addEventListener('resize', () => fitToView());
   window.addEventListener('offline', () => {
     state.offline = true;
-    if (state.projectId) setSaveState('saving', 'Offline — changes queued');
+    pauseAutomaticSyncRetry();
+    if (state.projectId) void setPendingSaveState();
   });
   window.addEventListener('online', () => {
     state.offline = false;
+    resetAutomaticSyncRetry();
     void syncWorkspaceProjects({ announce: true });
   });
 }

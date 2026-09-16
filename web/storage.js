@@ -121,8 +121,16 @@ export async function saveProject(record, { makeCurrent = true } = {}) {
       ? record.localChangeId || null
       : crypto.randomUUID(),
   };
-  await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
-  if (makeCurrent) await setLastProject(value.id);
+  if (makeCurrent) {
+    await transaction([PROJECT_STORE, META_STORE], 'readwrite', async (stores) => {
+      await Promise.all([
+        requestResult(stores[PROJECT_STORE].put(value)),
+        requestResult(stores[META_STORE].put({ key: 'lastProjectId', value: value.id })),
+      ]);
+    });
+  } else {
+    await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  }
   return value;
 }
 

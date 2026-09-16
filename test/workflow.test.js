@@ -54,7 +54,7 @@ test('server-backed project management is searchable, recoverable, and offline s
     'btn-projects', 'btn-projects-mobile', 'btn-sync-mobile', 'btn-undo-mobile', 'btn-redo-mobile',
     'project-library-dialog', 'project-search', 'project-status-filter',
     'project-list', 'project-count-active', 'project-count-trash', 'rename-project-dialog',
-    'version-dialog', 'version-list', 'save-state-label',
+    'version-dialog', 'version-list', 'save-state-label', 'sync-pending-count',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   for (const action of ['open', 'rename', 'duplicate', 'download', 'versions', 'trash', 'restore', 'delete']) {
     assert.match(editor, new RegExp(`projectAction\\([^\\n]+['"]${action}['"]`), action);
@@ -66,8 +66,14 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(editor, /setTimeout\(\(\) => void syncPendingSave\(\), delay\)/);
   assert.match(editor, /visibilityState === 'hidden'[\s\S]*flushLocalForLifecycle\(\)/);
   assert.match(editor, /addEventListener\('pagehide', flushLocalForLifecycle\)/);
+  assert.match(editor, /pauseAutomaticSyncRetry\(\)[\s\S]*flushPendingLocalSave\(\)/);
+  assert.match(editor, /visibilityState === 'hidden'[\s\S]*syncWorkspaceProjects\(\{ announce: false \}\)/);
   assert.match(editor, /Local cache failed — Retry/);
-  assert.match(editor, /Server sync failed — Retry/);
+  assert.match(editor, /Server sync failed — Tap Sync/);
+  assert.match(editor, /Device storage full — latest edit not cached/);
+  assert.match(editor, /createSyncRetryController/);
+  assert.match(editor, /setPendingSaveState\(\{ retryDelayMs: delayMs \}\)/);
+  assert.match(editor, /if \(!locallySaved \|\| state\.dirty\) return \{ status: 'local-save-failed' \}/);
   assert.match(editor, /await flushPendingSave\(\)/);
   assert.match(editor, /serializeProject\(record, \{ pretty: true \}\)/);
   assert.match(editor, /saveCheckpoint\(project, label\)/);
@@ -77,6 +83,7 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(storage, /const CHECKPOINT_LIMIT = 10/);
   assert.match(storage, /const SYNC_STORE = 'projectSync'/);
   assert.match(storage, /export async function putProjectSync/);
+  assert.match(storage, /transaction\(\[PROJECT_STORE, META_STORE\], 'readwrite'/);
   assert.match(storage, /localSyncPending: record\.localSyncPending !== false/);
   assert.match(storage, /pending\.localChangeId === local\?\.localChangeId/);
   assert.match(projectSync, /export async function buildProjectBundle/);
@@ -85,6 +92,7 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(projectSync, /record\.localSyncPending && !pending\.has\(record\.id\)/);
   assert.match(projectSync, /!cached\?\.localSyncPending/);
   assert.match(projectSync, /export async function synchronizeProjectLibrary/);
+  assert.match(projectSync, /project\.localSyncPending \|\| !project\.serverRevision/);
   assert.match(projectSync, /'If-Match': `"\$\{operation\.expectedRevision\}"`/);
   assert.match(projectSync, /status: 'conflict'/);
   assert.match(projectSync, /Offline|navigator\.onLine/);
@@ -103,6 +111,8 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.project-library-dialog/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.mobile-projects-tool \{[\s\S]*?display: flex/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.mobile-sync-tool \{[\s\S]*?display: flex/);
+  assert.match(css, /\.mobile-sync-tool\[data-state="queued"\]/);
+  assert.match(css, /\.mobile-sync-tool\[data-state="offline"\]/);
   assert.match(editor, /\['btn-projects', 'btn-projects-mobile'\]/);
   assert.match(editor, /\['save-state', 'btn-sync-mobile'\]/);
   assert.match(editor, /\['btn-undo', 'btn-undo-mobile'\]/);

@@ -55,4 +55,10 @@ export {
 } from "./project.js";
 export { buildDesignMask, buildProjectDesign, validateProject } from "./pipeline.js";
 export { reconcileProjectAcknowledgement } from "./sync-state.js";
+export {
+  createSyncRetryController,
+  isRetryableSyncError,
+  isStorageQuotaError,
+  SYNC_RETRY_DELAYS_MS,
+} from "./sync-policy.js";
 export { CANDIDATE_PAYLOAD_VERSION, applyRasterLayers, maskFingerprint } from "./candidates.js";

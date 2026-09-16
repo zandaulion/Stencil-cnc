@@ -132,6 +132,24 @@ test('large project uploads are compressed without changing their canonical bund
   }
 });
 
+test('pending project count includes durable local markers and deduplicates queued operations', async () => {
+  const { directory, sync, storage } = await syncHarness();
+  try {
+    storage.state.projects.set('project-1', {
+      id: 'project-1', serverRevision: 3, localSyncPending: true,
+    });
+    storage.state.projects.set('project-2', {
+      id: 'project-2', serverRevision: 0, localSyncPending: false,
+    });
+    storage.state.sync.set('project-1', {
+      projectId: 'project-1', kind: 'put', operationId: 'operation-1',
+    });
+    assert.equal(await sync.pendingProjectSyncCount(), 2);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('an older upload acknowledgement cannot remove a newer queued edit', async () => {
   const originalFetch = globalThis.fetch;
   const originalNavigator = globalThis.navigator;

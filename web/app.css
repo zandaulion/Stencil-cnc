@@ -723,6 +723,23 @@ svg {
   background: var(--warning);
 }
 
+.save-state[data-state="queued"] {
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.save-state[data-state="queued"] .status-dot {
+  background: var(--warning);
+}
+
+.save-state[data-state="offline"] {
+  cursor: pointer;
+}
+
+.save-state[data-state="offline"] .status-dot {
+  background: var(--muted);
+}
+
 .save-state[data-state="error"] {
   color: var(--danger);
   cursor: pointer;
@@ -977,6 +994,54 @@ svg {
 .mobile-sync-tool[data-state="saving"] svg {
   transform-origin: center;
   animation: render-progress-spin 0.9s linear infinite;
+}
+
+.mobile-sync-tool[data-state="queued"] {
+  color: var(--warning);
+}
+
+.mobile-sync-tool[data-state="queued"] .sync-status-dot {
+  background: var(--warning);
+}
+
+.mobile-sync-tool[data-state="offline"] {
+  color: var(--muted);
+}
+
+.mobile-sync-tool[data-state="offline"] .sync-status-dot {
+  background: var(--muted);
+}
+
+.sync-pending-count {
+  display: inline-flex;
+  min-width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 8px;
+  color: var(--surface);
+  background: var(--teal);
+  font-size: 0.57rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.sync-pending-count[hidden] {
+  display: none;
+}
+
+.mobile-sync-tool[data-state="queued"] .sync-pending-count {
+  color: var(--ink);
+  background: var(--warning);
+}
+
+.mobile-sync-tool[data-state="offline"] .sync-pending-count {
+  background: var(--muted);
+}
+
+.mobile-sync-tool[data-state="error"] .sync-pending-count {
+  background: var(--danger);
 }
 
 .mobile-sync-tool[data-state="error"] {
