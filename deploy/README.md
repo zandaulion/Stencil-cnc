@@ -59,7 +59,9 @@ only after the encrypted bundle and its matching SQLite revision are committed.
 Back up the complete named volume and the active encryption key together. A
 usable recovery test must restore the database and project files as one point
 in time, start the service with the same key, and successfully download and
-decrypt at least one project bundle.
+decrypt at least one project bundle. The current backup evidence, proposed
+recovery objectives, cold-snapshot procedure, isolated verifier, and staged
+key-rotation procedure are in [RESTORE.md](RESTORE.md).
 
 ## Invite console
 

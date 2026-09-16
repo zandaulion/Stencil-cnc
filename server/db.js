@@ -15,7 +15,10 @@ function hasColumn(db, table, column) {
 export function initDatabase(db) {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA synchronous = NORMAL;');
+  // Server projects use SQLite as the committed pointer to immutable bundle
+  // files. FULL prevents an acknowledged pointer update from being lost at a
+  // power boundary while its revision file has already reached disk.
+  db.exec('PRAGMA synchronous = FULL;');
   db.exec('PRAGMA busy_timeout = 5000;');
 
   db.exec(`
@@ -102,6 +105,7 @@ export function initDatabase(db) {
       deleted_at          TEXT,
       size_bytes          INTEGER NOT NULL,
       bundle_sha256       TEXT NOT NULL,
+      key_id              TEXT,
       file_name           TEXT NOT NULL,
       UNIQUE(workspace_id, client_project_id)
     );
@@ -122,6 +126,9 @@ export function initDatabase(db) {
   }
   if (!hasColumn(db, 'server_projects', 'deleted_at')) {
     db.exec('ALTER TABLE server_projects ADD COLUMN deleted_at TEXT;');
+  }
+  if (!hasColumn(db, 'server_projects', 'key_id')) {
+    db.exec('ALTER TABLE server_projects ADD COLUMN key_id TEXT;');
   }
 
   // Every pre-workspace device receives an isolated workspace. Nothing is

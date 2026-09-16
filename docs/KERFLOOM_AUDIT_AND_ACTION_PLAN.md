@@ -406,11 +406,15 @@ Done when interruption, quota error, app backgrounding, network timeout, and reo
 
 ### K05 — Protect server commits and recoverability
 
-- [ ] Characterize crash points between encrypted file creation, file replacement, DB commit, and cleanup.
-- [ ] Design immutable revision files or an equivalent recoverable write protocol with a transactional metadata reference; separate postcommit cleanup from rollback logic.
-- [ ] Add startup/orphan recovery and conservative garbage collection. Do not remove files unless ownership and committed references are established.
-- [ ] Verify the active encryption-key source privately. Introduce key IDs/rotation support through compatible, tested migration; never print keys or swap environment values blindly.
-- [ ] Inspect current backup arrangements, document recovery objectives, and rehearse restore to an isolated service using matching database, files, and keys.
+- [x] Characterize crash points between encrypted file creation, file replacement, DB commit, and cleanup.
+- [x] Design immutable revision files or an equivalent recoverable write protocol with a transactional metadata reference; separate postcommit cleanup from rollback logic.
+- [x] Add startup/orphan recovery and conservative garbage collection. Do not remove files unless ownership and committed references are established.
+- [x] Verify the active encryption-key source privately. Introduce key IDs/rotation support through compatible, tested migration; never print keys or swap environment values blindly.
+- [x] Inspect current backup arrangements, document recovery objectives, and rehearse restore to an isolated service using matching database, files, and keys.
+
+**Status:** implementation and restore evidence are complete. New saves publish a flushed, immutable encrypted revision before atomically switching SQLite's pointer; cleanup runs only after commit and is best-effort. Startup repairs legacy `.bak` crash states and garbage-collects only recognized, unreferenced files after a 24-hour grace period. Injected precommit, postcommit, and cleanup failures retain a readable old or new revision. SQLite now uses `synchronous=FULL`. Version-2 envelopes identify their key, legacy version-1 envelopes try the retained key ring, and an explicit migration command rewrites live pointers without exposing secrets. The active production source was privately verified as `admin-derived-v1`; no dedicated project/share key is currently configured.
+
+On 2026-09-16, a cold snapshot of the live volume was restored outside the live path and verified with the matching key: 16/16 active projects opened, including 16 sources, 8 checkpoints, and 2 exports. The temporary archive was then removed. No Kerfloom backup was found in user or host systemd timers, so off-host automation remains an explicit D05 operational decision. The runbook proposes RPO <= 1 hour and RTO <= 4 hours but does not claim those objectives are currently met.
 
 Start at `server/projects.js`, `server/db.js`, key setup in `server/index.js`, and `deploy/README.md`.
 

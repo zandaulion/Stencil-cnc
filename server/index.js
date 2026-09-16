@@ -15,6 +15,7 @@ import {
 import { versionedWeb } from './serve-sw.js';
 import { ShareError, ShareService } from './shares.js';
 import { ProjectError, ProjectService } from './projects.js';
+import { resolveProjectEncryption } from './project-keys.js';
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_DIR = path.join(moduleDirectory, '../web');
@@ -83,11 +84,16 @@ export function createApp(options = {}) {
     encryptionSecret: configuredShareKey || auth.adminToken,
     maximumBytes: options.shareMaximumBytes,
   });
+  const projectEncryption = resolveProjectEncryption({
+    projectEncryptionKey: options.projectEncryptionKey,
+    projectEncryptionKeyId: options.projectEncryptionKeyId,
+    projectDecryptionKeys: options.projectDecryptionKeys,
+    shareEncryptionKey: configuredShareKey,
+    adminToken: auth.adminToken,
+  });
   const projects = options.projects || new ProjectService(database, {
     directory: options.projectDirectory,
-    encryptionSecret: (options.projectEncryptionKey ?? process.env.PROJECT_ENCRYPTION_KEY)
-      || configuredShareKey
-      || auth.adminToken,
+    ...projectEncryption,
     maximumBytes: options.projectMaximumBytes,
   });
   const limiter = options.limiter || new RedemptionLimiter({
