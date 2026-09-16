@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">Kerfloom maskable icon</title>
-  <desc id="desc">A bridged K cut through a dark metal panel.</desc>
+  <title id="title">Kerfloom</title>
+  <desc id="desc">A high-contrast bridged K for application icons.</desc>
   <defs>
-    <linearGradient id="bg" x1="40" y1="30" x2="472" y2="492" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="46" y1="34" x2="466" y2="484" gradientUnits="userSpaceOnUse">
       <stop stop-color="#263c46"/>
       <stop offset="1" stop-color="#101b21"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect x="12" y="12" width="488" height="488" rx="108" fill="url(#bg)"/>
   <path fill="#f7f7f3" d="M108 104h92v102l101-102h113L276 246l146 162H305L200 292v116h-92V104Z"/>
   <path fill="#e45f35" d="M174 207h78v84h-78z"/>
 </svg>

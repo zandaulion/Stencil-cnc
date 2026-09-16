@@ -15,6 +15,11 @@ test('Kerfloom is the public brand while project compatibility remains stable', 
   assert.match(html, /Kerfloom by Zandaulion/);
   assert.match(html, /<strong>Kerfloom<\/strong>/);
   assert.match(manifest, /"name": "Kerfloom"/);
+  assert.match(html, /rel="icon" href="\/icons\/kerfloom-48\.png"/);
+  assert.match(manifest, /"src": "\/icons\/kerfloom-48\.png"/);
+  assert.match(manifest, /"src": "\/icons\/kerfloom-256\.png"/);
+  assert.match(manifest, /"src": "\/icons\/kerfloom-maskable-512\.png"/);
+  assert.doesNotMatch(manifest, /"type": "image\/svg\+xml"/);
   assert.match(editor, /const SHARE_BUNDLE_SCHEMA = 'stencil-cnc\.share-bundle'/);
   assert.match(storage, /const DB_NAME = 'stencil-cnc'/);
 });
