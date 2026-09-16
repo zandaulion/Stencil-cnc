@@ -54,3 +54,4 @@ export {
   serializeProject,
 } from "./project.js";
 export { buildDesignMask, buildProjectDesign, validateProject } from "./pipeline.js";
+export { reconcileProjectAcknowledgement } from "./sync-state.js";

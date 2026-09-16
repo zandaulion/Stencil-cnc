@@ -3741,8 +3741,16 @@ select:focus {
 .project-library-shell {
   display: grid;
   height: 100%;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
 }
+
+.project-library-header { grid-row: 1; }
+.project-library-toolbar { grid-row: 2; }
+.project-library-tabs { grid-row: 3; }
+.project-library-summary { grid-row: 4; }
+.project-library-legacy { grid-row: 5; }
+.project-grid { grid-row: 6; }
+.project-library-footer { grid-row: 7; }
 
 .project-library-header {
   display: flex;
@@ -3836,6 +3844,36 @@ select:focus {
   display: flex;
   justify-content: space-between;
   padding: 12px 27px 4px;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.project-library-legacy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 8px 27px 0;
+  padding: 12px 14px;
+  border: 1px solid #b9d9d6;
+  border-radius: 10px;
+  background: var(--teal-soft);
+}
+
+.project-library-legacy[hidden] {
+  display: none;
+}
+
+.project-library-legacy div {
+  display: grid;
+  gap: 3px;
+}
+
+.project-library-legacy strong {
+  font-size: 0.72rem;
+}
+
+.project-library-legacy span {
   color: var(--muted);
   font-size: 0.65rem;
 }
@@ -4471,6 +4509,12 @@ select:focus {
   .project-library-tabs,
   .project-library-summary {
     padding-inline: 18px;
+  }
+
+  .project-library-legacy {
+    align-items: stretch;
+    flex-direction: column;
+    margin-inline: 18px;
   }
 
   .project-library-summary {

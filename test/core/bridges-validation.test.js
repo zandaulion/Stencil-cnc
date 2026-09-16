@@ -69,6 +69,40 @@ test("minimum-web simulation warns about a narrow structural neck", () => {
   assert.equal(validation.thinAreaZones.connectivity, 8);
 });
 
+test("a solid unanchored panel has no invented minimum-web disconnection", () => {
+  const mask = createMask(100, 100, 1);
+  const validation = validateDesign(mask, {
+    sheet: { widthMm: 100, heightMm: 100 },
+    kerfMm: 1.2,
+    minimumWebMm: 3,
+    minimumOpeningMm: 2,
+    anchorBoundary: false,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+
+  assert.equal(validation.valid, true);
+  assert.equal(validation.minimumWebCore.componentCount, 1);
+  assert.equal(validation.metrics.thinPixelCount, 0);
+  assert.ok(!validation.warnings.some((entry) => entry.code === "MIN_WEB_DISCONNECT"));
+});
+
+test("unanchored single-piece validation still finds cores split by a narrow neck", () => {
+  const mask = narrowBridgeFixture();
+  const validation = validateDesign(mask, {
+    sheet: { widthMm: 15, heightMm: 15 },
+    kerfMm: 0,
+    minimumWebMm: 2,
+    anchorBoundary: false,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+
+  assert.equal(validation.valid, true);
+  assert.ok(validation.minimumWebCore.componentCount > 1);
+  assert.ok(validation.warnings.some((entry) => entry.code === "MIN_WEB_DISCONNECT"));
+});
+
 test("cuts closer than the configured plasma gap block export", () => {
   const tooClose = maskFromAscii([
     "###########",

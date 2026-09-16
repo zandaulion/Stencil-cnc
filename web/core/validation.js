@@ -229,8 +229,19 @@ export function validateDesign(mask, config) {
         { minimumWebMm },
       ));
     }
-    if (minimumWebCore.islands.length > 0) {
-      const locations = minimumWebCore.islands.map((component) => ({
+    // In anchored mode, a surviving full-width core is weak when it no
+    // longer reaches the configured support. In the editor's single-piece
+    // mode no external anchor is required, so every component is technically
+    // an "island"; compare full-width cores to the largest/main core instead.
+    // Treating all unanchored components as weak made even a completely solid
+    // panel report one unavoidable warning.
+    const weakCoreComponents = config.requireAnchored !== false
+      ? minimumWebCore.islands
+      : config.requireSingleComponent === true
+        ? disconnectedComponents(minimumWebCore)
+        : [];
+    if (weakCoreComponents.length > 0) {
+      const locations = weakCoreComponents.map((component) => ({
         componentId: component.id,
         pixelCount: component.pixelCount,
         bounds: component.bounds,

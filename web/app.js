@@ -1,6 +1,8 @@
 import { installUpdates } from '/pwa-update.js';
 
 const AUTH_MARKER = 'stencil-cnc:linked';
+const AUTH_WORKSPACE = 'stencil-cnc:workspace-id';
+const AUTH_DEVICE_LABEL = 'stencil-cnc:device-label';
 const state = {
   editorLoaded: false,
   device: null
@@ -50,6 +52,9 @@ function clearInviteFromUrl() {
 }
 
 async function openEditor(device, { offline = false } = {}) {
+  if (!device?.workspaceId) {
+    throw new Error('Reconnect once so Kerfloom can identify this device workspace.');
+  }
   state.device = device || null;
   document.getElementById('gate-screen')?.setAttribute('hidden', '');
   document.getElementById('app-main')?.removeAttribute('hidden');
@@ -60,6 +65,8 @@ async function openEditor(device, { offline = false } = {}) {
   if (!state.editorLoaded) {
     state.editorLoaded = true;
     try {
+      const storage = await import('/storage.js');
+      storage.configureStorageWorkspace(device.workspaceId);
       const editor = await import('/editor.js');
       await editor.startEditor?.({ device, offline });
     } catch (error) {
@@ -77,6 +84,8 @@ async function checkAccess() {
   try {
     const result = await requestJson('/api/auth/me', { cache: 'no-store' });
     localStorage.setItem(AUTH_MARKER, '1');
+    localStorage.setItem(AUTH_WORKSPACE, result.device.workspaceId);
+    localStorage.setItem(AUTH_DEVICE_LABEL, result.device.label || 'Linked device');
     await openEditor(result.device);
     if (location.search) clearInviteFromUrl();
   } catch (error) {
@@ -89,8 +98,12 @@ async function checkAccess() {
     // A previously linked installed PWA remains useful without a connection.
     // Revocation takes effect on the next successful online check; cached code
     // and local projects cannot be remotely erased while the device is offline.
-    if (localStorage.getItem(AUTH_MARKER) === '1') {
-      await openEditor(null, { offline: true });
+    const offlineWorkspaceId = localStorage.getItem(AUTH_WORKSPACE);
+    if (localStorage.getItem(AUTH_MARKER) === '1' && offlineWorkspaceId) {
+      await openEditor({
+        workspaceId: offlineWorkspaceId,
+        label: localStorage.getItem(AUTH_DEVICE_LABEL) || 'Offline workspace',
+      }, { offline: true });
       return;
     }
     showGate(code);
@@ -119,6 +132,8 @@ function wireGate() {
         body: JSON.stringify({ code, label })
       });
       localStorage.setItem(AUTH_MARKER, '1');
+      localStorage.setItem(AUTH_WORKSPACE, result.device.workspaceId);
+      localStorage.setItem(AUTH_DEVICE_LABEL, result.device.label || 'Linked device');
       clearInviteFromUrl();
       await openEditor(result.device);
     } catch (error) {

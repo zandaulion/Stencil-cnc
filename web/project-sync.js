@@ -1,5 +1,6 @@
 import { deserializeProject, serializeProject } from '/core/index.js';
 import {
+  acknowledgeProjectSync,
   cacheProject,
   clearProjectAssets,
   deleteProject,
@@ -13,11 +14,13 @@ import {
   loadProject,
   loadProjectSync,
   putProjectSync,
+  storageWorkspaceId,
 } from '/storage.js';
 
 export const PROJECT_BUNDLE_SCHEMA = 'stencil-cnc.share-bundle';
 export const PROJECT_BUNDLE_VERSION = 1;
 const PROJECT_CONTENT_TYPE = 'application/vnd.kerfloom.project-bundle+json';
+const localOperationLocks = new Map();
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -141,7 +144,15 @@ async function pullProject(metadata) {
     headers: { Accept: PROJECT_CONTENT_TYPE },
   });
   if (!response.ok) throw await responseError(response, 'Could not download the project');
-  return cacheBundle(metadata, await response.json());
+  const responseRevision = Number(String(response.headers.get('ETag') || '').replaceAll('"', ''));
+  const actualMetadata = {
+    ...metadata,
+    revision: Number.isFinite(responseRevision) && responseRevision > 0
+      ? responseRevision
+      : metadata.revision,
+    sha256: responseRevision === Number(metadata.revision) ? metadata.sha256 : null,
+  };
+  return cacheBundle(actualMetadata, await response.json());
 }
 
 export async function queueProjectSync(record) {
@@ -151,6 +162,7 @@ export async function queueProjectSync(record) {
     kind: 'put',
     expectedRevision: Number(record.serverRevision) || 0,
     payload: JSON.stringify(bundle),
+    workspaceId: storageWorkspaceId(),
     queuedAt: new Date().toISOString(),
   });
 }
@@ -161,6 +173,7 @@ export async function queueProjectDeletion(record) {
     projectId: record.id,
     kind: 'delete',
     expectedRevision: Number(record.serverRevision) || 0,
+    workspaceId: storageWorkspaceId(),
     queuedAt: new Date().toISOString(),
   });
 }
@@ -180,12 +193,13 @@ async function forkConflict(operation, details) {
   bundle.project.updatedAt = timestamp.toISOString();
 
   await cacheBundle({ id: newId, revision: 0, trashedAt: bundle.trashedAt }, bundle);
-  await deleteProjectSync(operation.projectId);
+  await deleteProjectSync(operation.projectId, operation.operationId, { workspaceId: operation.workspaceId });
   const replacement = await putProjectSync({
     projectId: newId,
     kind: 'put',
     expectedRevision: 0,
     payload: JSON.stringify(bundle),
+    workspaceId: operation.workspaceId,
     queuedAt: timestamp.toISOString(),
   });
 
@@ -195,16 +209,46 @@ async function forkConflict(operation, details) {
     await pullProject(details.project);
   }
   const result = await flushProjectOperation(replacement, { resolveConflicts: false });
+  const saved = result.status === 'synced';
   return {
     ...result,
-    status: 'conflict',
+    status: saved ? 'conflict' : 'conflict-queued',
     projectId: newId,
     name: bundle.project.name,
-    message: 'Another device changed this project. Your edit was saved as a separate conflict copy.',
+    message: saved
+      ? 'Another device changed this project. Your edit was saved as a separate conflict copy.'
+      : 'Another device changed this project. Your conflict copy is saved locally and waiting for the server.',
   };
 }
 
-async function flushProjectOperation(operation, { resolveConflicts = true } = {}) {
+async function withProjectOperationLock(operation, callback) {
+  const key = `${operation.workspaceId}:${operation.projectId}`;
+  const previous = localOperationLocks.get(key) || Promise.resolve();
+  const run = previous.catch(() => {}).then(async () => {
+    const execute = async () => {
+      const current = await loadProjectSync(operation.projectId, { workspaceId: operation.workspaceId });
+      if (!current || current.operationId !== operation.operationId) {
+        return { status: 'superseded', projectId: operation.projectId };
+      }
+      return callback(current);
+    };
+    if (navigator.locks?.request) {
+      return navigator.locks.request(`kerfloom:${key}`, execute);
+    }
+    return execute();
+  });
+  localOperationLocks.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (localOperationLocks.get(key) === run) localOperationLocks.delete(key);
+  }
+}
+
+async function performProjectOperation(operation, { resolveConflicts = true } = {}) {
+  if (operation.workspaceId !== storageWorkspaceId()) {
+    return { status: 'stale-workspace', projectId: operation.projectId };
+  }
   try {
     if (operation.kind === 'delete') {
       const response = await fetch(`/api/projects/${encodeURIComponent(operation.projectId)}`, {
@@ -219,11 +263,26 @@ async function flushProjectOperation(operation, { resolveConflicts = true } = {}
       if (!response.ok) {
         const error = await responseError(response, 'Could not delete the server project');
         if (error.status === 404) {
-          await deleteProjectSync(operation.projectId);
-          return { status: 'deleted', projectId: operation.projectId };
+          const acknowledged = await acknowledgeProjectSync(
+            operation.projectId,
+            operation.operationId,
+            { revision: 0, sha256: null },
+            { workspaceId: operation.workspaceId },
+          );
+          return {
+            status: acknowledged.exact ? 'deleted' : 'superseded',
+            projectId: operation.projectId,
+          };
         }
         if (error.status === 409 && resolveConflicts) {
-          await deleteProjectSync(operation.projectId);
+          if (operation.workspaceId !== storageWorkspaceId()) {
+            return { status: 'stale-workspace', projectId: operation.projectId };
+          }
+          const current = await loadProjectSync(operation.projectId, { workspaceId: operation.workspaceId });
+          if (current && current.operationId !== operation.operationId && current.kind === 'put') {
+            return forkConflict(current, error.details);
+          }
+          await deleteProjectSync(operation.projectId, operation.operationId, { workspaceId: operation.workspaceId });
           if (error.details?.project?.deletedAt) {
             await deleteProject(operation.projectId);
           } else if (error.details?.project) {
@@ -237,8 +296,17 @@ async function flushProjectOperation(operation, { resolveConflicts = true } = {}
         }
         throw error;
       }
-      await deleteProjectSync(operation.projectId);
-      return { status: 'deleted', projectId: operation.projectId };
+      const metadata = await response.json();
+      const acknowledged = await acknowledgeProjectSync(
+        operation.projectId,
+        operation.operationId,
+        metadata,
+        { workspaceId: operation.workspaceId },
+      );
+      return {
+        status: acknowledged.exact ? 'deleted' : 'superseded',
+        projectId: operation.projectId,
+      };
     }
 
     const response = await fetch(`/api/projects/${encodeURIComponent(operation.projectId)}`, {
@@ -254,27 +322,37 @@ async function flushProjectOperation(operation, { resolveConflicts = true } = {}
     });
     if (!response.ok) {
       const error = await responseError(response, 'Could not save the server project');
-      if (error.status === 409 && resolveConflicts) return forkConflict(operation, error.details);
+      if (error.status === 409 && resolveConflicts) {
+        if (operation.workspaceId !== storageWorkspaceId()) {
+          return { status: 'stale-workspace', projectId: operation.projectId };
+        }
+        const current = await loadProjectSync(operation.projectId, { workspaceId: operation.workspaceId });
+        return forkConflict(current?.kind === 'put' ? current : operation, error.details);
+      }
       throw error;
     }
     const metadata = (await response.json()).project;
-    const local = await loadProject(operation.projectId);
-    if (local) {
-      await cacheProject({
-        ...local,
-        serverRevision: metadata.revision,
-        serverSyncedAt: new Date().toISOString(),
-        serverSha256: metadata.sha256,
-      });
-    }
-    await deleteProjectSync(operation.projectId);
-    return { status: 'synced', projectId: operation.projectId, project: metadata };
+    const acknowledged = await acknowledgeProjectSync(
+      operation.projectId,
+      operation.operationId,
+      metadata,
+      { workspaceId: operation.workspaceId },
+    );
+    return {
+      status: acknowledged.exact ? 'synced' : 'superseded',
+      projectId: operation.projectId,
+      project: metadata,
+    };
   } catch (error) {
     if (error instanceof TypeError || !navigator.onLine) {
       return { status: 'queued', projectId: operation.projectId, error };
     }
     throw error;
   }
+}
+
+async function flushProjectOperation(operation, options = {}) {
+  return withProjectOperationLock(operation, (current) => performProjectOperation(current, options));
 }
 
 export async function syncProject(record) {
@@ -349,7 +427,7 @@ export async function synchronizeProjectLibrary(onProgress = null) {
     progress(operation.kind === 'delete' ? 'Removing a deleted project…' : 'Saving a project to the server…');
     const result = await flushProjectOperation(operation);
     if (result.status === 'queued') queued += 1;
-    if (result.status === 'conflict') conflicts += 1;
+    if (result.status === 'conflict' || result.status === 'conflict-queued') conflicts += 1;
     completed += 1;
   }
 

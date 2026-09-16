@@ -54,9 +54,11 @@ import {
   downloadText,
   importArtifact,
   importCheckpoint,
+  importLegacyProjects,
   listArtifacts,
   listCheckpoints,
   listProjects,
+  legacyProjectSummary,
   loadLastProject,
   loadProject,
   loadShareSecret,
@@ -2680,6 +2682,30 @@ function cachedAtLabel() {
     : 'Offline — changes queued';
 }
 
+async function syncStoredProject(record) {
+  const result = await syncProject(record);
+  if (record.id === state.projectId) {
+    const activeId = result.projectId || record.id;
+    const current = await loadProject(activeId);
+    if (current) {
+      if (activeId !== record.id) {
+        state.projectId = activeId;
+        state.name = result.name || current.name;
+        el('project-name').value = state.name;
+        if (result.message) toast(result.message);
+      }
+      state.serverRevision = Number(current.serverRevision) || 0;
+      lastSavedRecord = current;
+    }
+    if (result.status === 'synced' || result.status === 'conflict') {
+      setSaveState('saved', savedAtLabel(new Date(current?.serverSyncedAt || Date.now())));
+    } else if (result.status === 'queued' || result.status === 'superseded' || result.status === 'conflict-queued') {
+      setSaveState('saving', cachedAtLabel());
+    }
+  }
+  return result;
+}
+
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persist, 1200);
@@ -2792,7 +2818,7 @@ async function persist() {
       state.dirty = false;
       if (syncResult.status === 'synced' || syncResult.status === 'conflict') {
         setSaveState('saved', savedAtLabel(new Date(saved.serverSyncedAt || Date.now())));
-      } else if (syncResult.status === 'queued') {
+      } else if (['queued', 'superseded', 'conflict-queued'].includes(syncResult.status)) {
         setSaveState('saving', cachedAtLabel());
       } else {
         setSaveState('error', 'Server sync failed — Retry');
@@ -2899,7 +2925,7 @@ async function createRecoveryPoint(label) {
     const project = await loadProject(state.projectId);
     if (!project) return false;
     await saveCheckpoint(project, label);
-    await syncProject(project);
+    await syncStoredProject(project);
     return true;
   } catch (error) {
     console.warn('Could not create a local recovery point:', error);
@@ -3114,9 +3140,10 @@ function renderProjectLibrary() {
 }
 
 async function refreshProjectLibrary() {
-  const [active, trash] = await Promise.all([
+  const [active, trash, legacy] = await Promise.all([
     listProjects(),
     listProjects({ trashed: true }),
+    legacyProjectSummary(),
   ]);
   el('project-count-active').textContent = String(active.length);
   el('project-count-trash').textContent = String(trash.length);
@@ -3134,6 +3161,11 @@ async function refreshProjectLibrary() {
   el('project-storage-summary').textContent = queued
     ? `${queued} ${queued === 1 ? 'change' : 'changes'} waiting to sync`
     : navigator.onLine ? 'Encrypted server storage · synchronized' : 'Offline cache · synchronized';
+  const legacyNotice = el('project-library-legacy');
+  legacyNotice.hidden = legacy.count === 0;
+  if (legacy.count) {
+    el('project-library-legacy-detail').textContent = `${legacy.count} ${legacy.count === 1 ? 'project is' : 'projects are'} quarantined from the older device-wide cache. Import only if they belong in this workspace.`;
+  }
   renderProjectLibrary();
 }
 
@@ -3265,7 +3297,7 @@ async function handleProjectAction(action, record) {
       updatedAt: null,
       trashedAt: null,
     }, { makeCurrent: false });
-    await syncProject(duplicate);
+    await syncStoredProject(duplicate);
     await refreshProjectLibrary();
     toast(`Duplicated as “${name}”.`);
     return;
@@ -3285,7 +3317,7 @@ async function handleProjectAction(action, record) {
   }
   if (action === 'restore') {
     const restored = await restoreProject(record.id);
-    await syncProject(restored);
+    await syncStoredProject(restored);
     projectLibraryView = 'active';
     await refreshProjectLibrary();
     toast(`Restored “${record.name}”.`);
@@ -3303,7 +3335,7 @@ async function handleProjectAction(action, record) {
     }
     if (record.id === state.projectId && !await flushPendingSave()) return;
     const trashed = await trashProject(record.id);
-    await syncProject(trashed);
+    await syncStoredProject(trashed);
     if (record.id === state.projectId) {
       location.reload();
       return;
@@ -3316,7 +3348,7 @@ async function handleProjectAction(action, record) {
     closeProjectLibrary();
     if (!await confirmAction(
       'Delete project forever?',
-      `“${record.name}” and its recovery points will be permanently removed from this device.`,
+      `“${record.name}” and its recovery points will be permanently removed from this server workspace and every linked device.`,
       'Delete forever',
     )) {
       await openProjectLibrary({ flush: false });
@@ -3607,7 +3639,7 @@ async function importReceivedShare() {
         blob: dataUrlToBlob(artifact.dataUrl),
       });
     }
-    await syncProject(saved);
+    await syncStoredProject(saved);
     saved = await loadProject(saved.id) || saved;
     styleAbort?.abort();
     await loadProjectState(saved);
@@ -4905,7 +4937,7 @@ async function exportGeometry(kind) {
           blob,
         });
         const withArtifact = await loadProject(state.projectId);
-        if (withArtifact) await syncProject(withArtifact);
+        if (withArtifact) await syncStoredProject(withArtifact);
       } catch (artifactError) {
         console.warn('The downloaded export could not be retained with the server project:', artifactError);
       }
@@ -5746,6 +5778,33 @@ function wire() {
   });
   el('project-search')?.addEventListener('input', renderProjectLibrary);
   el('project-status-filter')?.addEventListener('change', renderProjectLibrary);
+  el('btn-import-legacy-projects')?.addEventListener('click', async () => {
+    const legacy = await legacyProjectSummary();
+    if (!legacy.count) {
+      await refreshProjectLibrary();
+      return;
+    }
+    closeProjectLibrary();
+    const destination = state.device?.label || 'this server workspace';
+    if (!await confirmAction(
+      'Import legacy browser projects?',
+      `${legacy.count} ${legacy.count === 1 ? 'project' : 'projects'} will be copied into “${destination}” and then synchronized. The quarantined originals will remain untouched.`,
+      'Import copies',
+    )) {
+      await openProjectLibrary({ flush: false });
+      return;
+    }
+    try {
+      const imported = await importLegacyProjects();
+      for (const project of imported) await syncStoredProject(project);
+      await openProjectLibrary({ flush: false });
+      toast(`${imported.length} legacy ${imported.length === 1 ? 'project was' : 'projects were'} imported as new copies.`);
+    } catch (error) {
+      console.error('Legacy project import failed:', error);
+      await openProjectLibrary({ flush: false });
+      toast('Legacy projects remain quarantined. The import could not be completed.');
+    }
+  });
   for (const tab of all('[data-project-view]')) {
     tab.addEventListener('click', async () => {
       projectLibraryView = tab.dataset.projectView;
@@ -5824,7 +5883,7 @@ function wire() {
       const name = el('rename-project-input').value.trim();
       if (name) {
         const renamed = await updateProject(id, { name });
-        await syncProject(renamed);
+        await syncStoredProject(renamed);
         if (id === state.projectId) {
           state.name = name;
           el('project-name').value = name;
@@ -5876,7 +5935,7 @@ function wire() {
       trashedAt: null,
       serverRevision: current.serverRevision || 0,
     });
-    await syncProject(restored);
+    await syncStoredProject(restored);
     styleAbort?.abort();
     await loadProjectState(restored);
     const syncedRestore = await loadProject(restored.id) || restored;
@@ -6285,8 +6344,9 @@ export async function startEditor({ device, offline = false } = {}) {
   renderCandidates();
   renderIssues([]);
 
-  // Pull server changes and migrate every legacy browser-only project before
-  // deciding which panel to reopen. IndexedDB remains the offline cache.
+  // Pull server changes from this device's isolated workspace before deciding
+  // which panel to reopen. Legacy origin-wide projects remain quarantined and
+  // can only be copied in through the explicit Projects-library action.
   if (!state.offline) await syncWorkspaceProjects({ announce: true });
   try {
     const previous = await loadLastProject();

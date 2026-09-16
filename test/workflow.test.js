@@ -22,7 +22,11 @@ test('Kerfloom is the public brand while project compatibility remains stable', 
   assert.match(manifest, /"src": "\/icons\/kerfloom-maskable-512\.png"/);
   assert.doesNotMatch(manifest, /"type": "image\/svg\+xml"/);
   assert.match(projectSync, /export const PROJECT_BUNDLE_SCHEMA = 'stencil-cnc\.share-bundle'/);
-  assert.match(storage, /const DB_NAME = 'stencil-cnc'/);
+  assert.match(storage, /const LEGACY_DB_NAME = 'stencil-cnc'/);
+  assert.match(storage, /const WORKSPACE_DB_PREFIX = 'stencil-cnc-workspace:';/);
+  assert.match(storage, /export function configureStorageWorkspace/);
+  assert.match(html, /Legacy browser projects available/);
+  assert.match(editor, /permanently removed from this server workspace and every linked device/);
 });
 
 test('the creative workflow exposes every preview and a candidate workspace', () => {
