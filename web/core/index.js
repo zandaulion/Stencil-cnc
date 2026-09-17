@@ -65,6 +65,7 @@ export {
 } from "./cutting-profile.js";
 export { formatRulerValue, rulerStep, rulerTicks } from "./rulers.js";
 export { isCanvasShortcutTarget, isEditableShortcutTarget } from "./shortcuts.js";
+export { recommendStyleSettings } from "./style-guidance.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";
 export { DRAFT_WATERMARK_LABEL, drawDraftWatermark, maskToRgba } from "./png.js";

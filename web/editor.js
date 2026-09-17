@@ -67,6 +67,7 @@ import {
   isLegacyGeometryInterpretation,
   kerfErosionMm,
   rasterWebWidthMm,
+  recommendStyleSettings,
   retireConflictingRepairEdit,
   formatRulerValue,
   rulerTicks,
@@ -552,7 +553,7 @@ function enforcePlasmaLimits() {
     node.min = String(displayedMinimum);
     if (toMm(numberField(id, displayedMinimum)) < minimumMm) {
       node.value = String(displayedMinimum);
-      adjusted.push(`${label} to ${displayedMinimum} ${state.unit}`);
+      adjusted.push({ id, label, value: displayedMinimum, unit: state.unit });
     }
   }
   return adjusted;
@@ -1110,7 +1111,7 @@ function enforceStyleSpacing() {
     pitch.min = String(roundUnit(minim));
     if (numberField('style-pitch', 38) < minim) {
       pitch.value = roundUnit(minim);
-      ajustate.push(`bar pitch to ${pitch.value} ${state.unit}`);
+      ajustate.push({ id: 'style-pitch', label: 'bar pitch', value: pitch.value, unit: state.unit });
     }
   }
   const spacingFields = style === 'hasura'
@@ -1128,7 +1129,7 @@ function enforceStyleSpacing() {
     node.min = String(roundUnit(minim));
     if (numberField(id, 3) < minim) {
       node.value = roundUnit(minim);
-      ajustate.push(`${eticheta} to ${node.value} ${state.unit}`);
+      ajustate.push({ id, label: eticheta, value: node.value, unit: state.unit });
     }
   }
   if (style === 'raze') {
@@ -1158,10 +1159,10 @@ function enforceStyleSpacing() {
     node.max = String(roundUnit(maximumDiameter));
     if (numberField('style-ray-hub', 50) < minimumDiameter) {
       node.value = roundUnit(minimumDiameter);
-      ajustate.push(`solid hub diameter to ${node.value} ${state.unit}`);
+      ajustate.push({ id: 'style-ray-hub', label: 'solid hub diameter', value: node.value, unit: state.unit });
     } else if (numberField('style-ray-hub', 50) > maximumDiameter) {
       node.value = roundUnit(maximumDiameter);
-      ajustate.push(`solid hub diameter to ${node.value} ${state.unit}`);
+      ajustate.push({ id: 'style-ray-hub', label: 'solid hub diameter', value: node.value, unit: state.unit });
     }
   }
   if (style === 'puncte') {
@@ -1173,10 +1174,10 @@ function enforceStyleSpacing() {
     node.max = String(roundUnit(maximumDiameter));
     if (numberField('style-dot-max', 33.8) < minimumDiameter) {
       node.value = roundUnit(minimumDiameter);
-      ajustate.push(`maximum dot diameter to ${node.value} ${state.unit}`);
+      ajustate.push({ id: 'style-dot-max', label: 'maximum dot diameter', value: node.value, unit: state.unit });
     } else if (numberField('style-dot-max', 33.8) > maximumDiameter) {
       node.value = roundUnit(maximumDiameter);
-      ajustate.push(`maximum dot diameter to ${node.value} ${state.unit}`);
+      ajustate.push({ id: 'style-dot-max', label: 'maximum dot diameter', value: node.value, unit: state.unit });
     }
   }
   const lineField = {
@@ -1191,7 +1192,7 @@ function enforceStyleSpacing() {
     node.min = String(roundUnit(minimumLine));
     if (numberField(lineField, 2) < minimumLine) {
       node.value = roundUnit(minimumLine);
-      ajustate.push(`cut-line width to ${node.value} ${state.unit}`);
+      ajustate.push({ id: lineField, label: 'cut-line width', value: node.value, unit: state.unit });
     }
   }
   if (style === 'gravura') {
@@ -1200,7 +1201,7 @@ function enforceStyleSpacing() {
     node.min = String(roundUnit(minimumLength));
     if (numberField('style-wood-length', 20) < minimumLength) {
       node.value = roundUnit(minimumLength);
-      ajustate.push(`mark length to ${node.value} ${state.unit}`);
+      ajustate.push({ id: 'style-wood-length', label: 'mark length', value: node.value, unit: state.unit });
     }
   }
   if (style === 'flux') {
@@ -1211,13 +1212,127 @@ function enforceStyleSpacing() {
     widthNode.max = String(roundUnit(maximumWidth));
     if (numberField('style-flow-width', 7) < minimumWidth) {
       widthNode.value = roundUnit(minimumWidth);
-      ajustate.push(`maximum ribbon width to ${widthNode.value} ${state.unit}`);
+      ajustate.push({ id: 'style-flow-width', label: 'maximum ribbon width', value: widthNode.value, unit: state.unit });
     } else if (numberField('style-flow-width', 7) > maximumWidth) {
       widthNode.value = roundUnit(maximumWidth);
-      ajustate.push(`maximum ribbon width to ${widthNode.value} ${state.unit}`);
+      ajustate.push({ id: 'style-flow-width', label: 'maximum ribbon width', value: widthNode.value, unit: state.unit });
     }
   }
   return ajustate;
+}
+
+function activeStyleRecommendation() {
+  const panel = sheet();
+  return recommendStyleSettings(selectedCutStyle(), {
+    ...panel,
+    kerfMm: toMm(numberField('kerf', 1.2)),
+    minimumOpeningMm: toMm(numberField('min-opening', 2)),
+    minimumWebMm: toMm(numberField('min-web', 3)),
+    geometryInterpretation: state.geometryInterpretation,
+  });
+}
+
+function recommendationValue(valueMm) {
+  return `${roundUnit(fromMm(valueMm))} ${state.unit}`;
+}
+
+function updateStyleGuidance() {
+  const card = el('style-guidance');
+  if (!card) return;
+  const recommendation = activeStyleRecommendation();
+  const styleName = CUT_STYLE_NAMES[recommendation.style] || 'This style';
+  const profileState = state.cuttingProfile.status === 'verified' ? 'verified' : 'provisional';
+  const panelLabel = state.unit === 'in'
+    ? `${roundUnit(fromMm(recommendation.shortEdgeMm))} in short edge`
+    : `${Math.round(recommendation.shortEdgeMm * 10) / 10} mm short edge`;
+  el('style-guidance-title').textContent = `${styleName} · ${panelLabel}`;
+
+  const values = recommendation.values.map(({ label, valueMm }) => `${label} ${recommendationValue(valueMm)}`);
+  el('style-guidance-values').textContent = values.length
+    ? `Suggested: ${values.join(' · ')}`
+    : 'No dimensional preset is needed for this style; its creative controls remain unchanged.';
+  el('style-guidance-reason').textContent = values.length
+    ? `Scaled from the panel and the ${profileState} “${state.cuttingProfile.name}” profile. The pattern floor preserves at least ${recommendationValue(recommendation.openingMm)} openings and ${recommendationValue(toMm(numberField('min-web', 3)))} finished metal.`
+    : `The ${profileState} “${state.cuttingProfile.name}” profile still governs validation and any later supports.`;
+
+  const button = el('btn-apply-style-guidance');
+  if (!button) return;
+  button.hidden = values.length === 0;
+  const current = recommendation.values.every(({ id, valueMm }) => (
+    Math.abs(toMm(numberField(id, fromMm(valueMm))) - valueMm) <= 0.06
+  ));
+  button.disabled = current;
+  button.textContent = current ? 'Using suggested start' : 'Apply suggested start';
+  card.dataset.state = current ? 'applied' : 'available';
+}
+
+function applyStyleGuidance() {
+  const recommendation = activeStyleRecommendation();
+  for (const { id, valueMm } of recommendation.values) {
+    const node = el(id);
+    if (node) node.value = String(roundUnit(fromMm(valueMm)));
+  }
+  rememberStyleSettings();
+  reflectRayCentreControls();
+  updateRangeOutputs();
+  updateStyleGuidance();
+  return recommendation;
+}
+
+function adjustmentText(adjustment) {
+  return `${adjustment.label} to ${adjustment.value} ${adjustment.unit}`;
+}
+
+function presentConstraintAdjustments(adjustments, { announce = true } = {}) {
+  for (const node of all('[data-profile-adjusted="true"]')) {
+    delete node.dataset.profileAdjusted;
+    if (node.getAttribute('aria-describedby') === 'constraint-adjustment-note') {
+      node.removeAttribute('aria-describedby');
+    }
+  }
+  const note = el('constraint-adjustment-note');
+  if (!adjustments.length) {
+    note?.setAttribute('hidden', '');
+    return;
+  }
+  for (const adjustment of adjustments) {
+    const node = el(adjustment.id);
+    if (!node) continue;
+    node.dataset.profileAdjusted = 'true';
+    node.setAttribute('aria-describedby', 'constraint-adjustment-note');
+  }
+  const summary = adjustments.map(adjustmentText).join(' and ');
+  const copy = el('constraint-adjustment-copy');
+  if (copy) {
+    copy.textContent = `${summary}. “${state.cuttingProfile.name}” requires ${roundUnit(numberField('min-opening', 2))} ${state.unit} openings and ${roundUnit(numberField('min-web', 3))} ${state.unit} finished metal, so the previous value could not produce the requested geometry.`;
+  }
+  note?.removeAttribute('hidden');
+  if (announce) toast(`Adjusted ${summary} to fit the cutting profile.`);
+}
+
+function updateGeometryPreviewState() {
+  const container = el('geometry-preview-state');
+  const label = el('geometry-preview-state-label');
+  const copy = el('geometry-preview-state-copy');
+  if (!container || !label || !copy) return;
+
+  if (!state.source && !state.designMask) {
+    container.dataset.state = 'empty';
+    label.textContent = 'No artwork';
+    copy.textContent = 'Import an image to begin.';
+    return;
+  }
+  if (state.source && (state.styleBusy || !hasFreshStyleMask())) {
+    container.dataset.state = 'provisional';
+    label.textContent = 'Provisional preview';
+    copy.textContent = state.offline
+      ? 'Local draft only; reconnect to process the final style geometry.'
+      : 'A quick draft is visible while the final style geometry is pending.';
+    return;
+  }
+  container.dataset.state = 'processed';
+  label.textContent = 'Processed geometry';
+  copy.textContent = 'Final style render; manufacturing validation is separate.';
 }
 
 let styleToken = 0;
@@ -1244,6 +1359,7 @@ function setRenderProgress(phase = null, style = selectedCutStyle()) {
     if (visible) viewport.dataset.renderProgress = phase;
     else delete viewport.dataset.renderProgress;
   }
+  updateGeometryPreviewState();
   if (!visible) return;
 
   const title = el('render-progress-title');
@@ -1311,9 +1427,8 @@ async function renderStyle() {
   }
   const requestedStyle = selectedCutStyle();
   const ajustate = [...enforcePlasmaLimits(), ...enforceStyleSpacing()];
-  if (ajustate.length) {
-    toast(`Raised ${ajustate.join(' and ')} to fit the cut limits.`);
-  }
+  presentConstraintAdjustments(ajustate);
+  updateStyleGuidance();
   const mine = ++styleToken;
   styleAbort?.abort();
   styleAbort = new AbortController();
@@ -1425,6 +1540,7 @@ function reflectModeControls() {
   );
   reflectRayCentreControls();
   updateSlatStabilizerControls();
+  updateStyleGuidance();
 }
 
 function reflectRayCentreControls() {
@@ -3115,6 +3231,8 @@ function updateReadouts() {
   }
   renderCuttingProfileStatus();
   updateGeometryContractUi();
+  updateStyleGuidance();
+  updateGeometryPreviewState();
 }
 
 function updateGeometryContractUi() {
@@ -7049,6 +7167,12 @@ function wire() {
     });
   }
   el('btn-restyle')?.addEventListener('click', renderStyle);
+  el('btn-apply-style-guidance')?.addEventListener('click', () => {
+    const recommendation = applyStyleGuidance();
+    restyle();
+    pushHistory();
+    toast(`${CUT_STYLE_NAMES[recommendation.style] || 'Style'} now starts from this panel and cutting profile.`);
+  });
   el('btn-open-tone-adjustments')?.addEventListener('click', () => {
     setView('tone');
     if (state.view === 'tone') revealToneControls();
@@ -7081,10 +7205,11 @@ function wire() {
   for (const id of ['kerf', 'min-web', 'min-opening']) {
     el(id)?.addEventListener('input', () => {
       const adjusted = enforcePlasmaLimits();
-      if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
+      presentConstraintAdjustments(adjusted);
       markCuttingProfileSourceAsCustom();
       updateWorkingCuttingProfile();
       updateTouchupControls();
+      updateStyleGuidance();
       restyle();
       refresh();
     });
@@ -7257,7 +7382,7 @@ function wire() {
   el('stabilizer-organic')?.addEventListener('change', supportPlanChanged);
   el('bridge-width')?.addEventListener('input', () => {
     const adjusted = enforcePlasmaLimits();
-    if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
+    presentConstraintAdjustments(adjusted);
     markCuttingProfileSourceAsCustom();
     updateWorkingCuttingProfile();
     renderCuttingProfileStatus();

@@ -10,7 +10,8 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 - Converts line art locally in the browser and photographs through a private analysis service.
 - Shows the actual light, midtone, and shadow interpretation before any cut pattern is applied.
-- Provides 14 cut styles: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Flow engraving, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
+- Provides 14 cut styles with representative visual swatches and concise intent descriptions: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Flow engraving, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
+- Suggests an explicit, reversible starting point for physical pattern dimensions from the current panel size and cutting-profile limits; mandatory clamps remain explained beside the changed controls.
 - Flow engraving bends long, parallel cut ribbons around broad facial forms while enforcing the selected opening and finished-web limits during generation.
 - Radial cuts use a directly controlled solid-hub diameter and split rays progressively toward the panel edge.
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
@@ -29,7 +30,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 ## Workflow
 
-1. **Prepare** — import an image, inspect Original → Tone → Artwork, choose a cut style, and tune its visual parameters.
+1. **Prepare** — import an image, inspect Original → Tone → Artwork, choose a visually identified cut style, optionally apply its panel/profile-guided starting dimensions, and tune its creative parameters. The canvas distinguishes a quick provisional preview from the current processed style geometry; processing completion is not manufacturing validation.
 2. **Panel** — set stock dimensions, orientation, frame edges, artwork fitting, and plasma constraints.
 3. **Support** — inspect connectivity, generate smart bridges, or draw and refine supports manually.
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.

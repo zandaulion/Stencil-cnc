@@ -2242,7 +2242,7 @@ select:focus {
   position: fixed;
   z-index: 80;
   inset: auto;
-  width: min(650px, calc(100vw - 24px));
+  width: min(760px, calc(100vw - 24px));
   max-width: none;
   max-height: min(720px, calc(100dvh - 24px));
   margin: 0;
@@ -2325,10 +2325,10 @@ select:focus {
 .style-option {
   display: grid;
   min-width: 0;
-  min-height: 72px;
-  grid-template-columns: 18px minmax(0, 1fr);
+  min-height: 76px;
+  grid-template-columns: 18px 68px minmax(0, 1fr);
   gap: 9px;
-  align-items: start;
+  align-items: center;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -2354,7 +2354,7 @@ select:focus {
   accent-color: var(--teal);
 }
 
-.style-option > span {
+.style-option-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -2370,6 +2370,211 @@ select:focus {
   color: var(--muted);
   font-size: 0.57rem;
   line-height: 1.38;
+}
+
+.style-option-preview {
+  position: relative;
+  display: block;
+  width: 68px;
+  height: 50px;
+  overflow: hidden;
+  border: 1px solid rgb(20 33 41 / 18%);
+  border-radius: 7px;
+  background-color: #f7f6f1;
+  box-shadow: 0 1px 3px rgb(20 33 41 / 8%) inset;
+}
+
+.style-option-preview::before,
+.style-option-preview::after {
+  position: absolute;
+  content: "";
+}
+
+.style-option-preview[data-preview="line-art"] {
+  background:
+    radial-gradient(ellipse at 63% 43%, transparent 0 8%, #202a30 9% 13%, transparent 14%),
+    radial-gradient(ellipse at 52% 63%, #202a30 0 17%, transparent 18%),
+    linear-gradient(137deg, transparent 0 37%, #202a30 38% 45%, transparent 46% 100%),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="sablon"] {
+  background:
+    radial-gradient(ellipse at 58% 36%, #202a30 0 22%, transparent 23%),
+    radial-gradient(ellipse at 50% 78%, #202a30 0 35%, transparent 36%),
+    linear-gradient(125deg, transparent 0 18%, #202a30 19% 31%, transparent 32% 100%),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="icoana"] {
+  background:
+    radial-gradient(circle at 50% 46%, transparent 0 26%, #202a30 27% 33%, transparent 34%),
+    conic-gradient(from 4deg at 50% 46%, transparent 0 7deg, #202a30 8deg 17deg, transparent 18deg 28deg, #202a30 29deg 39deg, transparent 40deg 360deg),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="icoana"]::after {
+  inset: 15px 24px 3px;
+  border-radius: 50% 50% 18% 18%;
+  background: #202a30;
+}
+
+.style-option-preview[data-preview="grafic"] {
+  background:
+    radial-gradient(ellipse at 59% 31%, #202a30 0 19%, transparent 20%),
+    linear-gradient(116deg, transparent 0 43%, #202a30 44% 51%, transparent 52%),
+    linear-gradient(18deg, #202a30 0 31%, transparent 32%),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="silueta"]::after {
+  inset: 5px 15px -9px 20px;
+  border-radius: 48% 48% 18% 35%;
+  background: #202a30;
+  transform: rotate(-12deg);
+}
+
+.style-option-preview[data-preview="linii"] {
+  background:
+    repeating-linear-gradient(164deg, transparent 0 5px, rgb(247 246 241 / 92%) 6px 8px, transparent 9px 13px),
+    #202a30;
+}
+
+.style-option-preview[data-preview="gravura"] {
+  background:
+    repeating-linear-gradient(152deg, transparent 0 4px, #202a30 5px 7px, transparent 8px 12px),
+    radial-gradient(ellipse at 65% 45%, #202a30 0 15%, transparent 16%),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="flux"] {
+  background:
+    repeating-radial-gradient(ellipse at 15% 115%, transparent 0 5px, #202a30 6px 8px, transparent 9px 13px),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="contururi"] {
+  background:
+    repeating-radial-gradient(ellipse at 53% 54%, transparent 0 5px, #202a30 6px 7px, transparent 8px 12px),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="lamele"] {
+  background:
+    radial-gradient(ellipse at 59% 49%, rgb(32 42 48 / 62%) 0 26%, transparent 27%),
+    repeating-linear-gradient(128deg, #202a30 0 5px, transparent 6px 12px),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="hasura"] {
+  background:
+    repeating-linear-gradient(29deg, transparent 0 7px, #202a30 8px 10px, transparent 11px 15px),
+    repeating-linear-gradient(151deg, transparent 0 10px, rgb(32 42 48 / 62%) 11px 12px, transparent 13px 18px),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="raze"] {
+  background:
+    radial-gradient(circle at 34% 55%, #202a30 0 6px, transparent 7px),
+    repeating-conic-gradient(from 1deg at 34% 55%, #202a30 0 5deg, transparent 6deg 13deg),
+    #f7f6f1;
+}
+
+.style-option-preview[data-preview="puncte"] {
+  background-color: #202a30;
+  background-image:
+    radial-gradient(circle, #f7f6f1 0 2px, transparent 2.5px),
+    radial-gradient(circle, #f7f6f1 0 4px, transparent 4.5px);
+  background-position: 0 0, 8px 8px;
+  background-size: 16px 16px;
+}
+
+.style-option-preview[data-preview="ornament"] {
+  background:
+    radial-gradient(ellipse at 50% 50%, transparent 0 8%, #202a30 9% 15%, transparent 16% 25%, #202a30 26% 31%, transparent 32%),
+    conic-gradient(from 45deg, transparent 0 10deg, #202a30 11deg 22deg, transparent 23deg 68deg, #202a30 69deg 80deg, transparent 81deg 100deg),
+    #f7f6f1;
+}
+
+.style-guidance {
+  margin: -5px 0 17px;
+  padding: 12px;
+  border: 1px solid rgb(32 124 120 / 28%);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgb(226 244 241 / 72%), rgb(250 251 249 / 96%));
+}
+
+.style-guidance-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.style-guidance-heading > span {
+  color: var(--teal);
+  font-size: 0.51rem;
+  font-weight: 780;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.style-guidance-heading strong {
+  color: var(--ink);
+  font-size: 0.69rem;
+  line-height: 1.35;
+}
+
+.style-guidance p {
+  margin: 7px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.59rem;
+  line-height: 1.45;
+}
+
+.style-guidance #style-guidance-reason {
+  color: var(--muted);
+}
+
+.style-guidance .button {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  font-size: 0.61rem;
+}
+
+.style-guidance .button:disabled {
+  border-color: rgb(32 124 120 / 24%);
+  color: var(--teal);
+  background: rgb(255 255 255 / 64%);
+  opacity: 1;
+}
+
+.constraint-adjustment-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: -6px 0 17px;
+  padding: 10px 11px;
+  border: 1px solid #d9ad59;
+  border-radius: 9px;
+  background: #fff8e9;
+}
+
+.constraint-adjustment-note strong {
+  color: #72500b;
+  font-size: 0.62rem;
+}
+
+.constraint-adjustment-note span {
+  color: #6e5b34;
+  font-size: 0.57rem;
+  line-height: 1.42;
+}
+
+[data-profile-adjusted="true"] {
+  border-color: #c99022 !important;
+  box-shadow: 0 0 0 2px rgb(201 144 34 / 14%);
 }
 
 .connectivity-card,
@@ -2862,6 +3067,66 @@ select:focus {
 
 .toolbar-separator {
   flex: 1;
+}
+
+.geometry-preview-state {
+  display: inline-flex;
+  min-width: 0;
+  gap: 7px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.geometry-preview-state > i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #aeb7b3;
+}
+
+.geometry-preview-state > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.geometry-preview-state strong {
+  color: var(--ink-soft);
+  font-size: 0.56rem;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.geometry-preview-state small {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.49rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geometry-preview-state[data-state="provisional"] {
+  border-color: #d9ad59;
+  background: #fff8e9;
+}
+
+.geometry-preview-state[data-state="provisional"] > i {
+  background: #d6971b;
+}
+
+.geometry-preview-state[data-state="processed"] {
+  border-color: rgb(32 124 120 / 30%);
+  background: var(--teal-soft);
+}
+
+.geometry-preview-state[data-state="processed"] > i {
+  background: var(--teal);
 }
 
 .compact-button {
@@ -5221,6 +5486,14 @@ select:focus {
   .grid-toggle,
   .toolbar-separator {
     display: none;
+  }
+
+  .geometry-preview-state small {
+    display: none;
+  }
+
+  .geometry-preview-state {
+    padding-inline: 7px;
   }
 
   .view-modes {

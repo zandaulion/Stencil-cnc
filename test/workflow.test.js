@@ -52,6 +52,18 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   assert.match(editor, /function refresh\([\s\S]*?invalidateValidation\(/);
   assert.match(editor, /function revealToneControls\(\)[\s\S]*?setStage\('prepare'\)[\s\S]*?adjustments\.open = true[\s\S]*?scrollIntoView/);
   assert.match(editor, /name === 'tone' && state\.view === 'tone'\) revealToneControls\(\)/);
+  assert.equal([...html.matchAll(/class="style-option-preview" data-preview=/g)].length, 14);
+  for (const id of [
+    'style-guidance', 'style-guidance-title', 'style-guidance-values',
+    'btn-apply-style-guidance', 'constraint-adjustment-note',
+    'geometry-preview-state', 'geometry-preview-state-label', 'geometry-preview-state-copy',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(editor, /recommendStyleSettings\(selectedCutStyle\(\)/);
+  assert.match(editor, /function presentConstraintAdjustments\(adjustments/);
+  assert.match(editor, /label\.textContent = 'Provisional preview'/);
+  assert.match(editor, /label\.textContent = 'Processed geometry'/);
+  assert.match(css, /\.style-option-preview\[data-preview="lamele"\]/);
+  assert.match(css, /\.geometry-preview-state\[data-state="provisional"\]/);
 });
 
 test('readiness, storage, sharing, and input-format copy matches actual behavior', () => {

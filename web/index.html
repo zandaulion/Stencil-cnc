@@ -256,7 +256,8 @@
                     <div class="style-picker-grid">
                       <label class="style-option" data-category="Prepared artwork">
                         <input type="radio" name="cutStyle" value="line-art" checked>
-                        <span><strong>Line art</strong><small>Direct black-and-white thresholding for prepared drawings and logos.</small></span>
+                        <span class="style-option-preview" data-preview="line-art" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Line art</strong><small>Direct black-and-white thresholding for prepared drawings and logos.</small></span>
                       </label>
                     </div>
                   </section>
@@ -266,19 +267,23 @@
                     <div class="style-picker-grid">
                       <label class="style-option" data-category="Portrait and stencil">
                         <input type="radio" name="cutStyle" value="sablon">
-                        <span><strong>Poster stencil</strong><small>Bold light-and-dark regions with support-ready retained features.</small></span>
+                        <span class="style-option-preview" data-preview="sablon" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Poster stencil</strong><small>Bold light-and-dark regions with support-ready retained features.</small></span>
                       </label>
                       <label class="style-option" data-category="Portrait and stencil">
                         <input type="radio" name="cutStyle" value="icoana">
-                        <span><strong>Icon stencil</strong><small>Broad back-lit shapes, carved detail, and an optional segmented halo.</small></span>
+                        <span class="style-option-preview" data-preview="icoana" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Icon stencil</strong><small>Broad back-lit shapes, carved detail, and an optional segmented halo.</small></span>
                       </label>
                       <label class="style-option" data-category="Portrait and stencil">
                         <input type="radio" name="cutStyle" value="grafic">
-                        <span><strong>Graphic portrait</strong><small>Face-aware black shapes and expressive lines on a removed background.</small></span>
+                        <span class="style-option-preview" data-preview="grafic" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Graphic portrait</strong><small>Face-aware black shapes and expressive lines on a removed background.</small></span>
                       </label>
                       <label class="style-option" data-category="Portrait and stencil">
                         <input type="radio" name="cutStyle" value="silueta">
-                        <span><strong>Silhouette</strong><small>One clean back-lit subject shape with a simplified edge.</small></span>
+                        <span class="style-option-preview" data-preview="silueta" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Silhouette</strong><small>One clean back-lit subject shape with a simplified edge.</small></span>
                       </label>
                     </div>
                   </section>
@@ -288,19 +293,23 @@
                     <div class="style-picker-grid">
                       <label class="style-option" data-category="Lines and engraving">
                         <input type="radio" name="cutStyle" value="linii">
-                        <span><strong>Negative-space linework</strong><small>Facial features and folds become bright cut lines in a solid plate.</small></span>
+                        <span class="style-option-preview" data-preview="linii" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Negative-space linework</strong><small>Facial features and folds become bright cut lines in a solid plate.</small></span>
                       </label>
                       <label class="style-option" data-category="Lines and engraving">
                         <input type="radio" name="cutStyle" value="gravura">
-                        <span><strong>Icon / Woodcut</strong><small>Tapered marks follow the local form and light of the photograph.</small></span>
+                        <span class="style-option-preview" data-preview="gravura" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Icon / Woodcut</strong><small>Tapered marks follow the local form and light of the photograph.</small></span>
                       </label>
                       <label class="style-option" data-category="Lines and engraving">
                         <input type="radio" name="cutStyle" value="flux">
-                        <span><strong>Flow engraving</strong><small>Long parallel ribbons bend with facial form; highlights open while shadows stay solid.</small></span>
+                        <span class="style-option-preview" data-preview="flux" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Flow engraving</strong><small>Long parallel ribbons bend with facial form; highlights open while shadows stay solid.</small></span>
                       </label>
                       <label class="style-option" data-category="Lines and engraving">
                         <input type="radio" name="cutStyle" value="contururi">
-                        <span><strong>Contour bands</strong><small>Topographic cut lines follow transitions between tonal levels.</small></span>
+                        <span class="style-option-preview" data-preview="contururi" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Contour bands</strong><small>Topographic cut lines follow transitions between tonal levels.</small></span>
                       </label>
                     </div>
                   </section>
@@ -310,19 +319,23 @@
                     <div class="style-picker-grid">
                       <label class="style-option" data-category="Geometric patterns">
                         <input type="radio" name="cutStyle" value="lamele">
-                        <span><strong>Slats</strong><small>Angled parallel bars thicken where the picture is dark.</small></span>
+                        <span class="style-option-preview" data-preview="lamele" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Slats</strong><small>Angled parallel bars thicken where the picture is dark.</small></span>
                       </label>
                       <label class="style-option" data-category="Geometric patterns">
                         <input type="radio" name="cutStyle" value="hasura">
-                        <span><strong>Hatch</strong><small>Light regions become openings while dark features remain metal.</small></span>
+                        <span class="style-option-preview" data-preview="hasura" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Hatch</strong><small>Light regions become openings while dark features remain metal.</small></span>
                       </label>
                       <label class="style-option" data-category="Geometric patterns">
                         <input type="radio" name="cutStyle" value="raze">
-                        <span><strong>Radial cuts</strong><small>Back-lit dashes radiate from a configurable focal point.</small></span>
+                        <span class="style-option-preview" data-preview="raze" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Radial cuts</strong><small>Back-lit dashes radiate from a configurable focal point.</small></span>
                       </label>
                       <label class="style-option" data-category="Geometric patterns">
                         <input type="radio" name="cutStyle" value="puncte">
-                        <span><strong>Variable dots</strong><small>Circular openings grow with local light on a staggered grid.</small></span>
+                        <span class="style-option-preview" data-preview="puncte" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Variable dots</strong><small>Circular openings grow with local light on a staggered grid.</small></span>
                       </label>
                     </div>
                   </section>
@@ -332,12 +345,28 @@
                     <div class="style-picker-grid">
                       <label class="style-option" data-category="Decorative">
                         <input type="radio" name="cutStyle" value="ornament">
-                        <span><strong>Ornamental symmetry</strong><small>Mirrors extracted linework into a balanced decorative motif.</small></span>
+                        <span class="style-option-preview" data-preview="ornament" aria-hidden="true"></span>
+                        <span class="style-option-copy"><strong>Ornamental symmetry</strong><small>Mirrors extracted linework into a balanced decorative motif.</small></span>
                       </label>
                     </div>
                   </section>
                 </div>
               </dialog>
+
+              <section class="style-guidance" id="style-guidance" aria-labelledby="style-guidance-title">
+                <div class="style-guidance-heading">
+                  <span>Profile-guided start</span>
+                  <strong id="style-guidance-title">Checking this panel…</strong>
+                </div>
+                <p id="style-guidance-values">Suggested values will follow the panel and cutting profile.</p>
+                <p id="style-guidance-reason"></p>
+                <button class="button button-secondary" id="btn-apply-style-guidance" type="button">Apply suggested start</button>
+              </section>
+
+              <aside class="constraint-adjustment-note" id="constraint-adjustment-note" role="status" aria-live="polite" hidden>
+                <strong>Adjusted to fit the active profile</strong>
+                <span id="constraint-adjustment-copy"></span>
+              </aside>
 
               <div id="tone-controls">
                 <div class="section-title-row">
@@ -1175,6 +1204,10 @@
             <button class="toolbar-button is-selected" id="view-material" type="button" aria-pressed="true">Material</button>
             <button class="toolbar-button" id="view-backlit" type="button" aria-pressed="false">Back-lit</button>
             <button class="toolbar-button" id="view-issues" type="button" aria-pressed="false">Problems</button>
+          </div>
+          <div class="geometry-preview-state" id="geometry-preview-state" data-state="empty" role="status" aria-live="polite" aria-atomic="true">
+            <i aria-hidden="true"></i>
+            <span><strong id="geometry-preview-state-label">No artwork</strong><small id="geometry-preview-state-copy">Import an image to begin.</small></span>
           </div>
           <div class="toolbar-separator" aria-hidden="true"></div>
           <div class="toolbar-group" role="group" aria-label="Zoom controls">
