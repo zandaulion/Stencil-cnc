@@ -457,6 +457,8 @@ test('versioned cutting profiles remain provisional until the shop records evide
   assert.match(editor, /state\.lastValidatedAt = null/);
   assert.match(editor, /function restore\(serialised\)[\s\S]*?applyControls\(data\.controls\);[\s\S]*?syncCuttingProfileControls\(data\.cuttingProfile/);
   assert.match(editor, /saved measurement unit is known[\s\S]*?syncCuttingProfileControls\(project\.manufacturing\.profile\)/);
+  assert.match(editor, /async function loadProjectState\(project[\s\S]*?project = upgradeProjectRecord\(project\)/);
+  assert.match(storage, /function migrateCachedProject\(record\)[\s\S]*?upgradeProjectRecord\(record\)/);
   assert.match(html, /id="min-web"[^>]*min="2"[^>]*value="3"/);
   assert.match(html, /3 mm default, 2 mm lower exploration limit/);
   assert.match(html, /id="min-opening"[^>]*value="2"/);

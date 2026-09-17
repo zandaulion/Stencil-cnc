@@ -169,6 +169,18 @@ export function deserializeProject(serialized) {
 }
 
 /**
+ * Upgrade a browser/server record without discarding fields that intentionally
+ * live outside the portable project schema (source Blob, sync metadata, Trash).
+ */
+export function upgradeProjectRecord(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    throw new TypeError('A project record is required');
+  }
+  if (record.version === PROJECT_VERSION && record.manufacturing?.profile) return record;
+  return { ...record, ...deserializeProject(JSON.stringify(record)) };
+}
+
+/**
  * Explicit migration entry point. Version 0 was the pre-release flat draft;
  * retaining its migration makes future schema changes follow the same path.
  *

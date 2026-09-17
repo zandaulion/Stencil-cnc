@@ -54,6 +54,7 @@ import {
   setSmallOpeningRepairAction,
   suggestKerfAwareBridges,
   trimMaskToContent,
+  upgradeProjectRecord,
   validateDesign,
   zoomAroundPoint,
   isRetryableSyncError,
@@ -4893,6 +4894,7 @@ async function decodeTonePreview(payload) {
 }
 
 async function loadProjectState(project, { imported = false } = {}) {
+  project = upgradeProjectRecord(project);
   state.styleSettings = cloneStyleSettings(project.editor?.styleSettings);
   applyCanonicalProjectControls(project);
   if (project.editor?.controls) applyControls(project.editor.controls);

@@ -17,6 +17,7 @@ import {
   maskFingerprint,
   projectWithSourceMask,
   serializeProject,
+  upgradeProjectRecord,
 } from "../../web/core/index.js";
 import { maskFromAscii } from "./fixtures.js";
 
@@ -242,6 +243,32 @@ test("version 4 projects preserve manufacturing values as a legacy provisional p
   assert.deepEqual([...decodeMask(migrated.raster.sourceMask).data], [1, 0, 1]);
   assert.equal(migrated.editor.projectSummary.status, 'needs-validation');
   assert.equal(migrated.editor.projectSummary.lastValidatedAt, null);
+});
+
+test("cached version 4 records migrate before opening without losing browser metadata", () => {
+  const source = new Blob(['private source'], { type: 'image/jpeg' });
+  const legacy = JSON.parse(JSON.stringify(createProject({
+    id: 'cached-project',
+    raster: { sourceMask: encodeMask(maskFromAscii(['#'])) },
+  })));
+  legacy.version = 4;
+  delete legacy.manufacturing.profile;
+  legacy.localSource = source;
+  legacy.serverRevision = 12;
+  legacy.serverSha256 = 'abc123';
+  legacy.localSyncPending = false;
+  legacy.trashedAt = null;
+
+  const opened = upgradeProjectRecord(legacy);
+
+  assert.equal(opened.version, PROJECT_VERSION);
+  assert.equal(opened.manufacturing.profile.name, 'Legacy project settings');
+  assert.equal(opened.manufacturing.profile.status, 'provisional');
+  assert.strictEqual(opened.localSource, source);
+  assert.equal(opened.serverRevision, 12);
+  assert.equal(opened.serverSha256, 'abc123');
+  assert.equal(opened.localSyncPending, false);
+  assert.deepEqual([...decodeMask(opened.raster.sourceMask).data], [1]);
 });
 
 test("portable project files never include the browser-local source photograph", () => {

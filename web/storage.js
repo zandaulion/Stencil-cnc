@@ -1,4 +1,5 @@
 import { normalizeCuttingProfile } from '/core/cutting-profile.js';
+import { upgradeProjectRecord } from '/core/project.js';
 import { reconcileProjectAcknowledgement } from '/core/sync-state.js';
 
 const LEGACY_DB_NAME = 'stencil-cnc';
@@ -79,6 +80,11 @@ function requestResult(request) {
   });
 }
 
+function migrateCachedProject(record) {
+  if (record == null) return null;
+  return upgradeProjectRecord(record);
+}
+
 async function transaction(storeName, mode, operation, workspaceId = storageWorkspaceId()) {
   const db = await openDatabase(workspaceDatabaseName(workspaceId));
   try {
@@ -113,11 +119,12 @@ async function transaction(storeName, mode, operation, workspaceId = storageWork
 
 export async function saveProject(record, { makeCurrent = true } = {}) {
   const now = new Date().toISOString();
-  const localDraft = record.localDraft === true;
+  const migrated = migrateCachedProject(record);
+  const localDraft = migrated.localDraft === true;
   const value = {
-    ...record,
-    id: localDraft ? LOCAL_DRAFT_PROJECT_ID : record.id || crypto.randomUUID(),
-    createdAt: record.createdAt || now,
+    ...migrated,
+    id: localDraft ? LOCAL_DRAFT_PROJECT_ID : migrated.id || crypto.randomUUID(),
+    createdAt: migrated.createdAt || now,
     updatedAt: now,
     localDraft,
     localSyncPending: localDraft ? false : record.localSyncPending !== false,
@@ -143,9 +150,10 @@ export async function promoteLocalDraft(record) {
   if (record?.localDraft !== true || record.id !== LOCAL_DRAFT_PROJECT_ID) {
     throw new TypeError('A recoverable local draft is required');
   }
+  const migrated = migrateCachedProject(record);
   const now = new Date().toISOString();
   const value = {
-    ...record,
+    ...migrated,
     id: crypto.randomUUID(),
     localDraft: false,
     localSyncPending: true,
@@ -170,9 +178,10 @@ export async function promoteLocalDraft(record) {
 /** Update the browser cache without changing the project's canonical timestamps. */
 export async function cacheProject(record, { makeCurrent = false } = {}) {
   if (!record?.id) throw new TypeError('A project identifier is required');
-  await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(record)));
-  if (makeCurrent) await setLastProject(record.id);
-  return record;
+  const migrated = migrateCachedProject(record);
+  await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(migrated)));
+  if (makeCurrent) await setLastProject(migrated.id);
+  return migrated;
 }
 
 export async function setLastProject(id) {
@@ -185,7 +194,12 @@ export async function setLastProject(id) {
 
 export async function loadProject(id) {
   if (!id) return null;
-  return transaction(PROJECT_STORE, 'readonly', (store) => requestResult(store.get(id)));
+  const record = await transaction(PROJECT_STORE, 'readonly', (store) => requestResult(store.get(id)));
+  const migrated = migrateCachedProject(record);
+  if (record && migrated !== record) {
+    await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(migrated)));
+  }
+  return migrated;
 }
 
 export async function loadLastProject() {
@@ -201,6 +215,7 @@ export async function clearLastProject() {
 export async function listProjects({ trashed = false, includeDraft = false } = {}) {
   const rows = await transaction(PROJECT_STORE, 'readonly', (store) => requestResult(store.getAll()));
   return rows
+    .map(migrateCachedProject)
     .filter((row) => (includeDraft || row.localDraft !== true) && Boolean(row.trashedAt) === trashed)
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
@@ -238,7 +253,7 @@ function importedCheckpoint(projectId, checkpoint) {
     createdAt: typeof checkpoint?.createdAt === 'string'
       ? checkpoint.createdAt
       : new Date().toISOString(),
-    project: checkpoint?.project,
+    project: checkpoint?.project ? migrateCachedProject(checkpoint.project) : null,
   };
   if (!value.project || typeof value.project !== 'object' || Array.isArray(value.project)) {
     throw new TypeError('An editable checkpoint project is required');
@@ -279,6 +294,7 @@ export async function replaceProjectCache(
   if (!Array.isArray(checkpoints) || !Array.isArray(artifacts)) {
     throw new TypeError('Project checkpoints and artefacts must be arrays');
   }
+  const migratedRecord = migrateCachedProject(record);
   const preparedCheckpoints = checkpoints
     .slice(0, CHECKPOINT_LIMIT)
     .map((checkpoint) => importedCheckpoint(record.id, checkpoint));
@@ -302,7 +318,7 @@ export async function replaceProjectCache(
       pending.catch(() => {});
       writes.push(pending);
     };
-    queue(stores[PROJECT_STORE].put(record));
+    queue(stores[PROJECT_STORE].put(migratedRecord));
     for (const id of checkpointIds) queue(stores[CHECKPOINT_STORE].delete(id));
     for (const id of artifactIds) queue(stores[ARTIFACT_STORE].delete(id));
     for (const checkpoint of preparedCheckpoints) {
@@ -316,7 +332,7 @@ export async function replaceProjectCache(
     }
     await Promise.all(writes);
   });
-  return record;
+  return migratedRecord;
 }
 
 function normalizedProjectSyncOperation(operation) {
@@ -493,7 +509,9 @@ export async function listCheckpoints(projectId) {
   const rows = await transaction(CHECKPOINT_STORE, 'readonly', (store) => (
     requestResult(store.index('projectId').getAll(projectId))
   ));
-  return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return rows
+    .map((row) => ({ ...row, project: migrateCachedProject(row.project) }))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 export async function importCheckpoint(projectId, checkpoint) {
@@ -627,7 +645,7 @@ export async function importLegacyProjects() {
       serverSha256: null,
     };
     try {
-      await cacheProject(project);
+      const cachedProject = await cacheProject(project);
       for (const checkpoint of checkpoints.filter((entry) => entry.projectId === source.id)) {
         await importCheckpoint(id, {
           ...checkpoint,
@@ -639,7 +657,7 @@ export async function importLegacyProjects() {
       }
       imported.add(sourceId);
       await setStorageMeta('legacyImportedProjectIds:v1', [...imported]);
-      importedProjects.push(project);
+      importedProjects.push(cachedProject);
     } catch (error) {
       await deleteProject(id).catch(() => {});
       throw error;

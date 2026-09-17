@@ -79,6 +79,7 @@ export {
   normalizeProject,
   projectWithSourceMask,
   serializeProject,
+  upgradeProjectRecord,
 } from "./project.js";
 export { buildDesignMask, buildProjectDesign, validateProject } from "./pipeline.js";
 export { reconcileProjectAcknowledgement } from "./sync-state.js";
