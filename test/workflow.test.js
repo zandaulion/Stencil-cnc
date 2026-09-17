@@ -11,6 +11,7 @@ const storage = fs.readFileSync(path.join(projectRoot, 'web/storage.js'), 'utf8'
 const manifest = fs.readFileSync(path.join(projectRoot, 'web/manifest.webmanifest'), 'utf8');
 const projectSync = fs.readFileSync(path.join(projectRoot, 'web/project-sync.js'), 'utf8');
 const png = fs.readFileSync(path.join(projectRoot, 'web/core/png.js'), 'utf8');
+const accessibility = fs.readFileSync(path.join(projectRoot, 'web/core/accessibility.js'), 'utf8');
 
 test('Kerfloom is the public brand while project compatibility remains stable', () => {
   assert.match(html, /<title>Kerfloom — Art that holds together<\/title>/);
@@ -96,7 +97,32 @@ test('the desktop editor stays within the viewport while side panels scroll inte
   assert.match(css, /body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
   assert.match(css, /#app-main,\s*\.app-shell \{[\s\S]*?height: 100dvh;[\s\S]*?max-height: 100dvh;/);
   assert.match(css, /@media \(max-width: 1020px\)[\s\S]*?\.editor-layout \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);[\s\S]*?overflow: hidden;/);
-  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?body\.editor-open \{[\s\S]*?overflow: auto;/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.workspace-pane \{[\s\S]*?height: 100%;[\s\S]*?min-height: 0;/);
+});
+
+test('mobile controls, keyboard tabs, announcements, and gestures have accessible paths', () => {
+  for (const id of [
+    'stage-controls-pane', 'review-pane', 'btn-mobile-controls', 'btn-mobile-review',
+    'btn-close-mobile-controls', 'btn-close-mobile-review', 'mobile-sheet-backdrop',
+    'accessible-status', 'accessible-alert',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.doesNotMatch(html, /user-scalable\s*=\s*no|maximum-scale\s*=\s*1/i);
+  assert.match(html, /role="tab"[^>]*aria-selected="false"[^>]*tabindex="-1"/);
+  assert.match(editor, /function wireTabKeyboard\([\s\S]*?tabIndexForKey\(/);
+  assert.match(editor, /tab\.tabIndex = active \? 0 : -1/);
+  assert.match(editor, /function announce\([\s\S]*?accessible-alert[\s\S]*?requestAnimationFrame/);
+  assert.match(editor, /function syncMobileWorkspaceLayout\([\s\S]*?controls\.inert[\s\S]*?review\.inert/);
+  assert.match(editor, /let activeCanvasPointerId = null/);
+  assert.match(editor, /event\.isPrimary === false \|\| activeCanvasPointerId !== null/);
+  assert.match(editor, /pointercancel[\s\S]*?activeCanvasPointerId = null/);
+  assert.match(css, /\.canvas-viewport \{[\s\S]*?touch-action: pinch-zoom;/);
+  assert.match(css, /\.canvas-viewport\[data-active-tool="support"\][\s\S]*?touch-action: none;/);
+  assert.match(css, /\.controls-pane\.is-mobile-open,[\s\S]*?\.issues-pane\.is-mobile-open/);
+  assert.match(css, /\.mobile-canvas-actions \{[\s\S]*?position: absolute/);
+  assert.match(css, /--action: #a83d20;/);
+  assert.match(css, /--action-hover: #8f3119;/);
+  assert.match(accessibility, /export function tabIndexForKey/);
 });
 
 test('server-backed project management is searchable, recoverable, and offline safe', () => {

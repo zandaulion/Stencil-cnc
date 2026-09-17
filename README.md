@@ -36,6 +36,14 @@ The central rule is simple: dark geometry represents retained metal and light ge
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.
 5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Kerfloom project.
 
+### Mobile and keyboard workflow
+
+On screens up to 720 px wide, the canvas remains fixed in the available app viewport. Tap any numbered stage, or **Adjust _stage_**, to open that stage's controls in a compact bottom sheet; close it to inspect the result without scrolling past the controls. **Candidates/Problems** opens the review sheet. Projects, synchronization state, Undo/Redo, and editing tools remain in the bottom rail, while **Fit** remains visible in the two-row canvas toolbar. The tool rail scrolls horizontally when the screen cannot hold every editing tool.
+
+Workflow, review, and project-library tabs use Left/Right Arrow, Home, and End. Visible focus is retained throughout the editor, and transient visual notices are mirrored into persistent polite or urgent live regions. In **Pan**, one finger moves the canvas and browser pinch zoom remains available. Add/Remove/Artwork/Support modes reserve one primary pointer for the active edit and release it safely on browser cancellation; switch back to Pan for page-level pinch zoom. Support creation and editing also have tap-start/tap-end, numeric, list, and keyboard alternatives.
+
+This is an accessibility-oriented interaction pass, not a blanket WCAG conformance claim. The current physical-device and assistive-technology acceptance matrix is recorded in [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md).
+
 ### Flow engraving
 
 Choose **Lines and engraving → Flow engraving** for portraits made from long,

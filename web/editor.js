@@ -64,6 +64,7 @@ import {
   cuttingProfileVerificationProblems,
   isCanvasShortcutTarget,
   isEditableShortcutTarget,
+  tabIndexForKey,
   isLegacyGeometryInterpretation,
   kerfErosionMm,
   rasterWebWidthMm,
@@ -4519,7 +4520,9 @@ async function refreshProjectLibrary() {
   for (const tab of all('[data-project-view]')) {
     const selected = tab.dataset.projectView === projectLibraryView;
     tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
   }
+  el('project-list')?.setAttribute('aria-labelledby', `project-tab-${projectLibraryView}`);
   if (el('project-status-filter')) el('project-status-filter').disabled = projectLibraryView === 'trash';
   const queued = await pendingProjectSyncCount();
   el('project-storage-summary').textContent = queued
@@ -6805,7 +6808,93 @@ function exportFilename(kind, timestamp = state.exportTimestamp ?? new Date(), {
 
 /* ------------------------------------------------------------------ chrome */
 
+const MOBILE_WORKSPACE_QUERY = '(max-width: 720px)';
+let mobileSheet = null;
+let mobileSheetReturnFocus = null;
+let tabKeyboardNavigation = false;
+
+function mobileWorkspaceActive() {
+  return window.matchMedia?.(MOBILE_WORKSPACE_QUERY).matches === true;
+}
+
+function syncMobileWorkspaceLayout() {
+  const mobile = mobileWorkspaceActive();
+  const controls = el('stage-controls-pane');
+  const review = el('review-pane');
+  if (!mobile) {
+    mobileSheet = null;
+    controls?.classList.remove('is-mobile-open');
+    review?.classList.remove('is-mobile-open');
+    if (controls) controls.inert = false;
+    if (review) review.inert = false;
+    el('mobile-sheet-backdrop')?.setAttribute('hidden', '');
+    el('btn-mobile-controls')?.setAttribute('aria-expanded', 'false');
+    el('btn-mobile-review')?.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('mobile-sheet-open');
+    return;
+  }
+  if (controls) controls.inert = mobileSheet !== 'controls';
+  if (review) review.inert = mobileSheet !== 'review';
+}
+
+function closeMobileSheet({ returnFocus = false } = {}) {
+  const trigger = mobileSheetReturnFocus;
+  const focusedInSheet = el('stage-controls-pane')?.contains(document.activeElement)
+    || el('review-pane')?.contains(document.activeElement);
+  mobileSheet = null;
+  mobileSheetReturnFocus = null;
+  el('stage-controls-pane')?.classList.remove('is-mobile-open');
+  el('review-pane')?.classList.remove('is-mobile-open');
+  el('btn-mobile-controls')?.setAttribute('aria-expanded', 'false');
+  el('btn-mobile-review')?.setAttribute('aria-expanded', 'false');
+  el('mobile-sheet-backdrop')?.setAttribute('hidden', '');
+  document.body.classList.remove('mobile-sheet-open');
+  syncMobileWorkspaceLayout();
+  if (returnFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+  else if (focusedInSheet) el('canvas-viewport')?.focus({ preventScroll: true });
+}
+
+function openMobileSheet(kind) {
+  if (!mobileWorkspaceActive() || !['controls', 'review'].includes(kind)) return;
+  closeToolOptions();
+  const controls = el('stage-controls-pane');
+  const review = el('review-pane');
+  mobileSheet = kind;
+  mobileSheetReturnFocus = el(kind === 'controls' ? 'btn-mobile-controls' : 'btn-mobile-review');
+  controls?.classList.toggle('is-mobile-open', kind === 'controls');
+  review?.classList.toggle('is-mobile-open', kind === 'review');
+  el('btn-mobile-controls')?.setAttribute('aria-expanded', String(kind === 'controls'));
+  el('btn-mobile-review')?.setAttribute('aria-expanded', String(kind === 'review'));
+  el('mobile-sheet-backdrop')?.removeAttribute('hidden');
+  document.body.classList.add('mobile-sheet-open');
+  syncMobileWorkspaceLayout();
+  requestAnimationFrame(() => {
+    el(kind === 'controls' ? 'btn-close-mobile-controls' : 'btn-close-mobile-review')
+      ?.focus({ preventScroll: true });
+  });
+}
+
+function wireTabKeyboard(tabList, selector = '[role="tab"]') {
+  if (!tabList) return;
+  tabList.addEventListener('keydown', (event) => {
+    const tabs = [...tabList.querySelectorAll(selector)].filter((tab) => !tab.disabled && !tab.hidden);
+    const currentIndex = tabs.indexOf(event.target.closest?.(selector));
+    if (currentIndex < 0) return;
+    const nextIndex = tabIndexForKey(event.key, currentIndex, tabs.length);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    tabKeyboardNavigation = true;
+    try {
+      tabs[nextIndex].click();
+    } finally {
+      tabKeyboardNavigation = false;
+    }
+    tabs[nextIndex].focus({ preventScroll: true });
+  });
+}
+
 function setStage(stage) {
+  const previousStage = state.stage;
   state.stage = stage;
   const order = ['prepare', 'panel', 'support', 'validate', 'export'];
   for (const name of order) {
@@ -6813,6 +6902,7 @@ function setStage(stage) {
     const panel = el(`panel-${name}`);
     const active = name === stage;
     tab?.setAttribute('aria-selected', String(active));
+    if (tab) tab.tabIndex = active ? 0 : -1;
     tab?.classList.toggle('is-active', active);
     panel?.toggleAttribute('hidden', !active);
     panel?.classList.toggle('is-active', active);
@@ -6820,7 +6910,10 @@ function setStage(stage) {
   el('current-step-number').textContent = String(order.indexOf(stage) + 1);
   el('current-stage-title').textContent = el(`stage-${stage}`)?.dataset.title
     || el(`stage-${stage}`)?.textContent.trim() || stage;
+  const mobileLabel = el('mobile-controls-stage');
+  if (mobileLabel) mobileLabel.textContent = el(`stage-${stage}`)?.querySelector('.stage-label')?.textContent || stage;
   setSidePanel(stage === 'prepare' || stage === 'panel' ? 'candidates' : 'issues');
+  if (previousStage !== stage && mobileWorkspaceActive()) closeMobileSheet();
 }
 
 function setView(view) {
@@ -6845,6 +6938,7 @@ function setView(view) {
 
 function revealToneControls() {
   setStage('prepare');
+  if (mobileWorkspaceActive()) openMobileSheet('controls');
   const adjustments = el('tone-adjustments');
   if (adjustments) adjustments.open = true;
   requestAnimationFrame(() => {
@@ -6876,10 +6970,13 @@ function setSidePanel(panel) {
   for (const name of ['candidates', 'issues']) {
     const selected = name === state.sidePanel;
     el(`side-${name}`)?.setAttribute('aria-selected', String(selected));
+    if (el(`side-${name}`)) el(`side-${name}`).tabIndex = selected ? 0 : -1;
     el(`side-${name}`)?.classList.toggle('is-selected', selected);
     el(name === 'candidates' ? 'candidate-side-panel' : 'issues-side-panel')
       ?.toggleAttribute('hidden', !selected);
   }
+  const mobileLabel = el('mobile-review-label');
+  if (mobileLabel) mobileLabel.textContent = state.sidePanel === 'issues' ? 'Problems' : 'Candidates';
 }
 
 function setTool(tool) {
@@ -6994,6 +7091,7 @@ function openToolOptions(kind) {
   const actions = el('tool-options-actions');
   const content = el('tool-options-content');
   if (!config || !panel || !actions || !content) return;
+  closeMobileSheet();
   if (toolOptionsKind && toolOptionsKind !== kind) closeToolOptions();
   toolOptionsKind = kind;
   el('tool-options-title').textContent = config.title;
@@ -7066,7 +7164,17 @@ function updateTouchupControls() {
   else hint.textContent = `Drag a continuous ${roundUnit(fromMm(touchupSizeMm()))} ${state.unit} physical-width stroke.`;
 }
 
-function toast(message) {
+function announce(message, { urgent = false } = {}) {
+  const target = el(urgent ? 'accessible-alert' : 'accessible-status');
+  if (!target) return;
+  // Keep a stable live-region node and refresh only its text so repeated
+  // results are announced without disappearing with the visual toast.
+  target.textContent = '';
+  requestAnimationFrame(() => { target.textContent = message; });
+}
+
+function toast(message, { urgent = /(?:failed|could not|cannot|error|invalid|unavailable)/i.test(message) } = {}) {
+  announce(message, { urgent });
   const region = el('toast-region');
   if (!region) return;
   const node = document.createElement('div');
@@ -7204,8 +7312,14 @@ let styleTimer = null;
 
 function wire() {
   // --- stages
+  wireTabKeyboard(document.querySelector('.workflow-nav [role="tablist"]'));
+  wireTabKeyboard(document.querySelector('.side-rail-tabs'));
+  wireTabKeyboard(document.querySelector('.project-library-tabs'));
   for (const name of ['prepare', 'panel', 'support', 'validate', 'export']) {
-    el(`stage-${name}`)?.addEventListener('click', () => setStage(name));
+    el(`stage-${name}`)?.addEventListener('click', () => {
+      setStage(name);
+      if (mobileWorkspaceActive() && !tabKeyboardNavigation) openMobileSheet('controls');
+    });
   }
   for (const button of all('.stage-next')) {
     button.addEventListener('click', () => setStage(button.dataset.nextStage));
@@ -7213,6 +7327,7 @@ function wire() {
   for (const button of all('[data-edit-manufacturing]')) {
     button.addEventListener('click', () => {
       setStage('panel');
+      if (mobileWorkspaceActive()) openMobileSheet('controls');
       requestAnimationFrame(() => {
         el('manufacturing-settings')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
         el('kerf')?.focus({ preventScroll: true });
@@ -7229,6 +7344,11 @@ function wire() {
     };
     toast(help[state.stage] || 'Work through the five stages to produce cut-ready geometry.');
   });
+  el('btn-mobile-controls')?.addEventListener('click', () => openMobileSheet('controls'));
+  el('btn-mobile-review')?.addEventListener('click', () => openMobileSheet('review'));
+  el('btn-close-mobile-controls')?.addEventListener('click', () => closeMobileSheet({ returnFocus: true }));
+  el('btn-close-mobile-review')?.addEventListener('click', () => closeMobileSheet({ returnFocus: true }));
+  el('mobile-sheet-backdrop')?.addEventListener('click', () => closeMobileSheet({ returnFocus: true }));
 
   // --- import
   el('style-picker-trigger')?.addEventListener('click', openStylePicker);
@@ -7245,7 +7365,10 @@ function wire() {
   window.addEventListener('resize', positionStylePicker);
 
   el('file-input')?.addEventListener('change', (event) => importFile(event.target.files?.[0]));
-  el('btn-empty-import')?.addEventListener('click', () => el('file-input')?.click());
+  el('btn-empty-import')?.addEventListener('click', () => {
+    if (mobileWorkspaceActive()) openMobileSheet('controls');
+    requestAnimationFrame(() => el('file-input')?.click());
+  });
   const zone = el('drop-zone');
   zone?.addEventListener('dragover', (event) => { event.preventDefault(); zone.dataset.dragging = 'true'; });
   zone?.addEventListener('dragleave', () => { delete zone.dataset.dragging; });
@@ -7610,6 +7733,7 @@ function wire() {
     setStage('validate');
     setSidePanel('issues');
     setView('issues');
+    if (mobileWorkspaceActive()) openMobileSheet('review');
     if (!state.validation) toast('Run all checks to locate manufacturing problems.');
   });
   for (const node of all('input[name="touchupMode"]')) {
@@ -8061,6 +8185,7 @@ function wire() {
   let draggingBridge = null;
   let touchupStroke = null;
   let touchupDrawFrame = null;
+  let activeCanvasPointerId = null;
 
   const scheduleLiveTouchupDraw = () => {
     if (touchupDrawFrame !== null) return;
@@ -8089,11 +8214,14 @@ function wire() {
       end: { ...bridge.end },
       reviewAnchor: captureManualValidationReview(),
     };
+    activeCanvasPointerId = event.pointerId;
     viewport.setPointerCapture(event.pointerId);
     viewport.style.cursor = mode === 'move' ? 'move' : 'crosshair';
   };
 
   viewport?.addEventListener('pointerdown', (event) => {
+    if (event.isPrimary === false || activeCanvasPointerId !== null
+      || (event.pointerType === 'mouse' && event.button !== 0)) return;
     viewport.focus({ preventScroll: true });
     const { x, y, inside } = pointerToMask(event);
     if (state.tool === 'artwork' && state.placement && inside) {
@@ -8104,6 +8232,7 @@ function wire() {
         offsetXMm: transform.offsetXMm,
         offsetYMm: transform.offsetYMm,
       };
+      activeCanvasPointerId = event.pointerId;
       viewport.setPointerCapture(event.pointerId);
       viewport.style.cursor = 'grabbing';
       return;
@@ -8129,6 +8258,7 @@ function wire() {
       };
       state.supportTapStart = null;
       state.bridgePreview = { start: drawingFrom, end, width: safeBridgeWidthMm() };
+      activeCanvasPointerId = event.pointerId;
       viewport.setPointerCapture(event.pointerId);
       draw();
       return;
@@ -8159,6 +8289,7 @@ function wire() {
       state.touchupPreview = mode === 'straight'
         ? { mode: 'straight', start: { x, y }, end: { x, y }, diameterMm: touchupSizeMm() }
         : { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
+      activeCanvasPointerId = event.pointerId;
       viewport.setPointerCapture(event.pointerId);
       if (touchupStroke.changed && mode === 'freehand') scheduleLiveTouchupDraw();
       else if (touchupStroke.changed) refresh({ reanalyse: false, manualGeometryEdit: true });
@@ -8168,11 +8299,14 @@ function wire() {
     state.hoveredBridge = null;
     if (state.selectedBridge) selectBridge(null);
     panning = { x: event.clientX - state.pan.x, y: event.clientY - state.pan.y };
+    activeCanvasPointerId = event.pointerId;
     viewport.setPointerCapture(event.pointerId);
     viewport.style.cursor = 'grabbing';
   });
 
   viewport?.addEventListener('pointermove', (event) => {
+    if (activeCanvasPointerId !== null && event.pointerId !== activeCanvasPointerId) return;
+    if (activeCanvasPointerId === null && event.isPrimary === false) return;
     const { x, y, inside, mmX, mmY } = pointerToMm(event);
     if (inside && state.designMask) {
       el('pointer-position').textContent = state.unit === 'in'
@@ -8259,6 +8393,7 @@ function wire() {
   });
 
   viewport?.addEventListener('pointerup', (event) => {
+    if (activeCanvasPointerId !== null && event.pointerId !== activeCanvasPointerId) return;
     const releasePoint = pointerToMask(event);
     const inside = releasePoint.inside;
     if (draggingArtwork) {
@@ -8349,6 +8484,7 @@ function wire() {
     }
     panning = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+    activeCanvasPointerId = null;
     viewport.style.cursor = state.tool === 'pan' ? 'grab' : state.tool === 'artwork' ? 'move' : 'crosshair';
   });
 
@@ -8360,6 +8496,7 @@ function wire() {
   });
 
   viewport?.addEventListener('pointercancel', (event) => {
+    if (activeCanvasPointerId !== null && event.pointerId !== activeCanvasPointerId) return;
     const painted = touchupStroke?.changed === true;
     const movedBridge = Boolean(draggingBridge);
     const movedArtwork = Boolean(draggingArtwork);
@@ -8379,6 +8516,7 @@ function wire() {
     state.touchupPreview = null;
     state.hoveredBridge = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+    activeCanvasPointerId = null;
     if (painted) {
       refresh({ immediate: true, manualGeometryEdit: true });
       pushHistory();
@@ -8445,6 +8583,7 @@ function wire() {
       }
       else if (state.selectedBridge) selectBridge(null);
       else if (toolOptionsKind) closeToolOptions({ returnFocus: true });
+      else if (mobileSheet) closeMobileSheet({ returnFocus: true });
       else setTool('pan');
       return;
     }
@@ -8576,6 +8715,7 @@ export async function startEditor({ device, offline = false } = {}) {
   state.offline = offline || !navigator.onLine;
 
   wire();
+  syncMobileWorkspaceLayout();
   syncCuttingProfileControls();
   enforcePlasmaLimits();
   setMode(document.querySelector('input[name="cutStyle"]:checked')?.value === 'line-art' ? 'line-art' : 'photo');
@@ -8629,7 +8769,10 @@ export async function startEditor({ device, offline = false } = {}) {
     state.dirty || state.styleBusy || state.shareBusy || workspaceSyncInFlight ||
     localSaveInFlight || serverSyncInFlight || rebuildTimer || localSaveTimer || serverSyncTimer || styleTimer,
   );
-  window.addEventListener('resize', () => fitToView());
+  window.addEventListener('resize', () => {
+    syncMobileWorkspaceLayout();
+    fitToView();
+  });
   window.addEventListener('offline', () => {
     state.offline = true;
     pauseAutomaticSyncRetry();

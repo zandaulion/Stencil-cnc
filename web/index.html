@@ -142,28 +142,28 @@
           </button>
         </li>
         <li>
-          <button id="stage-panel" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-panel" data-stage="panel">
+          <button id="stage-panel" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-panel" data-stage="panel" tabindex="-1">
             <span class="stage-number">2</span>
             <span class="stage-label">Panel</span>
             <span class="stage-state"></span>
           </button>
         </li>
         <li>
-          <button id="stage-support" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-support" data-stage="support">
+          <button id="stage-support" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-support" data-stage="support" tabindex="-1">
             <span class="stage-number">3</span>
             <span class="stage-label">Support</span>
             <span class="stage-state"></span>
           </button>
         </li>
         <li>
-          <button id="stage-validate" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-validate" data-stage="validate">
+          <button id="stage-validate" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-validate" data-stage="validate" tabindex="-1">
             <span class="stage-number">4</span>
             <span class="stage-label">Validate</span>
             <span class="stage-state"></span>
           </button>
         </li>
         <li>
-          <button id="stage-export" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-export" data-stage="export">
+          <button id="stage-export" class="stage-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-export" data-stage="export" tabindex="-1">
             <span class="stage-number">5</span>
             <span class="stage-label">Export</span>
             <span class="stage-state"></span>
@@ -173,15 +173,20 @@
     </nav>
 
     <main class="editor-layout">
-      <aside class="controls-pane" aria-label="Stage controls">
+      <aside class="controls-pane" id="stage-controls-pane" aria-label="Stage controls">
         <div class="pane-heading">
           <div>
             <span class="eyebrow">Step <span id="current-step-number">1</span> of 5</span>
             <h1 id="current-stage-title">Prepare artwork</h1>
           </div>
-          <button class="icon-button pane-help" id="btn-stage-help" type="button" aria-label="Help for this stage" title="Stage help">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.8 9a2.3 2.3 0 1 1 3.8 1.8c-1 .7-1.6 1.1-1.6 2.3M12 17h.01"></path></svg>
-          </button>
+          <div class="pane-heading-actions">
+            <button class="icon-button pane-help" id="btn-stage-help" type="button" aria-label="Help for this stage" title="Stage help">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.8 9a2.3 2.3 0 1 1 3.8 1.8c-1 .7-1.6 1.1-1.6 2.3M12 17h.01"></path></svg>
+            </button>
+            <button class="icon-button mobile-sheet-close" id="btn-close-mobile-controls" type="button" aria-label="Close stage controls" title="Close stage controls">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+            </button>
+          </div>
         </div>
 
         <div class="stage-panels">
@@ -1311,12 +1316,27 @@
             <span id="panel-scale-status">1250 × 2500 mm</span>
           </div>
         </footer>
+
+        <div class="mobile-canvas-actions" aria-label="Canvas panels">
+          <button class="button button-primary" id="btn-mobile-controls" type="button" aria-expanded="false" aria-controls="stage-controls-pane">
+            Adjust <span id="mobile-controls-stage">Prepare</span>
+          </button>
+          <button class="button button-secondary" id="btn-mobile-review" type="button" aria-expanded="false" aria-controls="review-pane">
+            <span id="mobile-review-label">Candidates</span>
+          </button>
+        </div>
       </section>
 
-      <aside class="issues-pane" aria-label="Creative candidates and geometry issues">
+      <aside class="issues-pane" id="review-pane" aria-label="Creative candidates and geometry issues">
+        <div class="mobile-sheet-heading">
+          <strong>Project review</strong>
+          <button class="icon-button mobile-sheet-close" id="btn-close-mobile-review" type="button" aria-label="Close project review" title="Close project review">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+          </button>
+        </div>
         <div class="side-rail-tabs" role="tablist" aria-label="Right panel">
           <button class="side-rail-tab is-selected" id="side-candidates" type="button" role="tab" aria-selected="true" aria-controls="candidate-side-panel">Candidates</button>
-          <button class="side-rail-tab" id="side-issues" type="button" role="tab" aria-selected="false" aria-controls="issues-side-panel">Problems</button>
+          <button class="side-rail-tab" id="side-issues" type="button" role="tab" aria-selected="false" aria-controls="issues-side-panel" tabindex="-1">Problems</button>
         </div>
 
         <section class="candidate-side-panel" id="candidate-side-panel" role="tabpanel" aria-labelledby="side-candidates">
@@ -1486,11 +1506,14 @@
         </button>
         </section>
       </aside>
+      <button class="mobile-sheet-backdrop" id="mobile-sheet-backdrop" type="button" aria-label="Close open panel" hidden></button>
     </main>
   </div>
   </div>
 
-  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div class="toast-region" id="toast-region"></div>
+  <div class="visually-hidden" id="accessible-status" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div class="visually-hidden" id="accessible-alert" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
   <dialog class="app-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-title">
     <form method="dialog">
@@ -1534,8 +1557,8 @@
       </div>
 
       <div class="project-library-tabs" role="tablist" aria-label="Project location">
-        <button type="button" role="tab" data-project-view="active" aria-selected="true">Projects <span id="project-count-active">0</span></button>
-        <button type="button" role="tab" data-project-view="trash" aria-selected="false">Trash <span id="project-count-trash">0</span></button>
+        <button id="project-tab-active" type="button" role="tab" data-project-view="active" aria-selected="true" aria-controls="project-list">Projects <span id="project-count-active">0</span></button>
+        <button id="project-tab-trash" type="button" role="tab" data-project-view="trash" aria-selected="false" aria-controls="project-list" tabindex="-1">Trash <span id="project-count-trash">0</span></button>
       </div>
 
       <div class="project-library-summary">
