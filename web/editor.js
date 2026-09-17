@@ -7934,8 +7934,8 @@ function wire() {
     if (event.altKey || editableTarget) return;
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (toolOptionsKind) closeToolOptions({ returnFocus: true });
-      else if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
+      if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
+      else if (toolOptionsKind) closeToolOptions({ returnFocus: true });
       else if (state.selectedBridge) selectBridge(null);
       else setTool('pan');
       return;
