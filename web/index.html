@@ -111,6 +111,7 @@
           <span class="status-dot" aria-hidden="true"></span>
           <span id="save-state-label" aria-live="polite">Saved to server</span>
         </button>
+        <button class="button button-secondary save-project-button" id="btn-save-project" type="button" hidden>Save to Projects</button>
       </div>
 
       <div class="header-actions" aria-label="Project actions">
@@ -979,7 +980,7 @@
           </button>
           <button class="rail-tool mobile-sync-tool" id="btn-sync-mobile" type="button" data-state="saved" aria-label="Sync projects. Saved to server" title="Saved to server">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 8.5A7 7 0 0 1 18.4 7L20 12M4 12l1.6 5A7 7 0 0 0 17.9 15.5"></path></svg>
-            <span>Sync <b class="sync-pending-count" id="sync-pending-count" hidden aria-hidden="true"></b></span>
+            <span><span id="sync-action-label">Sync</span> <b class="sync-pending-count" id="sync-pending-count" hidden aria-hidden="true"></b></span>
             <i class="sync-status-dot" aria-hidden="true"></i>
           </button>
           <div class="mobile-history-tools" role="group" aria-label="Edit history">
@@ -1369,6 +1370,23 @@
       <div class="project-library-summary">
         <span id="project-library-result">Loading projects…</span>
         <span id="project-storage-summary"></span>
+      </div>
+      <div class="project-library-draft" id="project-library-draft" hidden>
+        <div>
+          <strong>Recoverable draft on this device</strong>
+          <span id="project-library-draft-detail">It is not in Projects or on the server yet.</span>
+        </div>
+        <div class="project-library-notice-actions">
+          <button class="button button-secondary" id="btn-continue-draft" type="button">Continue draft</button>
+          <button class="button button-primary" id="btn-save-draft" type="button">Save to Projects</button>
+        </div>
+      </div>
+      <div class="project-library-cleanup" id="project-library-cleanup" hidden>
+        <div>
+          <strong>Identical conflict copies found</strong>
+          <span id="project-library-cleanup-detail"></span>
+        </div>
+        <button class="button button-secondary" id="btn-clean-conflicts" type="button">Move duplicates to Trash</button>
       </div>
       <div class="project-library-legacy" id="project-library-legacy" hidden>
         <div>

@@ -222,6 +222,7 @@ async function cacheBundle(metadata, bundle) {
     serverSha256: metadata.sha256 || null,
     localSyncPending,
     localChangeId: localSyncPending ? metadata.localChangeId || crypto.randomUUID() : null,
+    conflictOriginId: metadata.conflictOriginId || bundle.conflictOriginId || null,
   };
   return replaceProjectCache(cached, { checkpoints, artifacts });
 }
@@ -248,13 +249,21 @@ async function pullProject(metadata, workspaceId = storageWorkspaceId()) {
 }
 
 export async function queueProjectSync(record) {
+  if (record?.localDraft === true) {
+    throw new TypeError('A recoverable local draft cannot be added to the server sync queue');
+  }
   const bundle = await buildProjectBundle(record);
+  const conflictOriginId = record.conflictOriginId || (/(?:^|\s)\(conflict\s/i.test(record.name || '')
+    ? record.id
+    : null);
+  if (conflictOriginId) bundle.conflictOriginId = conflictOriginId;
   return putProjectSync({
     projectId: record.id,
     kind: 'put',
     expectedRevision: Number(record.serverRevision) || 0,
     payload: JSON.stringify(bundle),
     localChangeId: record.localChangeId || null,
+    conflictOriginId,
     workspaceId: storageWorkspaceId(),
     queuedAt: new Date().toISOString(),
   });
@@ -329,6 +338,7 @@ async function forkConflict(operation, details) {
   bundle.project.name = `${bundle.project.name} (conflict ${suffix})`;
   bundle.project.createdAt = timestamp.toISOString();
   bundle.project.updatedAt = timestamp.toISOString();
+  bundle.conflictOriginId = operation.conflictOriginId || operation.projectId;
 
   const localChangeId = operation.localChangeId || `conflict-${identity.slice(32)}`;
   await cacheBundle({
@@ -337,6 +347,7 @@ async function forkConflict(operation, details) {
     trashedAt: bundle.trashedAt,
     localSyncPending: true,
     localChangeId,
+    conflictOriginId: bundle.conflictOriginId,
   }, bundle);
   const replacement = {
     projectId: newId,
@@ -344,6 +355,7 @@ async function forkConflict(operation, details) {
     expectedRevision: 0,
     payload: JSON.stringify(bundle),
     localChangeId,
+    conflictOriginId: bundle.conflictOriginId,
     workspaceId: operation.workspaceId,
     operationId: `conflict-${identity}`,
     queuedAt: timestamp.toISOString(),
@@ -380,6 +392,34 @@ async function forkConflict(operation, details) {
       ? 'Another device changed this project. Your edit was saved as a separate conflict copy.'
       : 'Another device changed this project. Your conflict copy is saved locally and waiting for the server.',
   };
+}
+
+function isConflictCopyOperation(operation) {
+  if (operation?.conflictOriginId) return true;
+  try {
+    return /(?:^|\s)\(conflict\s/i.test(JSON.parse(operation?.payload || '{}').project?.name || '');
+  } catch {
+    return false;
+  }
+}
+
+async function rebaseConflictCopy(operation, details) {
+  const revision = Number(details?.project?.revision ?? details?.currentRevision);
+  if (details?.project?.deletedAt || !Number.isFinite(revision) || revision < 1) {
+    return {
+      status: 'conflict-queued',
+      projectId: operation.projectId,
+      message: 'This conflict copy also changed elsewhere. It remains queued for review; Kerfloom will not create another copy.',
+    };
+  }
+  const rebased = await putProjectSync({
+    ...operation,
+    expectedRevision: revision,
+    conflictOriginId: operation.conflictOriginId || operation.projectId,
+    operationId: crypto.randomUUID(),
+    queuedAt: new Date().toISOString(),
+  });
+  return performProjectOperation(rebased, { resolveConflicts: false });
 }
 
 async function withProjectOperationLock(operation, callback) {
@@ -510,7 +550,9 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
           return { status: 'stale-workspace', projectId: operation.projectId };
         }
         const current = await loadProjectSync(operation.projectId, { workspaceId: operation.workspaceId });
-        return forkConflict(current?.kind === 'put' ? current : operation, error.details);
+        const active = current?.kind === 'put' ? current : operation;
+        if (isConflictCopyOperation(active)) return rebaseConflictCopy(active, error.details);
+        return forkConflict(active, error.details);
       }
       throw error;
     }

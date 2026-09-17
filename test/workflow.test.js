@@ -58,6 +58,8 @@ test('server-backed project management is searchable, recoverable, and offline s
     'project-library-dialog', 'project-search', 'project-status-filter',
     'project-list', 'project-count-active', 'project-count-trash', 'rename-project-dialog',
     'version-dialog', 'version-list', 'save-state-label', 'sync-pending-count',
+    'btn-save-project', 'project-library-draft', 'btn-save-draft',
+    'project-library-cleanup', 'btn-clean-conflicts',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   for (const action of ['open', 'rename', 'duplicate', 'download', 'versions', 'trash', 'restore', 'delete']) {
     assert.match(editor, new RegExp(`projectAction\\([^\\n]+['"]${action}['"]`), action);
@@ -88,7 +90,9 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(storage, /export async function putProjectSync/);
   assert.match(storage, /export async function replaceProjectSyncOperation/);
   assert.match(storage, /transaction\(\[PROJECT_STORE, META_STORE\], 'readwrite'/);
-  assert.match(storage, /localSyncPending: record\.localSyncPending !== false/);
+  assert.match(storage, /localSyncPending: localDraft \? false : record\.localSyncPending !== false/);
+  assert.match(storage, /LOCAL_DRAFT_PROJECT_ID = 'kerfloom-local-draft'/);
+  assert.match(storage, /includeDraft \|\| row\.localDraft !== true/);
   assert.match(storage, /pending\.localChangeId === local\?\.localChangeId/);
   assert.match(projectSync, /export async function buildProjectBundle/);
   assert.match(projectSync, /export async function prepareProjectUpload/);
@@ -100,6 +104,8 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(projectSync, /'If-Match': `"\$\{operation\.expectedRevision\}"`/);
   assert.match(projectSync, /status: 'conflict'/);
   assert.match(projectSync, /const newId = `conflict-\$\{identity\.slice\(0, 32\)\}`/);
+  assert.match(projectSync, /isConflictCopyOperation/);
+  assert.match(projectSync, /return rebaseConflictCopy\(active, error\.details\)/);
   assert.match(projectSync, /failures,[\s\S]*remapped,/);
   assert.match(editor, /result\.remapped\?\.find[\s\S]*state\.projectId = remappedProject\.id/);
   assert.match(editor, /activeId !== record\.id[\s\S]*await setLastProject\(activeId\)/);
@@ -107,6 +113,8 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(projectSync, /Offline|navigator\.onLine/);
   assert.match(html, /Encrypted server workspace/);
   assert.match(editor, /Saved to server at/);
+  assert.match(editor, /async function saveDraftAsProject/);
+  assert.match(editor, /findDuplicateConflictGroups/);
   const editorStartup = editor.slice(editor.indexOf('export async function startEditor'));
   assert.ok(
     editorStartup.indexOf('await loadLastProject()') < editorStartup.indexOf('syncWorkspaceProjects({ announce: false })'),

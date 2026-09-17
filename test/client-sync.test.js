@@ -896,3 +896,67 @@ test('a conflict copy that cannot upload remains queued instead of claiming serv
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('an existing conflict copy rebases in place instead of spawning another project', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  let requests = 0;
+  globalThis.fetch = async (_url, options = {}) => {
+    requests += 1;
+    if (requests === 1) {
+      assert.equal(options.headers['If-Match'], '"1"');
+      return new Response(JSON.stringify({
+        error: 'This project changed on another device.',
+        code: 'revision_conflict',
+        currentRevision: 2,
+        project: { id: 'conflict-existing', revision: 2 },
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+    }
+    assert.equal(options.headers['If-Match'], '"2"');
+    return response({ id: 'conflict-existing', revision: 3, sha256: 'rebased' });
+  };
+
+  try {
+    const record = {
+      id: 'conflict-existing',
+      name: 'Portrait (conflict Sep 16, 10:27 PM)',
+      serverRevision: 1,
+      localSyncPending: true,
+      localChangeId: 'conflict-edit',
+    };
+    storage.state.projects.set(record.id, record);
+    await sync.queueProjectSync(record);
+    const result = await sync.flushQueuedProjectSync(record.id);
+
+    assert.equal(result.status, 'synced');
+    assert.equal(result.projectId, record.id);
+    assert.equal(requests, 2);
+    assert.deepEqual([...storage.state.projects.keys()], [record.id]);
+    assert.equal(storage.state.sync.size, 0);
+    assert.equal(storage.state.projects.get(record.id).serverRevision, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('recoverable local drafts cannot enter the server synchronization queue', async () => {
+  const { directory, sync } = await syncHarness();
+  try {
+    await assert.rejects(
+      sync.queueProjectSync({ id: 'kerfloom-local-draft', name: 'Draft', localDraft: true }),
+      /cannot be added to the server sync queue/,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

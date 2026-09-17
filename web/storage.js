@@ -10,6 +10,7 @@ const ARTIFACT_STORE = 'artifacts';
 const SYNC_STORE = 'projectSync';
 const CHECKPOINT_LIMIT = 10;
 const ARTIFACT_LIMIT = 30;
+export const LOCAL_DRAFT_PROJECT_ID = 'kerfloom-local-draft';
 let activeWorkspaceId = null;
 
 function normalizeWorkspaceId(value) {
@@ -111,15 +112,17 @@ async function transaction(storeName, mode, operation, workspaceId = storageWork
 
 export async function saveProject(record, { makeCurrent = true } = {}) {
   const now = new Date().toISOString();
+  const localDraft = record.localDraft === true;
   const value = {
     ...record,
-    id: record.id || crypto.randomUUID(),
+    id: localDraft ? LOCAL_DRAFT_PROJECT_ID : record.id || crypto.randomUUID(),
     createdAt: record.createdAt || now,
     updatedAt: now,
-    localSyncPending: record.localSyncPending !== false,
-    localChangeId: record.localSyncPending === false
-      ? record.localChangeId || null
-      : crypto.randomUUID(),
+    localDraft,
+    localSyncPending: localDraft ? false : record.localSyncPending !== false,
+    localChangeId: localDraft
+      ? null
+      : record.localSyncPending === false ? record.localChangeId || null : crypto.randomUUID(),
   };
   if (makeCurrent) {
     await transaction([PROJECT_STORE, META_STORE], 'readwrite', async (stores) => {
@@ -131,6 +134,35 @@ export async function saveProject(record, { makeCurrent = true } = {}) {
   } else {
     await transaction(PROJECT_STORE, 'readwrite', (store) => requestResult(store.put(value)));
   }
+  return value;
+}
+
+/** Atomically replace the single recoverable draft with a real server project. */
+export async function promoteLocalDraft(record) {
+  if (record?.localDraft !== true || record.id !== LOCAL_DRAFT_PROJECT_ID) {
+    throw new TypeError('A recoverable local draft is required');
+  }
+  const now = new Date().toISOString();
+  const value = {
+    ...record,
+    id: crypto.randomUUID(),
+    localDraft: false,
+    localSyncPending: true,
+    localChangeId: crypto.randomUUID(),
+    serverRevision: 0,
+    serverSyncedAt: null,
+    serverSha256: null,
+    conflictOriginId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await transaction([PROJECT_STORE, META_STORE], 'readwrite', async (stores) => {
+    await Promise.all([
+      requestResult(stores[PROJECT_STORE].put(value)),
+      requestResult(stores[PROJECT_STORE].delete(LOCAL_DRAFT_PROJECT_ID)),
+      requestResult(stores[META_STORE].put({ key: 'lastProjectId', value: value.id })),
+    ]);
+  });
   return value;
 }
 
@@ -165,10 +197,10 @@ export async function clearLastProject() {
   await transaction(META_STORE, 'readwrite', (store) => requestResult(store.delete('lastProjectId')));
 }
 
-export async function listProjects({ trashed = false } = {}) {
+export async function listProjects({ trashed = false, includeDraft = false } = {}) {
   const rows = await transaction(PROJECT_STORE, 'readonly', (store) => requestResult(store.getAll()));
   return rows
-    .filter((row) => Boolean(row.trashedAt) === trashed)
+    .filter((row) => (includeDraft || row.localDraft !== true) && Boolean(row.trashedAt) === trashed)
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 

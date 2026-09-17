@@ -64,6 +64,7 @@ import {
   RETAINED,
 } from '/core/index.js';
 import {
+  LOCAL_DRAFT_PROJECT_ID,
   clearLastProject,
   deleteProject,
   deleteShareSecret,
@@ -79,6 +80,7 @@ import {
   loadLastProject,
   loadProject,
   loadShareSecret,
+  promoteLocalDraft,
   restoreProject,
   saveArtifact,
   saveCheckpoint,
@@ -175,6 +177,8 @@ const state = {
   device: null,
   offline: false,
   projectId: null,
+  isDraft: true,
+  conflictOriginId: null,
   serverRevision: 0,
   createdAt: null,
   name: 'Untitled panel',
@@ -3002,7 +3006,8 @@ function markDirty() {
   resetAutomaticSyncRetry();
   state.dirty = true;
   dirtyGeneration += 1;
-  setSaveState('saving', 'Saving…');
+  setSaveState('saving', state.isDraft ? 'Saving recoverable draft…' : 'Saving…');
+  updateProjectPersistenceUi();
   scheduleSave();
 }
 
@@ -3027,13 +3032,23 @@ function renderSaveState(kind, label, pendingCount = 0) {
   if (mobile) {
     mobile.dataset.state = kind;
     mobile.title = label;
-    mobile.setAttribute('aria-label', `Sync projects. ${label}`);
+    mobile.setAttribute('aria-label', state.isDraft
+      ? `Save draft to Projects. ${label}`
+      : `Sync projects. ${label}`);
   }
+  const mobileLabel = el('sync-action-label');
+  if (mobileLabel) mobileLabel.textContent = state.isDraft ? 'Save' : 'Sync';
   const count = el('sync-pending-count');
   if (count) {
     count.hidden = pendingCount < 1;
     count.textContent = pendingCount > 99 ? '99+' : String(pendingCount || '');
   }
+}
+
+function updateProjectPersistenceUi() {
+  const canSave = state.isDraft && Boolean(state.sourceMask);
+  const saveButton = el('btn-save-project');
+  if (saveButton) saveButton.hidden = !canSave;
 }
 
 function setSaveState(kind, label, pendingCount = 0) {
@@ -3123,6 +3138,7 @@ function resetAutomaticSyncRetry() {
 }
 
 async function syncStoredProject(record) {
+  if (record?.localDraft === true) return { status: 'draft', projectId: record.id };
   let result;
   try {
     result = await syncProject(record);
@@ -3142,6 +3158,8 @@ async function syncStoredProject(record) {
     if (current) {
       if (activeId !== record.id) {
         state.projectId = activeId;
+        state.isDraft = false;
+        state.conflictOriginId = current.conflictOriginId || record.id;
         state.name = result.name || current.name;
         state.createdAt = current.createdAt;
         el('project-name').value = state.name;
@@ -3177,7 +3195,7 @@ function scheduleServerSync(delay = SERVER_SYNC_DELAY_MS) {
 
 function scheduleSave() {
   scheduleLocalSave();
-  scheduleServerSync();
+  if (!state.isDraft) scheduleServerSync();
 }
 
 function projectFromState() {
@@ -3261,8 +3279,11 @@ async function persistLocally() {
   const operation = (async () => {
     const record = {
       ...projectFromState(),
+      id: state.isDraft ? LOCAL_DRAFT_PROJECT_ID : state.projectId,
+      localDraft: state.isDraft,
       localSource: state.source?.file ?? null,
       serverRevision: state.serverRevision,
+      conflictOriginId: state.conflictOriginId,
     };
     let saved = await saveProject(record);
     state.projectId = saved.id;
@@ -3270,16 +3291,19 @@ async function persistLocally() {
     lastSavedRecord = saved;
     if (generation === dirtyGeneration) {
       state.dirty = false;
-      await setPendingSaveState();
+      if (state.isDraft) setSaveState('draft', 'Draft saved on this device · Save to Projects');
+      else await setPendingSaveState();
     } else {
       scheduleLocalSave();
     }
-    try {
-      await queueProjectSync(saved);
-    } catch (error) {
-      console.error('Could not queue the locally saved project for synchronization:', error);
-      if (!reportStorageFailure(error, { projectCached: true })) {
-        setSaveState('error', 'Saved locally — Sync queue needs attention');
+    if (!state.isDraft) {
+      try {
+        await queueProjectSync(saved);
+      } catch (error) {
+        console.error('Could not queue the locally saved project for synchronization:', error);
+        if (!reportStorageFailure(error, { projectCached: true })) {
+          setSaveState('error', 'Saved locally — Sync queue needs attention');
+        }
       }
     }
     return saved;
@@ -3322,6 +3346,10 @@ async function syncPendingSave() {
   const operation = (async () => {
     const locallySaved = await flushPendingLocalSave();
     if (!locallySaved?.id) return null;
+    if (locallySaved.localDraft === true || state.isDraft) {
+      setSaveState('draft', 'Draft saved on this device · Save to Projects');
+      return locallySaved;
+    }
     let current = await loadProject(locallySaved.id) || locallySaved;
     if (current.localSyncPending && !await hasPendingProjectSync(current.id)) {
       await queueProjectSync(current);
@@ -3331,6 +3359,8 @@ async function syncPendingSave() {
     current = await loadProject(activeId) || current;
     if (activeId !== state.projectId && result.name) {
       state.projectId = activeId;
+      state.isDraft = false;
+      state.conflictOriginId = current.conflictOriginId || locallySaved.id;
       state.name = result.name || current.name;
       state.createdAt = current.createdAt;
       el('project-name').value = state.name;
@@ -3387,6 +3417,7 @@ async function syncPendingSave() {
 async function persist() {
   const locallySaved = await flushPendingLocalSave();
   if (!locallySaved) return null;
+  if (locallySaved.localDraft === true || state.isDraft) return locallySaved;
   await syncPendingSave();
   return state.projectId ? loadProject(state.projectId) : locallySaved;
 }
@@ -3426,6 +3457,8 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
       const remappedProject = await loadProject(activeRemap.toProjectId);
       if (remappedProject) {
         state.projectId = remappedProject.id;
+        state.isDraft = false;
+        state.conflictOriginId = remappedProject.conflictOriginId || activeProjectId;
         state.name = remappedProject.name;
         state.createdAt = remappedProject.createdAt;
         state.serverRevision = Number(remappedProject.serverRevision) || 0;
@@ -3494,6 +3527,9 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
     if (result.conflicts) {
       toast(`${result.conflicts} edit conflict saved as ${result.conflicts === 1 ? 'a separate project' : 'separate projects'}.`);
     }
+    if (state.isDraft && state.sourceMask) {
+      setSaveState('draft', 'Draft saved on this device · Save to Projects');
+    }
     return result;
   })();
   workspaceSyncInFlight = operation;
@@ -3528,7 +3564,46 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
   }
 }
 
+async function saveDraftAsProject() {
+  if (!state.isDraft || !state.sourceMask) return null;
+  const draft = await flushPendingLocalSave();
+  if (!draft) return null;
+  setSaveState('saving', 'Adding project to your server workspace…');
+  let saved;
+  try {
+    saved = await promoteLocalDraft(draft);
+  } catch (error) {
+    console.error('Could not promote the local draft:', error);
+    if (!reportStorageFailure(error, { projectCached: true })) {
+      setSaveState('draft', 'Draft saved on this device · Save to Projects');
+      toast('The draft is safe on this device, but could not be added to Projects yet.');
+    }
+    return null;
+  }
+  state.projectId = saved.id;
+  state.isDraft = false;
+  state.conflictOriginId = null;
+  state.createdAt = saved.createdAt;
+  state.serverRevision = 0;
+  lastSavedRecord = saved;
+  updateProjectPersistenceUi();
+  try {
+    const result = await syncStoredProject(saved);
+    if (result.status === 'synced') toast(`“${state.name}” was added to Projects.`);
+    else toast(`“${state.name}” was added to Projects and will sync when the server is available.`);
+  } catch (error) {
+    console.error('The new project could not be synchronized:', error);
+    await setPendingSaveState({ exhausted: true });
+    toast(`“${state.name}” was added to Projects and is safe on this device, but the server needs attention.`);
+  }
+  return saved;
+}
+
 async function manuallySyncProjects() {
+  if (state.isDraft && state.sourceMask) {
+    await saveDraftAsProject();
+    return;
+  }
   resetAutomaticSyncRetry();
   setSaveState('saving', 'Syncing projects…');
   const result = await syncWorkspaceProjects({ announce: true });
@@ -3549,7 +3624,7 @@ async function manuallySyncProjects() {
 async function createRecoveryPoint(label) {
   if (!state.sourceMask) return false;
   try {
-    if (!await flushPendingSave() || !state.projectId) return false;
+    if (!await flushPendingSave() || !state.projectId || state.isDraft) return false;
     const project = await loadProject(state.projectId);
     if (!project) return false;
     await saveCheckpoint(project, label);
@@ -3571,6 +3646,7 @@ let versionRows = [];
 let sharingProject = null;
 let receivedShare = null;
 let projectThumbnailRender = 0;
+let duplicateConflictGroups = [];
 const projectThumbnailCache = new Map();
 
 function projectStatus(record) {
@@ -3630,6 +3706,52 @@ function projectThumbnailKey(record) {
 function projectThumbnail(record) {
   return projectThumbnailCache.get(projectThumbnailKey(record)) ??
     record.editor?.projectSummary?.thumbnail ?? null;
+}
+
+function isConflictProject(record) {
+  return Boolean(record?.conflictOriginId) || /(?:^|\s)\(conflict\s/i.test(record?.name || '');
+}
+
+async function projectContentSignature(record) {
+  const { projectSummary: _projectSummary, ...editor } = record.editor || {};
+  let sourceDigest = null;
+  if (record.localSource instanceof Blob) {
+    const bytes = await record.localSource.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    sourceDigest = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  }
+  const canonical = JSON.stringify({
+    sheet: record.sheet,
+    conversion: record.conversion,
+    frame: record.frame,
+    manufacturing: record.manufacturing,
+    structure: record.structure,
+    source: record.source,
+    sourceDigest,
+    raster: record.raster,
+    bridges: record.bridges,
+    editor,
+  });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function findDuplicateConflictGroups(records) {
+  const groups = new Map();
+  for (const record of records.filter(isConflictProject)) {
+    const signature = await projectContentSignature(record);
+    const group = groups.get(signature) || [];
+    group.push(record);
+    groups.set(signature, group);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
+}
+
+function duplicateConflictRows() {
+  return duplicateConflictGroups.flatMap((group) => {
+    const keeper = group.find((record) => record.id === state.projectId) || group[0];
+    return group.filter((record) => record.id !== keeper.id);
+  });
 }
 
 function renderProjectCardPreview(preview, record, thumbnail = projectThumbnail(record)) {
@@ -3768,11 +3890,13 @@ function renderProjectLibrary() {
 }
 
 async function refreshProjectLibrary() {
-  const [active, trash, legacy] = await Promise.all([
+  const [active, trash, legacy, draft] = await Promise.all([
     listProjects(),
     listProjects({ trashed: true }),
     legacyProjectSummary(),
+    loadProject(LOCAL_DRAFT_PROJECT_ID),
   ]);
+  duplicateConflictGroups = await findDuplicateConflictGroups(active);
   el('project-count-active').textContent = String(active.length);
   el('project-count-trash').textContent = String(trash.length);
   const baseRows = projectLibraryView === 'trash' ? trash : active;
@@ -3789,12 +3913,49 @@ async function refreshProjectLibrary() {
   el('project-storage-summary').textContent = queued
     ? `${queued} ${queued === 1 ? 'change' : 'changes'} waiting to sync`
     : navigator.onLine ? 'Encrypted server storage · synchronized' : 'Offline cache · synchronized';
+  const draftNotice = el('project-library-draft');
+  draftNotice.hidden = !draft?.sourceMask && !draft?.raster?.sourceMask;
+  if (!draftNotice.hidden) {
+    el('project-library-draft-detail').textContent = `“${draft.name || 'Untitled panel'}” is safe on this device, but is not in Projects or on the server yet.`;
+  }
+  const duplicateRows = duplicateConflictRows();
+  const cleanupNotice = el('project-library-cleanup');
+  cleanupNotice.hidden = projectLibraryView === 'trash' || duplicateRows.length === 0;
+  if (!cleanupNotice.hidden) {
+    el('project-library-cleanup-detail').textContent = `${duplicateRows.length} ${duplicateRows.length === 1 ? 'copy has' : 'copies have'} the same source, geometry, and editable settings and can be moved to Trash safely.`;
+  }
   const legacyNotice = el('project-library-legacy');
   legacyNotice.hidden = legacy.count === 0;
   if (legacy.count) {
     el('project-library-legacy-detail').textContent = `${legacy.count} ${legacy.count === 1 ? 'project is' : 'projects are'} quarantined from the older device-wide cache. Import only if they belong in this workspace.`;
   }
   renderProjectLibrary();
+}
+
+async function cleanDuplicateConflictProjects() {
+  const duplicates = duplicateConflictRows();
+  if (!duplicates.length) {
+    await refreshProjectLibrary();
+    toast('No identical conflict copies were found.');
+    return;
+  }
+  if (!await confirmAction(
+    'Move identical conflict copies to Trash?',
+    `${duplicates.length} ${duplicates.length === 1 ? 'duplicate' : 'duplicates'} will be moved to Trash. One complete copy from each identical group will remain in Projects.`,
+    'Move to Trash',
+  )) return;
+  for (const record of duplicates) {
+    const trashed = await trashProject(record.id);
+    if (trashed) {
+      try {
+        await syncStoredProject(trashed);
+      } catch (error) {
+        console.warn(`The trashed duplicate “${record.name}” is queued for later synchronization.`, error);
+      }
+    }
+  }
+  await refreshProjectLibrary();
+  toast(`${duplicates.length} identical conflict ${duplicates.length === 1 ? 'copy was' : 'copies were'} moved to Trash.`);
 }
 
 async function openProjectLibrary({ flush = true } = {}) {
@@ -3890,13 +4051,17 @@ async function showProjectVersions(record) {
 
 async function startNewProject() {
   closeProjectLibrary();
-  if (state.sourceMask && !await confirmAction(
+  const recoverableDraft = await loadProject(LOCAL_DRAFT_PROJECT_ID);
+  if ((state.sourceMask || recoverableDraft) && !await confirmAction(
     'Start a new panel?',
-    'The current panel is saved on this device first.',
+    state.isDraft || recoverableDraft
+      ? 'The current recoverable draft will be replaced. Save it to Projects first if you want to keep it.'
+      : 'The current project is saved before the new panel opens.',
     'Start new',
   )) return;
   if (!await flushPendingSave()) return;
   styleAbort?.abort();
+  if (state.isDraft || recoverableDraft) await deleteProject(LOCAL_DRAFT_PROJECT_ID);
   await clearLastProject();
   location.reload();
 }
@@ -4381,6 +4546,8 @@ async function loadProjectState(project, { imported = false } = {}) {
     rememberStyleSettings(state.activeStyle);
   }
   state.projectId = imported ? null : project.id;
+  state.isDraft = imported || project.localDraft === true;
+  state.conflictOriginId = imported ? null : project.conflictOriginId || null;
   state.serverRevision = imported ? 0 : Number(project.serverRevision) || 0;
   state.createdAt = imported ? null : project.createdAt;
   state.name = project.name || 'Untitled panel';
@@ -4468,8 +4635,11 @@ async function loadProjectState(project, { imported = false } = {}) {
   renderCandidates();
   selectBridge(null);
   resetHistory();
-  if (imported) {
-    setSaveState('saving', 'Saving as a new server project…');
+  updateProjectPersistenceUi();
+  if (state.isDraft) {
+    setSaveState('draft', imported
+      ? 'Imported as a recoverable draft · Save to Projects'
+      : 'Draft saved on this device · Save to Projects');
   } else if (project.localSyncPending || !project.serverRevision) {
     await setPendingSaveState();
   } else {
@@ -5702,7 +5872,7 @@ async function exportGeometry(kind) {
     state.lastExportedAt = new Date().toISOString();
     markDirty();
     await createRecoveryPoint(draft ? 'Draft PNG exported' : `${kind.toUpperCase()} exported`);
-    if (state.projectId) {
+    if (state.projectId && !state.isDraft) {
       try {
         await saveArtifact(state.projectId, {
           filename,
@@ -6651,6 +6821,21 @@ function wire() {
   for (const id of ['btn-redo', 'btn-redo-mobile']) el(id)?.addEventListener('click', redo);
   el('btn-new-project')?.addEventListener('click', () => void startNewProject());
   el('btn-library-new-project')?.addEventListener('click', () => void startNewProject());
+  el('btn-save-project')?.addEventListener('click', () => void saveDraftAsProject());
+  el('btn-save-draft')?.addEventListener('click', async () => {
+    await saveDraftAsProject();
+    await refreshProjectLibrary();
+  });
+  el('btn-continue-draft')?.addEventListener('click', async () => {
+    const draft = await loadProject(LOCAL_DRAFT_PROJECT_ID);
+    if (!draft) {
+      await refreshProjectLibrary();
+      return;
+    }
+    await loadProjectState(draft);
+    closeProjectLibrary();
+  });
+  el('btn-clean-conflicts')?.addEventListener('click', () => void cleanDuplicateConflictProjects());
   for (const id of ['save-state', 'btn-sync-mobile']) {
     el(id)?.addEventListener('click', () => void manuallySyncProjects());
   }
@@ -7152,7 +7337,8 @@ function wire() {
     if (event.metaKey || event.ctrlKey) {
       if (event.key.toLowerCase() === 's') {
         event.preventDefault();
-        void flushPendingSave();
+        if (state.isDraft) void saveDraftAsProject();
+        else void flushPendingSave();
         return;
       }
       if (event.key === 'z' && !event.shiftKey) { event.preventDefault(); undo(); }
