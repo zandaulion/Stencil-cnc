@@ -491,6 +491,8 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   assert.match(html, /id="style-photo-common"[\s\S]*?id="tone-inspector"[\s\S]*?id="style-curve-control"/);
   assert.match(css, /\.tone-inspector \{[\s\S]*?width: 100%;[\s\S]*?background: var\(--surface-2\)/);
   assert.doesNotMatch(css, /\.tone-inspector \{[^}]*position: absolute/);
+  assert.match(editor, /const photoStyle = selectedCutStyle\(\) !== 'line-art';[\s\S]*?toggleAttribute\('hidden', !photoStyle\)/);
+  assert.doesNotMatch(editor, /toggleAttribute\('hidden', state\.view !== 'tone' \|\| !preview\)/);
   assert.match(editor, /form\.set\('gamma', String\(numberField\('style-curve', 1\.4\)\)\)/);
   assert.match(html, /name="cutStyle" value="icoana"/);
   assert.match(html, /id="style-icon-halo"[^>]*type="checkbox" checked/);

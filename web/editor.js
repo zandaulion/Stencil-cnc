@@ -2211,16 +2211,22 @@ function drawPlacedImage(context, preview, mask, background = '#e5e8e5') {
 
 function updateToneInspector(preview = null) {
   const inspector = el('tone-inspector');
-  inspector?.toggleAttribute('hidden', state.view !== 'tone' || !preview);
+  const photoStyle = selectedCutStyle() !== 'line-art';
+  inspector?.toggleAttribute('hidden', !photoStyle);
+  if (!photoStyle) return;
+  const tonePreview = preview || currentTonePreview();
   const copy = el('tone-inspector-copy');
-  if (copy && state.view === 'tone' && preview) {
-    copy.textContent = preview.provisional
-      ? 'Source luminance preview. Re-render to reconstruct the exact artwork interpretation.'
-      : 'The actual tonal field used before the cut pattern.';
+  if (copy) {
+    copy.textContent = state.styleBusy
+      ? 'Updating the interpretation; controls remain available while the preview renders.'
+      : tonePreview?.provisional
+        ? 'Source luminance preview. Re-render to reconstruct the exact artwork interpretation.'
+        : tonePreview
+          ? 'The actual tonal field used before the cut pattern.'
+          : 'Adjustments remain available; render the artwork to inspect its tonal distribution.';
   }
-  if (state.view !== 'tone' || !preview?.statistics) return;
   for (const name of ['dark', 'midtone', 'light']) {
-    const value = Number(preview.statistics[name]);
+    const value = Number(tonePreview?.statistics?.[name]);
     if (el(`tone-${name}`)) el(`tone-${name}`).textContent = Number.isFinite(value)
       ? `${Math.round(value * 100)}%`
       : '—';
