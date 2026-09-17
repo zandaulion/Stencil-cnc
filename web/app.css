@@ -3000,7 +3000,7 @@ select:focus {
 .ruler {
   position: absolute;
   z-index: 2;
-  display: flex;
+  overflow: hidden;
   color: #7a888e;
   background: rgb(226 230 227 / 88%);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3013,8 +3013,6 @@ select:focus {
   right: 0;
   left: 24px;
   height: 20px;
-  align-items: center;
-  justify-content: space-around;
   border-bottom: 1px solid #c6ceca;
 }
 
@@ -3023,10 +3021,59 @@ select:focus {
   bottom: 0;
   left: 0;
   width: 24px;
-  align-items: center;
-  justify-content: space-around;
-  flex-direction: column;
   border-right: 1px solid #c6ceca;
+}
+
+.ruler-unit {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 24px;
+  height: 20px;
+  place-items: center;
+  border-right: 1px solid #c6ceca;
+  border-bottom: 1px solid #c6ceca;
+  color: #66767c;
+  background: rgb(226 230 227 / 96%);
+  font: 700 0.43rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+.ruler-tick {
+  position: absolute;
+  white-space: nowrap;
+}
+
+.ruler-horizontal .ruler-tick {
+  bottom: 4px;
+  transform: translateX(-50%);
+}
+
+.ruler-horizontal .ruler-tick::after {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  height: 3px;
+  border-left: 1px solid #8d999d;
+  content: "";
+}
+
+.ruler-vertical .ruler-tick {
+  right: 5px;
+  transform: translateY(-50%) rotate(-90deg);
+  transform-origin: right center;
+}
+
+.ruler-vertical .ruler-tick::after {
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  height: 3px;
+  border-right: 1px solid #8d999d;
+  content: "";
 }
 
 .canvas-stage {
@@ -5083,6 +5130,10 @@ select:focus {
   }
 
   .ruler-vertical {
+    width: 20px;
+  }
+
+  .ruler-unit {
     width: 20px;
   }
 

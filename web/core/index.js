@@ -54,6 +54,8 @@ export {
 } from "./geometry-contract.js";
 export { countValidationLocations, issueLocationCount, validateDesign } from "./validation.js";
 export { zoomAroundPoint } from "./viewport.js";
+export { formatRulerValue, rulerStep, rulerTicks } from "./rulers.js";
+export { isCanvasShortcutTarget, isEditableShortcutTarget } from "./shortcuts.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";
 export { DRAFT_WATERMARK_LABEL, drawDraftWatermark, maskToRgba } from "./png.js";

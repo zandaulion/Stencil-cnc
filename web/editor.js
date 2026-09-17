@@ -57,9 +57,13 @@ import {
   isRetryableSyncError,
   isStorageQuotaError,
   issueLocationCount,
+  isCanvasShortcutTarget,
+  isEditableShortcutTarget,
   isLegacyGeometryInterpretation,
   kerfErosionMm,
   rasterWebWidthMm,
+  formatRulerValue,
+  rulerTicks,
   REMOVED,
   RETAINED,
 } from '/core/index.js';
@@ -2285,7 +2289,7 @@ function draw() {
   if (!mask) {
     if (stage) { stage.style.width = ''; stage.style.height = ''; stage.style.transform = ''; }
     clearVectorDotPreview(vectorLayer);
-    clear(canvas); clear(overlay); return;
+    clear(canvas); clear(overlay); renderRulers(); return;
   }
 
   if (canvas.width !== mask.width || canvas.height !== mask.height) {
@@ -2629,6 +2633,65 @@ function clear(canvas) {
   canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
 }
 
+function renderRulerTicks(container, result, axis) {
+  if (!container) return;
+  const origin = axis === 'horizontal' ? container.offsetLeft : container.offsetTop;
+  const fragment = document.createDocumentFragment();
+  for (const tick of result.ticks) {
+    const node = document.createElement('span');
+    node.className = 'ruler-tick';
+    node.style[axis === 'horizontal' ? 'left' : 'top'] = `${tick.positionPx - origin}px`;
+    node.textContent = formatRulerValue(tick.value, result.step);
+    fragment.append(node);
+  }
+  container.replaceChildren(fragment);
+}
+
+function renderRulers() {
+  const viewport = el('canvas-viewport');
+  const canvas = el('editor-canvas');
+  const horizontal = el('ruler-horizontal');
+  const vertical = el('ruler-vertical');
+  const unit = el('ruler-unit');
+  if (unit) unit.textContent = state.unit;
+  if (!viewport || !canvas || !horizontal || !vertical || !state.designMask) {
+    horizontal?.replaceChildren();
+    vertical?.replaceChildren();
+    return;
+  }
+
+  const currentSheet = sheet();
+  const width = state.unit === 'in' ? currentSheet.widthMm / MM_PER_INCH : currentSheet.widthMm;
+  const height = state.unit === 'in' ? currentSheet.heightMm / MM_PER_INCH : currentSheet.heightMm;
+  const viewportBounds = viewport.getBoundingClientRect();
+  const canvasBounds = canvas.getBoundingClientRect();
+  if (canvasBounds.width <= 0 || canvasBounds.height <= 0) {
+    horizontal.replaceChildren();
+    vertical.replaceChildren();
+    return;
+  }
+  const canvasLeft = canvasBounds.left - viewportBounds.left;
+  const canvasTop = canvasBounds.top - viewportBounds.top;
+  const horizontalStart = horizontal.offsetLeft;
+  const verticalStart = vertical.offsetTop;
+  const horizontalTicks = rulerTicks({
+    extent: width,
+    pixelsPerUnit: canvasBounds.width / width,
+    offsetPx: canvasLeft,
+    viewportStartPx: horizontalStart,
+    viewportEndPx: horizontalStart + horizontal.clientWidth,
+  });
+  const verticalTicks = rulerTicks({
+    extent: height,
+    pixelsPerUnit: canvasBounds.height / height,
+    offsetPx: canvasTop,
+    viewportStartPx: verticalStart,
+    viewportEndPx: verticalStart + vertical.clientHeight,
+  });
+  renderRulerTicks(horizontal, horizontalTicks, 'horizontal');
+  renderRulerTicks(vertical, verticalTicks, 'vertical');
+}
+
 function applyTransform() {
   const stage = el('canvas-stage');
   if (!stage) return;
@@ -2643,6 +2706,7 @@ function applyTransform() {
     bar.style.width = `${Math.max(12, pixels)}px`;
     label.textContent = state.unit === 'in' ? '4 in' : '100 mm';
   }
+  renderRulers();
 }
 
 function fitToView() {
@@ -6083,7 +6147,7 @@ function activateIconStencil() {
   if (!option.checked) option.click();
   else reflectModeControls();
   openToolOptions('icon');
-  toast('Icon stencil selected. Adjust it beside the Tools bar.');
+  toast('Icon style applied. Adjust its stencil and halo settings beside the Tools bar.');
 }
 
 function activateTouchupTool(tool) {
@@ -7136,6 +7200,7 @@ function wire() {
   };
 
   viewport?.addEventListener('pointerdown', (event) => {
+    viewport.focus({ preventScroll: true });
     const { x, y, inside } = pointerToMask(event);
     if (state.tool === 'artwork' && state.placement && inside) {
       const point = pointerToMm(event);
@@ -7414,6 +7479,9 @@ function wire() {
   for (const id of ['btn-fit', 'btn-fit-toolbar']) el(id)?.addEventListener('click', fitToView);
 
   document.addEventListener('keydown', (event) => {
+    const viewport = el('canvas-viewport');
+    const editableTarget = isEditableShortcutTarget(event.target);
+    const canvasContext = isCanvasShortcutTarget(event.target, viewport);
     if (event.metaKey || event.ctrlKey) {
       if (event.key.toLowerCase() === 's') {
         event.preventDefault();
@@ -7421,11 +7489,23 @@ function wire() {
         else void flushPendingSave();
         return;
       }
-      if (event.key === 'z' && !event.shiftKey) { event.preventDefault(); undo(); }
-      if (event.key === 'y' || (event.key === 'z' && event.shiftKey)) { event.preventDefault(); redo(); }
+      // A field's browser-native undo history always wins. Project history is
+      // only available while the drawing surface owns keyboard focus.
+      if (editableTarget || !canvasContext) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z' && !event.shiftKey) { event.preventDefault(); undo(); }
+      if (key === 'y' || (key === 'z' && event.shiftKey)) { event.preventDefault(); redo(); }
       return;
     }
-    if (event.altKey || event.target?.matches?.('input, textarea, select') || event.target?.isContentEditable) return;
+    if (event.altKey || editableTarget) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (toolOptionsKind) closeToolOptions({ returnFocus: true });
+      else if (state.selectedBridge) selectBridge(null);
+      else setTool('pan');
+      return;
+    }
+    if (!canvasContext) return;
     if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedBridge) {
       event.preventDefault();
       deleteSelectedBridge();
@@ -7463,12 +7543,6 @@ function wire() {
       );
       finishArtworkTransform();
       return;
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      if (toolOptionsKind) closeToolOptions({ returnFocus: true });
-      else if (state.selectedBridge) selectBridge(null);
-      else setTool('pan');
     }
     if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomAt(state.zoom * 1.35); }
     if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomAt(state.zoom / 1.35); }

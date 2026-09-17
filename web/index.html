@@ -1059,9 +1059,9 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V7a1.5 1.5 0 0 1 3 0v3-5a1.5 1.5 0 0 1 3 0v5-3a1.5 1.5 0 0 1 3 0v4-1a1.5 1.5 0 0 1 3 0v3c0 5-3 8-8 8h-1c-3 0-5-2-7-5l-1-2a1.6 1.6 0 0 1 2.6-1.8L8 14"></path></svg>
             <span>Pan</span>
           </button>
-          <button class="rail-tool rail-tool-style" id="tool-icon-stencil" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="I" title="Icon stencil and halo settings (I)">
+          <button class="rail-tool rail-tool-style" id="tool-icon-stencil" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="I" aria-label="Apply Icon stencil style and open its settings" title="Apply Icon stencil style and open settings (canvas shortcut: I)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M5 21c.8-4.3 3.1-6.5 7-6.5s6.2 2.2 7 6.5M12 3V1M7.8 4 6.4 2.6M16.2 4l1.4-1.4"></path></svg>
-            <span>Icon</span>
+            <span>Icon style</span>
           </button>
           <button class="rail-tool" id="tool-keep" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="K" title="Add material (K)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16 9-9 4 4-9 9H4v-4Zm11-7 2-2 2 2-2 2"></path><path d="M19 14v6M16 17h6"></path></svg>
@@ -1130,8 +1130,9 @@
         </div>
 
         <div class="canvas-viewport" id="canvas-viewport" tabindex="0" aria-label="Interactive panel preview. Import an image to begin.">
-          <div class="ruler ruler-horizontal" aria-hidden="true"><span>0</span><span>312.5</span><span>625</span><span>937.5</span><span>1250</span></div>
-          <div class="ruler ruler-vertical" aria-hidden="true"><span>0</span><span>625</span><span>1250</span><span>1875</span><span>2500</span></div>
+          <span class="ruler-unit" id="ruler-unit" aria-hidden="true">mm</span>
+          <div class="ruler ruler-horizontal" id="ruler-horizontal" aria-hidden="true"></div>
+          <div class="ruler ruler-vertical" id="ruler-vertical" aria-hidden="true"></div>
           <div class="canvas-stage" id="canvas-stage">
             <canvas id="editor-canvas" width="1400" height="900">Your browser does not support the stencil preview canvas.</canvas>
             <svg id="vector-dot-layer" aria-hidden="true" hidden></svg>

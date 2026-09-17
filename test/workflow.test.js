@@ -315,6 +315,8 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   }
   assert.match(html, /id="btn-fit-toolbar"[^>]*>Fit<\/button>/);
   assert.match(html, /id="tool-icon-stencil"[^>]*aria-keyshortcuts="I"/);
+  assert.match(html, /id="tool-icon-stencil"[^>]*aria-label="Apply Icon stencil style and open its settings"/);
+  assert.match(html, /<span>Icon style<\/span>/);
   for (const id of ['tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support']) {
     assert.match(html, new RegExp(`id="${id}"[^>]*aria-controls="tool-options-panel"`));
   }
@@ -327,6 +329,8 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   assert.match(editor, /const active = toolOptionsKind === 'icon' \? 'icon' : state\.tool/);
   assert.match(editor, /function closeToolOptions\(\{ returnFocus = false \} = \{\}\)/);
   assert.match(editor, /el\('tool-icon-stencil'\)\?\.addEventListener\('click', activateIconStencil\)/);
+  assert.match(editor, /if \(editableTarget \|\| !canvasContext\) return;/);
+  assert.match(editor, /if \(!canvasContext\) return;/);
   assert.doesNotMatch(html, /class="tool-grid"/);
   assert.match(editor, /state\.drawingBridge = tool === 'support'/);
   assert.match(editor, /\['btn-fit', 'btn-fit-toolbar'\]/);
