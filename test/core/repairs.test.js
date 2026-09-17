@@ -213,6 +213,48 @@ test("cut-gap repair never closes portrait-spanning slat channels", () => {
   assert.ok(plan.items.every((item) => item.closureProtected && !item.availableActions.close));
 });
 
+test("slat gap repair uniformly thickens a small deficient web without closing its channels", () => {
+  const width = 52;
+  const height = 30;
+  const mask = createMask(width, height, true);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (const [start, end] of [[2, 13], [21, 32], [40, 50]]) {
+      for (let x = start; x <= end; x += 1) mask.data[y * width + x] = 0;
+    }
+  }
+  const sheet = { widthMm: width / 3, heightMm: height / 3 };
+  const validation = validateDesign(mask, {
+    sheet,
+    minimumOpeningMm: 2,
+    minimumWebMm: 3,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const beforeGap = validation.errors.find((issue) => issue.code === "MIN_CUT_GAP");
+  assert.equal(beforeGap.details.finishedGapMm.toFixed(2), "2.33");
+
+  const plan = planCutGapRepairs(mask, validation, {
+    sheet,
+    strategy: "balanced",
+    targetGapMm: 3,
+    targetOpeningMm: 2,
+    widenMode: "component-shell",
+  });
+  const repaired = applySmallOpeningRepairPlan(mask, plan);
+  const checked = validateDesign(repaired, {
+    sheet,
+    minimumOpeningMm: 2,
+    minimumWebMm: 3,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+
+  assert.ok(plan.items.every((item) => item.widenMode === "component-shell"));
+  assert.ok(!checked.errors.some((issue) => issue.code === "MIN_CUT_GAP"));
+  assert.ok(!checked.errors.some((issue) => issue.code === "MIN_OPENING_UNCUTTABLE"));
+  assert.ok(repaired.data.some((value) => value === 0));
+});
+
 test("small-opening repair never closes a long narrow artwork channel", () => {
   const width = 9;
   const height = 30;
@@ -265,6 +307,38 @@ test("balanced manufacturing repair does not escalate slat gaps into destructive
   assert.equal(plan.counts.close, 0);
   assert.deepEqual([...plan.mask.data], [...mask.data]);
   assert.match(plan.outcome.notes[0], /Protected \d+ long slat cuts from whole-cut closure/);
+});
+
+test("balanced manufacturing repair resolves modest slat deficits with a material shell", () => {
+  const width = 52;
+  const height = 30;
+  const mask = createMask(width, height, true);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (const [start, end] of [[2, 13], [21, 32], [40, 50]]) {
+      for (let x = start; x <= end; x += 1) mask.data[y * width + x] = 0;
+    }
+  }
+  const plan = planManufacturingRepairs(mask, {
+    sheet: { widthMm: width / 3, heightMm: height / 3 },
+    kerfMm: 0,
+    minimumWebMm: 3,
+    minimumOpeningMm: 2,
+    targetWebMm: 3.4,
+    targetOpeningMm: 2.4,
+    strategy: "balanced",
+    categories: { slivers: true, gaps: true, webs: true },
+    bridgeWidthMm: 3.4,
+    bridgeStrategy: { mode: "smart", kind: "lamele", level: 2 },
+    maximumBridges: 20,
+  });
+
+  assert.equal(plan.outcome.beforeErrors, 2);
+  assert.equal(plan.outcome.afterErrors, 0);
+  assert.equal(plan.outcome.complete, true);
+  assert.equal(plan.counts.close, 0);
+  assert.ok(plan.items.every((item) => item.action !== "close"));
+  assert.ok(plan.items.some((item) => item.widenMode === "component-shell"));
+  assert.match(plan.outcome.notes[0], /widened the affected channels with local material/);
 });
 
 test("preserve cleanup removes one-cell loose specks but leaves larger artwork for support", () => {

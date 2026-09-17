@@ -162,6 +162,7 @@ export function planSmallOpeningRepairs(mask, validation, options) {
  *   strategy?:"preserve"|"balanced"|"durable",
  *   targetGapMm:number,
  *   targetOpeningMm:number,
+ *   widenMode?:"local"|"component-shell",
  *   protectedMask?:import('./mask.js').RasterMask|null,
  * }} options
  */
@@ -173,6 +174,8 @@ export function planCutGapRepairs(mask, validation, options) {
   if (!STRATEGIES.has(strategy)) throw new RangeError("Unknown repair strategy");
   const targetGapMm = positive(options.targetGapMm, "targetGapMm");
   const targetOpeningMm = positive(options.targetOpeningMm, "targetOpeningMm");
+  const widenMode = options.widenMode ?? "local";
+  if (!["local", "component-shell"].includes(widenMode)) throw new RangeError("Unknown cut-gap widening mode");
   const protectedMask = options.protectedMask ?? null;
   if (protectedMask) assertSameSize(mask, protectedMask);
 
@@ -194,6 +197,19 @@ export function planCutGapRepairs(mask, validation, options) {
 
   const pixel = pixelSizeMm(mask, options.sheet);
   const rasterAllowanceMm = Math.hypot(pixel.x, pixel.y);
+  // Slat gaps are long parallel near-misses. A round pad at the single
+  // closest sample cannot change the distance along the rest of the pair.
+  // Grow retained material uniformly into the involved cut components by
+  // half of the largest modest deficit instead. The per-component filter
+  // below keeps unrelated artwork unchanged.
+  const shellDeficitLimitMm = targetGapMm * 0.4;
+  const maximumShellDeficitMm = widenMode === "component-shell"
+    ? Math.max(0, ...locations.map((location) => targetGapMm - location.gapMm)
+      .filter((deficit) => deficit > 0 && deficit <= shellDeficitLimitMm))
+    : 0;
+  const componentShellMask = maximumShellDeficitMm > 0
+    ? dilateMaskPhysical(mask, maximumShellDeficitMm / 2, options.sheet)
+    : null;
   const componentsById = new Map(components.map((component) => [component.id, component]));
   const componentIndices = new Map();
   const indicesForId = (id) => {
@@ -215,7 +231,7 @@ export function planCutGapRepairs(mask, validation, options) {
       Math.min(pixel.x, pixel.y),
       deficitMm + rasterAllowanceMm,
     );
-    const widen = unique(location.points.flatMap((point) =>
+    const localWiden = unique(location.points.flatMap((point) =>
       physicalDiscIndices(mask, point, padDiameterMm, options.sheet)));
     const merge = physicalStrokeIndices(
       mask,
@@ -239,6 +255,20 @@ export function planCutGapRepairs(mask, validation, options) {
     const maximumClosureSpanMm = Math.max(targetOpeningMm * 2, targetGapMm * 1.5);
     const closureProtected = smallerLongSpanMm > maximumClosureSpanMm ||
       smallerDiameterMm > maximumClosureDiameterMm;
+    const useComponentShell = Boolean(
+      componentShellMask &&
+      closureProtected &&
+      deficitMm <= shellDeficitLimitMm,
+    );
+    const involvedComponents = new Set([firstId, secondId]);
+    const componentShell = useComponentShell
+      ? unique([...indicesForId(firstId), ...indicesForId(secondId)])
+        .filter((index) =>
+          involvedComponents.has(labels[index]) &&
+          componentShellMask.data[index] === RETAINED &&
+          mask.data[index] === REMOVED)
+      : [];
+    const widen = componentShell.length > 0 ? componentShell : localWiden;
     const canClose = !closureProtected && close.some((index) => mask.data[index] === REMOVED);
     const canWiden = widen.some((index) => mask.data[index] === REMOVED);
     const canMerge = !mergeProtected && merge.some((index) => mask.data[index] === RETAINED);
@@ -261,6 +291,7 @@ export function planCutGapRepairs(mask, validation, options) {
       smallerDiameterMm,
       smallerLongSpanMm,
       closureProtected,
+      widenMode: componentShell.length > 0 ? "component-shell" : "local",
       similarityKey: `gap-${sizeBand(location.gapMm / targetGapMm)}-${sizeBand(smallerDiameterMm / targetOpeningMm)}`,
       action: recommended,
       recommended,
@@ -515,6 +546,7 @@ export function planManufacturingRepairs(mask, options) {
           const gapPlan = planCutGapRepairs(candidate, validation, {
             sheet: options.sheet, strategy: attemptStrategy,
             targetGapMm: targetRasterWebMm, targetOpeningMm: targetRasterOpeningMm, protectedMask,
+            widenMode: options.bridgeStrategy?.kind === "lamele" ? "component-shell" : "local",
           });
           for (const item of gapPlan.items) {
             if (item.closureProtected) protectedGapClosureIds.add(item.id);
@@ -665,8 +697,11 @@ export function planManufacturingRepairs(mask, options) {
   if (protectedGapClosureIds.size > 0) {
     const count = protectedGapClosureIds.size;
     const slats = options.bridgeStrategy?.kind === "lamele";
+    const gapsRemain = afterValidation.errors.some((issue) => issue.code === "MIN_CUT_GAP");
     notes.unshift(slats
-      ? `Protected ${count} long slat ${count === 1 ? "cut" : "cuts"} from whole-cut closure. Any remaining close-gap errors need a more widely spaced Slats render or manual review.`
+      ? gapsRemain
+        ? `Protected ${count} long slat ${count === 1 ? "cut" : "cuts"} from whole-cut closure. Any remaining close-gap errors need a more widely spaced Slats render or manual review.`
+        : `Protected ${count} long slat ${count === 1 ? "cut" : "cuts"} from whole-cut closure and widened the affected channels with local material.`
       : `Protected ${count} long or significant ${count === 1 ? "cut" : "cuts"} from whole-cut closure. Any remaining close-gap errors need a roomier source pattern or manual review.`);
   }
   if (protectedOpeningClosureIds.size > 0) {
