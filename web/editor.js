@@ -5955,6 +5955,15 @@ function setView(view) {
   draw();
 }
 
+function revealToneControls() {
+  setStage('prepare');
+  const adjustments = el('tone-adjustments');
+  if (adjustments) adjustments.open = true;
+  requestAnimationFrame(() => {
+    el('tone-inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
 function updateViewAvailability() {
   const original = el('view-original');
   if (original) original.disabled = !state.source;
@@ -6547,8 +6556,7 @@ function wire() {
   el('btn-restyle')?.addEventListener('click', renderStyle);
   el('btn-open-tone-adjustments')?.addEventListener('click', () => {
     setView('tone');
-    const adjustments = el('tone-adjustments');
-    if (adjustments) adjustments.open = true;
+    if (state.view === 'tone') revealToneControls();
   });
   el('btn-reset-tone-adjustments')?.addEventListener('click', () => {
     const defaults = styleDefaults(selectedCutStyle());
@@ -6667,7 +6675,10 @@ function wire() {
   el('touchup-size')?.addEventListener('change', pushHistory);
   el('touchup-safety')?.addEventListener('change', pushHistory);
   for (const name of ['original', 'tone', 'source', 'material', 'backlit', 'issues']) {
-    el(`view-${name}`)?.addEventListener('click', () => setView(name));
+    el(`view-${name}`)?.addEventListener('click', () => {
+      setView(name);
+      if (name === 'tone' && state.view === 'tone') revealToneControls();
+    });
   }
   for (const name of ['candidates', 'issues']) {
     el(`side-${name}`)?.addEventListener('click', () => setSidePanel(name));

@@ -50,6 +50,8 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   assert.match(editor, /legacy candidate saved before repair layers were captured/);
   assert.match(editor, /function restoreCandidate[\s\S]*?refresh\(\{ immediate: true, preserveManufacturingRepairs: completePayload \}\)[\s\S]*?pushHistory\(\)[\s\S]*?\n}\n\nfunction duplicateCandidate/);
   assert.match(editor, /function refresh\([\s\S]*?invalidateValidation\(/);
+  assert.match(editor, /function revealToneControls\(\)[\s\S]*?setStage\('prepare'\)[\s\S]*?adjustments\.open = true[\s\S]*?scrollIntoView/);
+  assert.match(editor, /name === 'tone' && state\.view === 'tone'\) revealToneControls\(\)/);
 });
 
 test('the desktop editor stays within the viewport while side panels scroll internally', () => {
