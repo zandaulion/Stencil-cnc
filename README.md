@@ -34,6 +34,42 @@ The central rule is simple: dark geometry represents retained metal and light ge
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.
 5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Kerfloom project.
 
+### Flow engraving
+
+Choose **Lines and engraving → Flow engraving** for portraits made from long,
+coherent cut ribbons rather than straight slats or independent woodcut marks.
+The filter begins with a parallel rhythm, then bends the shared ribbon field
+around broad tonal forms such as hair, brows, cheeks, clothing, and shadow.
+Highlights open into wider ribbons while deep shadows remain retained metal.
+
+The filter exposes six direct controls:
+
+- **Ribbon pitch** sets the centre-to-centre spacing of neighbouring cuts.
+- **Maximum cut width** controls how far a bright ribbon may open. Kerfloom
+  limits it automatically so the configured finished web still fits beside it.
+- **Base direction** rotates the underlying parallel rhythm before local form
+  bends it.
+- **Follow features** controls the strength of that local bending. At zero the
+  result is straight; higher values follow the photograph more strongly.
+- **Flow smoothing** chooses the physical scale of forms that influence the
+  bend. Larger values ignore skin texture and follow broader facial volumes.
+- **Dark-area cutoff** suppresses cuts in hair and deep shadow. The shared Tone
+  controls remain available for adjusting the interpretation before ribbons
+  are generated.
+
+**Remove the background** produces an isolated positive portrait like a
+graphic engraving. Turn it off to cut the same flowing ribbons into an
+otherwise solid plate. Smart and manual supports align across the ribbon
+direction, while the normal Support and Validate stages remain responsible for
+connecting the portrait to the selected frame or anchor edges.
+
+Flow engraving generates against the selected minimum opening and finished-web
+limits rather than relying on automatic repair afterwards. Each ribbon starts
+at a cuttable width, adjacent ribbons reserve the required metal between them,
+and a locally over-curved area remains solid when it cannot safely hold both.
+This preserves the visual rhythm without creating a knowingly destructive
+repair step.
+
 Related manufacturing exports share the validation timestamp and use descriptive,
 portable names: `project_297x420mm_slats_frame_cut_2026-09-15-162005.dxf`.
 PNG files use `preview`, editable projects use `editable`, and exports without a
