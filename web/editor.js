@@ -382,14 +382,27 @@ function lineArtTonePreview() {
 }
 
 function currentTonePreview() {
-  if (state.mode === 'line-art') return lineArtTonePreview();
+  if (!state.source) return null;
+  if (state.mode === 'line-art') {
+    const preview = lineArtTonePreview();
+    return preview ? { ...preview, provisional: false } : null;
+  }
   // Keep the last complete interpretation visible while replacement settings
   // render. It still corresponds to the currently displayed artwork, and the
   // progress affordance makes the pending replacement explicit.
-  if (state.tonePreviewFor !== selectedCutStyle()) return null;
-  return state.tonePreviewCanvas
-    ? { canvas: state.tonePreviewCanvas, statistics: state.toneStatistics }
-    : null;
+  if (state.tonePreviewCanvas && state.tonePreviewFor === selectedCutStyle()) {
+    return {
+      canvas: state.tonePreviewCanvas,
+      statistics: state.toneStatistics,
+      provisional: false,
+    };
+  }
+
+  // Exact server interpretations are deliberately not persisted with every
+  // local project/candidate. Keep Tone useful after restore (and offline) by
+  // falling back to the source luminance until the user re-renders.
+  const preview = lineArtTonePreview();
+  return preview ? { ...preview, provisional: true } : null;
 }
 
 /** Separable box blur: one horizontal pass and one vertical pass. */
@@ -2186,6 +2199,12 @@ function drawPlacedImage(context, preview, mask, background = '#e5e8e5') {
 function updateToneInspector(preview = null) {
   const inspector = el('tone-inspector');
   inspector?.toggleAttribute('hidden', state.view !== 'tone' || !preview);
+  const copy = el('tone-inspector-copy');
+  if (copy && state.view === 'tone' && preview) {
+    copy.textContent = preview.provisional
+      ? 'Source luminance preview. Re-render to reconstruct the exact artwork interpretation.'
+      : 'The actual tonal field used before the cut pattern.';
+  }
   if (state.view !== 'tone' || !preview?.statistics) return;
   for (const name of ['dark', 'midtone', 'light']) {
     const value = Number(preview.statistics[name]);
@@ -5755,10 +5774,16 @@ function updateViewAvailability() {
   const original = el('view-original');
   if (original) original.disabled = !state.source;
   const tone = el('view-tone');
-  const toneReady = Boolean(state.source && (state.mode === 'line-art' || (
-    state.tonePreviewCanvas && state.tonePreviewFor === selectedCutStyle()
-  )));
-  if (tone) tone.disabled = !toneReady;
+  const tonePreview = currentTonePreview();
+  const toneReady = Boolean(tonePreview);
+  if (tone) {
+    tone.disabled = !toneReady;
+    tone.title = !toneReady
+      ? 'Import an image to inspect its tone'
+      : tonePreview.provisional
+        ? 'Source luminance preview; re-render for the exact interpretation'
+        : 'Tone interpretation';
+  }
   if (!state.source && state.view === 'original') { setView('material'); return; }
   if (!toneReady && state.view === 'tone') { setView(state.source ? 'original' : 'material'); return; }
   updateToneInspector();

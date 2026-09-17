@@ -527,6 +527,14 @@ test('radial cuts expose an actual hub diameter and split rays outward', () => {
   assert.match(editor, /25% \/ 50% fallback/);
 });
 
+test('Tone stays selectable after restoring a project without its server preview', () => {
+  assert.match(html, /id="tone-inspector-copy"/);
+  assert.match(editor, /const preview = lineArtTonePreview\(\);[\s\S]*?provisional: true/);
+  assert.match(editor, /const tonePreview = currentTonePreview\(\);\s+const toneReady = Boolean\(tonePreview\)/);
+  assert.match(editor, /Source luminance preview\. Re-render to reconstruct the exact artwork interpretation\./);
+  assert.match(editor, /Source luminance preview; re-render for the exact interpretation/);
+});
+
 test('application markup has no duplicate element ids', () => {
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
   const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
