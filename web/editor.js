@@ -26,6 +26,7 @@ import {
   calculateArtworkPlacement,
   connectedRegionIndices,
   countValidationLocations,
+  createCuttingProfile,
   createProject,
   createSyncRetryController,
   decodeMask,
@@ -42,6 +43,7 @@ import {
   orientSheet,
   physicalDiscIndices,
   physicalStrokeIndices,
+  normalizeCuttingProfile,
   normalizeVectorDots,
   placeVectorDots,
   planManufacturingRepairs,
@@ -57,6 +59,7 @@ import {
   isRetryableSyncError,
   isStorageQuotaError,
   issueLocationCount,
+  cuttingProfileVerificationProblems,
   isCanvasShortcutTarget,
   isEditableShortcutTarget,
   isLegacyGeometryInterpretation,
@@ -200,6 +203,8 @@ const state = {
   tool: 'pan',
   unit: 'mm',
   geometryInterpretation: FINISHED_BOUNDARY_CAM,
+  cuttingProfile: createCuttingProfile(),
+  cuttingProfileRevisionCounter: 1,
 
   source: null,          // { file, imageData, width, height, name, bytes }
   mode: 'line-art',      // 'line-art' threshold locally, 'photo' renders on the server
@@ -290,6 +295,239 @@ const all = (selector) => [...document.querySelectorAll(selector)];
 const toMm = (value) => (state.unit === 'in' ? value * MM_PER_INCH : value);
 const fromMm = (value) => (state.unit === 'in' ? value / MM_PER_INCH : value);
 const roundUnit = (value) => (state.unit === 'in' ? Math.round(value * 1000) / 1000 : Math.round(value * 10) / 10);
+
+function optionalText(id) {
+  const value = el(id)?.value?.trim();
+  return value || null;
+}
+
+function optionalPhysicalValue(id) {
+  const value = Number.parseFloat(el(id)?.value);
+  return Number.isFinite(value) && value > 0 ? toMm(value) : null;
+}
+
+function cuttingProfileFromControls({
+  revision = state.cuttingProfile.revision,
+  status = state.cuttingProfile.status,
+  id = state.cuttingProfile.id,
+  verifiedAt = state.cuttingProfile.provenance.verifiedAt,
+} = {}) {
+  return normalizeCuttingProfile({
+    ...state.cuttingProfile,
+    id,
+    name: optionalText('cutting-profile-name') || state.cuttingProfile.name,
+    revision,
+    status,
+    process: el('cutting-profile-process')?.value || state.cuttingProfile.process,
+    material: {
+      name: optionalText('cutting-profile-material'),
+      grade: optionalText('cutting-profile-grade'),
+      thicknessMm: optionalPhysicalValue('cutting-profile-thickness'),
+    },
+    machine: {
+      name: optionalText('cutting-profile-machine'),
+      consumable: optionalText('cutting-profile-consumable'),
+    },
+    limits: {
+      kerfMm: toMm(numberField('kerf', 1.2)),
+      minimumWebMm: toMm(numberField('min-web', 3)),
+      minimumOpeningMm: toMm(numberField('min-opening', 2)),
+      supportWidthMm: toMm(numberField('bridge-width', 6)),
+      maximumUnsupportedSpanMm: toMm(numberField('max-cantilever', 250)),
+    },
+    provenance: {
+      kind: el('cutting-profile-provenance')?.value || state.cuttingProfile.provenance.kind,
+      note: optionalText('cutting-profile-evidence'),
+      verifiedBy: optionalText('cutting-profile-verified-by'),
+      verifiedAt,
+    },
+  });
+}
+
+function profileProcessLabel(process) {
+  return ({ plasma: 'Plasma', laser: 'Laser', router: 'Router', waterjet: 'Waterjet', other: 'Other' })[process] || process;
+}
+
+function renderCuttingProfileStatus() {
+  const profile = state.cuttingProfile;
+  const status = profile.status === 'verified' ? 'verified' : 'provisional';
+  const statusLabel = status === 'verified' ? 'Verified' : 'Provisional';
+  const badge = el('cutting-profile-status');
+  if (badge) {
+    badge.dataset.status = status;
+    badge.textContent = statusLabel;
+  }
+  const summary = el('cutting-profile-summary');
+  if (summary) summary.dataset.status = status;
+  if (el('cutting-profile-summary-title')) el('cutting-profile-summary-title').textContent = profile.name;
+  const material = optionalText('cutting-profile-material') || profile.material.name;
+  const thicknessMm = optionalPhysicalValue('cutting-profile-thickness') ?? profile.material.thicknessMm;
+  const machine = optionalText('cutting-profile-machine') || profile.machine.name;
+  const identity = [
+    material || 'Material not set',
+    thicknessMm ? `${roundUnit(fromMm(thicknessMm))} ${state.unit}` : 'Thickness not set',
+    machine || 'Machine not set',
+  ].join(' · ');
+  if (el('cutting-profile-summary-copy')) {
+    el('cutting-profile-summary-copy').textContent = `${profileProcessLabel(profile.process)} · ${identity}`;
+  }
+  if (el('cutting-profile-revision')) el('cutting-profile-revision').textContent = String(profile.revision);
+  const preset = el('manufacturing-profile');
+  if (preset) {
+    const customOption = preset.querySelector('option[value="project-custom"]');
+    if (customOption) customOption.textContent = `This project · ${profile.name}`;
+    preset.value = profile.id === 'general-plasma-v1' && profile.revision === 1
+      ? 'general-plasma'
+      : 'project-custom';
+  }
+  const supportWidth = roundUnit(numberField('bridge-width', fromMm(profile.limits.supportWidthMm ?? 6)));
+  const maximumSpan = roundUnit(numberField(
+    'max-cantilever',
+    fromMm(profile.limits.maximumUnsupportedSpanMm ?? 250),
+  ));
+  if (el('cutting-profile-support-summary')) {
+    el('cutting-profile-support-summary').textContent =
+      `${supportWidth} ${state.unit} support width · ${maximumSpan} ${state.unit} maximum unsupported span`;
+  }
+  const verification = el('cutting-profile-verification-copy');
+  if (verification) {
+    verification.textContent = status === 'verified'
+      ? `Verified by ${profile.provenance.verifiedBy} on ${new Date(profile.provenance.verifiedAt).toLocaleDateString()}. Editing any profile value returns it to provisional.`
+      : 'Provisional profiles guide geometry but are not evidence that a setup has been tested.';
+  }
+  el('btn-verify-cutting-profile')?.toggleAttribute('hidden', status === 'verified');
+  el('btn-unverify-cutting-profile')?.toggleAttribute('hidden', status !== 'verified');
+}
+
+function syncCuttingProfileControls(profile = state.cuttingProfile) {
+  state.cuttingProfile = normalizeCuttingProfile(JSON.parse(JSON.stringify(profile)));
+  state.cuttingProfileRevisionCounter = Math.max(
+    state.cuttingProfileRevisionCounter,
+    state.cuttingProfile.revision,
+  );
+  const set = (id, value) => { if (el(id)) el(id).value = value ?? ''; };
+  set('cutting-profile-name', profile.name);
+  set('cutting-profile-process', profile.process);
+  set('cutting-profile-material', profile.material.name);
+  set('cutting-profile-grade', profile.material.grade);
+  set('cutting-profile-thickness', profile.material.thicknessMm == null
+    ? '' : roundUnit(fromMm(profile.material.thicknessMm)));
+  set('cutting-profile-machine', profile.machine.name);
+  set('cutting-profile-consumable', profile.machine.consumable);
+  set('cutting-profile-provenance', profile.provenance.kind);
+  set('cutting-profile-evidence', profile.provenance.note);
+  set('cutting-profile-verified-by', profile.provenance.verifiedBy);
+  set('kerf', roundUnit(fromMm(profile.limits.kerfMm)));
+  set('min-web', roundUnit(fromMm(profile.limits.minimumWebMm)));
+  set('min-opening', roundUnit(fromMm(profile.limits.minimumOpeningMm)));
+  if (profile.limits.supportWidthMm != null) {
+    set('bridge-width', roundUnit(fromMm(profile.limits.supportWidthMm)));
+  }
+  if (profile.limits.maximumUnsupportedSpanMm != null) {
+    set('max-cantilever', roundUnit(fromMm(profile.limits.maximumUnsupportedSpanMm)));
+  }
+  renderCuttingProfileStatus();
+}
+
+function nextCuttingProfileRevision() {
+  state.cuttingProfileRevisionCounter = Math.max(
+    state.cuttingProfileRevisionCounter,
+    state.cuttingProfile.revision,
+  ) + 1;
+  return state.cuttingProfileRevisionCounter;
+}
+
+function markCuttingProfileSourceAsCustom() {
+  const source = el('cutting-profile-provenance');
+  if (source && ['kerfloom-default', 'legacy-project'].includes(source.value)) source.value = 'custom';
+}
+
+function updateWorkingCuttingProfile({ invalidate = false } = {}) {
+  const wasVerified = state.cuttingProfile.status === 'verified';
+  state.cuttingProfile = cuttingProfileFromControls({
+    id: null,
+    status: 'provisional',
+    verifiedAt: null,
+  });
+  renderCuttingProfileStatus();
+  if (invalidate || wasVerified) {
+    invalidateValidation();
+    state.lastValidatedAt = null;
+  }
+}
+
+function commitCuttingProfileRevision({ affectsGeometryLimits = false } = {}) {
+  state.cuttingProfile = cuttingProfileFromControls({
+    id: null,
+    revision: nextCuttingProfileRevision(),
+    status: 'provisional',
+    verifiedAt: null,
+  });
+  renderCuttingProfileStatus();
+  if (affectsGeometryLimits) {
+    markAutomaticSupportsStale();
+    markManufacturingRepairsStale();
+  }
+  invalidateValidation();
+  state.lastValidatedAt = null;
+  updateReadouts();
+  markDirty();
+  pushHistory();
+}
+
+function applyGeneralPlasmaProfile() {
+  state.cuttingProfile = createCuttingProfile();
+  syncCuttingProfileControls();
+  enforcePlasmaLimits();
+  updateTouchupControls();
+  updateSlatStabilizerControls();
+  state.lastValidatedAt = null;
+  refresh({ immediate: true });
+  pushHistory();
+  toast('General plasma starting values applied. The profile remains provisional until supported by shop evidence.');
+}
+
+function verifyCuttingProfile() {
+  const verifiedAt = new Date().toISOString();
+  const candidate = cuttingProfileFromControls({
+    id: null,
+    revision: state.cuttingProfile.revision + 1,
+    status: 'provisional',
+    verifiedAt,
+  });
+  const problems = cuttingProfileVerificationProblems(candidate);
+  if (problems.length) {
+    el('cutting-profile-details')?.setAttribute('open', '');
+    toast(`Add ${problems.join(', ')} before marking this profile verified.`);
+    return;
+  }
+  state.cuttingProfile = normalizeCuttingProfile({
+    ...candidate,
+    revision: nextCuttingProfileRevision(),
+    status: 'verified',
+  });
+  renderCuttingProfileStatus();
+  invalidateValidation();
+  state.lastValidatedAt = null;
+  markDirty();
+  pushHistory();
+  toast('Profile marked verified from the recorded shop evidence. Run geometry checks again.');
+}
+
+function returnCuttingProfileToProvisional() {
+  state.cuttingProfile = cuttingProfileFromControls({
+    id: null,
+    revision: nextCuttingProfileRevision(),
+    status: 'provisional',
+    verifiedAt: null,
+  });
+  renderCuttingProfileStatus();
+  invalidateValidation();
+  state.lastValidatedAt = null;
+  markDirty();
+  pushHistory();
+  toast('Profile returned to provisional.');
+}
 
 function numberField(id, fallback = 0) {
   const value = Number.parseFloat(el(id)?.value);
@@ -2760,7 +2998,8 @@ function updateReadouts() {
   el('export-size').textContent = exportSize;
   if (el('export-unit-scale')) el('export-unit-scale').textContent = `1 drawing unit = 1 ${exportUnit}`;
   for (const node of all('[data-unit-label]')) node.textContent = state.unit;
-  const manufacturingSummary = `Plasma · ${roundUnit(numberField('kerf', 1.2))} ${state.unit} kerf · ${roundUnit(numberField('min-web', 3))} ${state.unit} gaps · ${roundUnit(numberField('min-opening', 2))} ${state.unit} openings`;
+  const profileStatus = state.cuttingProfile.status === 'verified' ? 'Verified' : 'Provisional';
+  const manufacturingSummary = `${state.cuttingProfile.name} · ${profileStatus} · ${roundUnit(numberField('kerf', 1.2))} ${state.unit} kerf · ${roundUnit(numberField('min-web', 3))} ${state.unit} gaps · ${roundUnit(numberField('min-opening', 2))} ${state.unit} openings`;
   for (const node of all('[data-manufacturing-summary]')) node.textContent = manufacturingSummary;
   const webNote = el('prekerf-web-note');
   if (webNote) {
@@ -2770,6 +3009,7 @@ function updateReadouts() {
       ? `Legacy geometry keeps ${roundUnit(fromMm(finished + kerf))} ${state.unit} in the raster so an uncompensated ${roundUnit(fromMm(kerf))} ${state.unit} cut leaves ${roundUnit(fromMm(finished))} ${state.unit}.`
       : `Filters draw the requested ${roundUnit(fromMm(finished))} ${state.unit} finished web. Apply the ${roundUnit(fromMm(kerf))} ${state.unit} kerf once, as inside/outside compensation in CAM.`;
   }
+  renderCuttingProfileStatus();
   updateGeometryContractUi();
 }
 
@@ -2878,8 +3118,11 @@ function updateExportReadiness() {
   const advisoryLocations = ready ? countValidationLocations(state.validation, 'warning') : 0;
   if (card) {
     card.dataset.state = ready ? 'ready' : hasGeometry ? 'draft' : 'blocked';
+    const profileCopy = state.cuttingProfile.status === 'verified'
+      ? `Verified profile revision ${state.cuttingProfile.revision} carries recorded shop evidence.`
+      : `Profile revision ${state.cuttingProfile.revision} is provisional; confirm it before cutting.`;
     card.querySelector('span').innerHTML = ready
-      ? `<strong>Ready for CAM review</strong><small>No blocking geometry issues found${advisoryLocations ? `; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'}` : ' or advisories'}. Review CAM settings before cutting. PNG has no watermark.</small>`
+      ? `<strong>Ready for CAM review</strong><small>No blocking geometry issues found${advisoryLocations ? `; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'}` : ' or advisories'}. ${profileCopy} PNG has no watermark.</small>`
       : hasGeometry
         ? '<strong>Draft preview available</strong><small>PNG includes a validation watermark. Run all checks to enable SVG and DXF.</small>'
         : '<strong>Artwork required</strong><small>Import or create artwork before exporting a preview.</small>';
@@ -2906,6 +3149,7 @@ function snapshot() {
   rememberStyleSettings();
   return JSON.stringify({
     geometryInterpretation: state.geometryInterpretation,
+    cuttingProfile: cuttingProfileFromControls(),
     controls: readControls(),
     styleSettings: cloneStyleSettings(state.styleSettings),
     bridges: state.bridges,
@@ -2935,6 +3179,7 @@ function readControls() {
   }
   for (const node of nodes) {
     if (node.closest('#candidate-side-panel')) continue;
+    if (node.closest('#cutting-profile-details')) continue;
     if (node.id === 'project-name' || node.id.startsWith('selected-bridge-')) continue;
     if (node.type === 'file' || node.type === 'button' || node.type === 'submit') continue;
     if (!node.id && !node.name) continue;
@@ -3041,6 +3286,7 @@ function restore(serialised) {
   state.geometryInterpretation = data.geometryInterpretation ?? FINISHED_BOUNDARY_CAM;
   state.styleSettings = cloneStyleSettings(data.styleSettings);
   applyControls(data.controls);
+  syncCuttingProfileControls(data.cuttingProfile ?? createCuttingProfile());
   state.bridges = cloneBridges(data.bridges);
   state.painted = { keep: new Set(data.painted.keep), remove: new Set(data.painted.remove) };
   state.manufacturingRepairs = {
@@ -3326,8 +3572,9 @@ function projectFromState() {
       kerfMm: toMm(numberField('kerf', 1.2)),
       minimumWebMm: toMm(numberField('min-web', 3)),
       minimumOpeningMm: toMm(numberField('min-opening', 2)),
-      maximumCantileverMm: null,
+      maximumCantileverMm: toMm(numberField('max-cantilever', 250)),
       geometryInterpretation: state.geometryInterpretation,
+      profile: cuttingProfileFromControls(),
     },
     structure: { mode: 'single-sheet' },
     source: {
@@ -4586,6 +4833,8 @@ function applyCanonicalProjectControls(project) {
   el('measurement-unit').value = 'mm';
   state.unit = 'mm';
   state.geometryInterpretation = project.manufacturing.geometryInterpretation ?? FINISHED_BOUNDARY_CAM;
+  state.cuttingProfileRevisionCounter = project.manufacturing.profile.revision;
+  syncCuttingProfileControls(project.manufacturing.profile);
   el('panel-width').value = project.sheet.widthMm;
   el('panel-height').value = project.sheet.heightMm;
   reflectPanelOrientation();
@@ -4604,9 +4853,6 @@ function applyCanonicalProjectControls(project) {
   const polarityNode = document.querySelector(`input[name="polarity"][value="${polarity}"]`);
   if (polarityNode) polarityNode.checked = true;
   el('threshold').value = Math.round(project.conversion.threshold / 255 * 100);
-  el('kerf').value = project.manufacturing.kerfMm;
-  el('min-web').value = project.manufacturing.minimumWebMm;
-  el('min-opening').value = project.manufacturing.minimumOpeningMm ?? 2;
   enforcePlasmaLimits();
   reflectModeControls();
 }
@@ -4655,6 +4901,11 @@ async function loadProjectState(project, { imported = false } = {}) {
     state.activeStyle = selectedCutStyle();
     rememberStyleSettings(state.activeStyle);
   }
+  // Profile dimensions are canonical millimetres and are deliberately not
+  // duplicated in the display-unit control snapshot. Reapply them after the
+  // saved measurement unit is known so an inch project cannot reinterpret a
+  // 2 mm stock thickness as 2 inches.
+  syncCuttingProfileControls(project.manufacturing.profile);
   state.projectId = imported ? null : project.id;
   state.isDraft = imported || project.localDraft === true;
   state.conflictOriginId = imported ? null : project.conflictOriginId || null;
@@ -5997,6 +6248,7 @@ async function exportGeometry(kind) {
           kind,
           mimeType: blob.type,
           blob,
+          profileSnapshot: cuttingProfileFromControls(),
         });
         const withArtifact = await loadProject(state.projectId);
         if (withArtifact) await syncStoredProject(withArtifact);
@@ -6706,12 +6958,35 @@ function wire() {
     el(id)?.addEventListener('input', () => {
       const adjusted = enforcePlasmaLimits();
       if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
+      markCuttingProfileSourceAsCustom();
+      updateWorkingCuttingProfile();
       updateTouchupControls();
       restyle();
       refresh();
     });
-    el(id)?.addEventListener('change', pushHistory);
+    el(id)?.addEventListener('change', () => {
+      commitCuttingProfileRevision({ affectsGeometryLimits: true });
+    });
   }
+  el('manufacturing-profile')?.addEventListener('change', (event) => {
+    if (event.target.value === 'general-plasma') applyGeneralPlasmaProfile();
+    else el('cutting-profile-details')?.setAttribute('open', '');
+  });
+  for (const id of [
+    'cutting-profile-name', 'cutting-profile-process', 'cutting-profile-material', 'cutting-profile-grade',
+    'cutting-profile-thickness', 'cutting-profile-machine', 'cutting-profile-consumable',
+    'cutting-profile-provenance', 'cutting-profile-evidence', 'cutting-profile-verified-by',
+  ]) {
+    el(id)?.addEventListener('input', () => {
+      markCuttingProfileSourceAsCustom();
+      updateWorkingCuttingProfile({ invalidate: true });
+      updateReadouts();
+      markDirty();
+    });
+    el(id)?.addEventListener('change', () => commitCuttingProfileRevision());
+  }
+  el('btn-verify-cutting-profile')?.addEventListener('click', verifyCuttingProfile);
+  el('btn-unverify-cutting-profile')?.addEventListener('click', returnCuttingProfileToProvisional);
   for (const node of all('input[name="kerfPreview"]')) node.addEventListener('change', draw);
   el('show-grid')?.addEventListener('change', draw);
   el('export-frame')?.addEventListener('change', () => {
@@ -6735,6 +7010,7 @@ function wire() {
     // units must not silently resize the panel.
     for (const id of ['panel-width', 'panel-height', 'panel-margin', 'frame-width',
       'artwork-offset-x', 'artwork-offset-y',
+      'cutting-profile-thickness',
       'bridge-width', 'selected-bridge-width', 'selected-bridge-length',
       'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
@@ -6744,7 +7020,7 @@ function wire() {
       'style-contour-width', 'style-ray-cell', 'style-ray-hub', 'style-ornament-width',
       'style-dot-pitch', 'style-dot-max']) {
       const node = el(id);
-      if (!node) continue;
+      if (!node || node.value === '') continue;
       const mm = previous === 'in' ? Number(node.value) * MM_PER_INCH : Number(node.value);
       node.value = state.unit === 'in' ? Math.round(mm / MM_PER_INCH * 1000) / 1000 : Math.round(mm * 10) / 10;
     }
@@ -6843,15 +7119,29 @@ function wire() {
     updateSlatStabilizerControls();
     supportPlanChanged();
   });
-  el('max-cantilever')?.addEventListener('input', updateSlatStabilizerControls);
-  el('max-cantilever')?.addEventListener('change', supportPlanChanged);
+  el('max-cantilever')?.addEventListener('input', () => {
+    updateSlatStabilizerControls();
+    markCuttingProfileSourceAsCustom();
+    updateWorkingCuttingProfile();
+    renderCuttingProfileStatus();
+  });
+  el('max-cantilever')?.addEventListener('change', () => {
+    markAutomaticSupportsStale();
+    commitCuttingProfileRevision();
+  });
   el('stabilizer-organic')?.addEventListener('input', updateRangeOutputs);
   el('stabilizer-organic')?.addEventListener('change', supportPlanChanged);
   el('bridge-width')?.addEventListener('input', () => {
     const adjusted = enforcePlasmaLimits();
     if (adjusted.length) toast(`Raised ${adjusted.join(' and ')} to fit the plasma limits.`);
+    markCuttingProfileSourceAsCustom();
+    updateWorkingCuttingProfile();
+    renderCuttingProfileStatus();
   });
-  el('bridge-width')?.addEventListener('change', supportPlanChanged);
+  el('bridge-width')?.addEventListener('change', () => {
+    markAutomaticSupportsStale();
+    commitCuttingProfileRevision();
+  });
   el('btn-auto-bridge')?.addEventListener('click', autoBridge);
   el('btn-add-bridge')?.addEventListener('click', activateSupportTool);
   el('btn-clear-auto-bridges')?.addEventListener('click', () => {
@@ -7622,6 +7912,7 @@ export async function startEditor({ device, offline = false } = {}) {
   state.offline = offline || !navigator.onLine;
 
   wire();
+  syncCuttingProfileControls();
   enforcePlasmaLimits();
   setMode(document.querySelector('input[name="cutStyle"]:checked')?.value === 'line-art' ? 'line-art' : 'photo');
   setStage('prepare');

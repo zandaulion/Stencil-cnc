@@ -18,6 +18,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face.
 - Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and configured minimum-web geometry.
+- Stores a versioned cutting-profile snapshot with each project and retained export: process, stock, machine/consumable, geometry limits, support assumptions, revision, and evidence status travel together.
 - Builds reversible manufacturing-repair previews before changing the artwork.
 - Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
@@ -75,7 +76,7 @@ portable names: `project_297x420mm_slats_frame_cut_2026-09-15-162005.dxf`.
 PNG files use `preview`, editable projects use `editable`, and exports without a
 perimeter frame use `no-frame`.
 
-The default panel is 1250 × 2500 mm. The default plasma profile starts with a 2 mm minimum opening and a conservative 3 mm finished gap/web; a machine-verified gap/web may be reduced to 2 mm. New projects store and export intended finished-part boundaries: apply inside/outside kerf compensation exactly once in CAM. Older projects remain explicitly marked as legacy until the user upgrades and re-renders them.
+The default panel is 1250 × 2500 mm. The reusable General plasma profile starts with a 2 mm minimum opening and a conservative 3 mm finished gap/web; 2 mm is available as a lower exploration limit but must be confirmed for the selected stock and machine. Profiles remain **Provisional** unless the operator records a material, thickness, machine, verification source, evidence note, verifier, and date from machine documentation or a shop test. New projects store and export intended finished-part boundaries: apply inside/outside kerf compensation exactly once in CAM. Older projects retain their exact numeric constraints and artwork under an explicit **Legacy project settings · Provisional** snapshot.
 
 ## Project library
 
@@ -83,7 +84,7 @@ Select **Projects** in the desktop header or the permanent mobile Tools bar to b
 
 Autosave reports `Saving…`, `Saved to server`, an offline queued state, or a retry action if synchronization fails. Every change is written to IndexedDB first and placed in a durable upload queue; the UI reports a server save only after the server acknowledges the revision. Synchronization isolates failures per project, repairs a damaged queued package from its complete local copy when possible, and gives retries of the same edit one stable conflict-copy identity. A problem in an older project therefore cannot block a healthy current project or multiply conflict copies. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
 
-The canonical encrypted package contains the editable geometry, original photograph, candidates, supports, repairs, recovery points, and retained SVG, DXF, and PNG exports. Portable `.stencil.json` downloads intentionally omit the source photograph.
+The canonical encrypted package contains the editable geometry, original photograph, candidates, supports, repairs, recovery points, and retained SVG, DXF, and PNG exports. Each project and newly retained export records its full cutting-profile snapshot rather than only a mutable preset name. Portable `.stencil.json` downloads intentionally omit the source photograph.
 
 ### Private project sharing
 

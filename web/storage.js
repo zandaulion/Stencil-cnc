@@ -1,3 +1,4 @@
+import { normalizeCuttingProfile } from '/core/cutting-profile.js';
 import { reconcileProjectAcknowledgement } from '/core/sync-state.js';
 
 const LEGACY_DB_NAME = 'stencil-cnc';
@@ -258,6 +259,9 @@ function importedArtifact(projectId, artifact) {
     createdAt: typeof artifact.createdAt === 'string'
       ? artifact.createdAt
       : new Date().toISOString(),
+    profileSnapshot: artifact.profileSnapshot
+      ? normalizeCuttingProfile(JSON.parse(JSON.stringify(artifact.profileSnapshot)))
+      : null,
     blob: artifact.blob,
   };
 }
@@ -509,6 +513,9 @@ export async function saveArtifact(projectId, artifact) {
     kind: String(artifact.kind || 'file').slice(0, 30),
     mimeType: String(artifact.mimeType || artifact.blob.type || 'application/octet-stream').slice(0, 120),
     createdAt: new Date().toISOString(),
+    profileSnapshot: artifact.profileSnapshot
+      ? normalizeCuttingProfile(JSON.parse(JSON.stringify(artifact.profileSnapshot)))
+      : null,
     blob: artifact.blob,
   };
   await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.put(value)));

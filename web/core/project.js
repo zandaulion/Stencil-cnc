@@ -2,6 +2,7 @@ import { assertMask, createMask } from "./mask.js";
 import { validateBridge } from "./bridges.js";
 import { CANDIDATE_PAYLOAD_VERSION } from "./candidates.js";
 import { normalizeVectorDots } from "./vector-dots.js";
+import { createCuttingProfile, legacyCuttingProfile, normalizeCuttingProfile } from "./cutting-profile.js";
 import {
   FINISHED_BOUNDARY_CAM,
   LEGACY_UNCOMPENSATED_CENTERLINE,
@@ -9,19 +10,19 @@ import {
 } from "./geometry-contract.js";
 
 export const PROJECT_SCHEMA = "stencil-cnc.project";
-export const PROJECT_VERSION = 4;
+export const PROJECT_VERSION = 5;
 
 /**
  * @typedef {object} StencilProject
  * @property {'stencil-cnc.project'} schema
- * @property {4} version
+ * @property {5} version
  * @property {string | null} id
  * @property {string} name
  * @property {'mm'} units
  * @property {{widthMm:number,heightMm:number}} sheet
  * @property {{mode:'line-art'|'photograph',threshold:number,invert:boolean,backgroundLuminance:number}} conversion
  * @property {{enabled:boolean,thicknessMm:number|object,insetMm:number|object,sides:{top:boolean,right:boolean,bottom:boolean,left:boolean}}} frame
- * @property {{kerfMm:number,minimumWebMm:number,minimumOpeningMm:number,maximumCantileverMm:number|null,geometryInterpretation:'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1'}} manufacturing
+ * @property {{kerfMm:number,minimumWebMm:number,minimumOpeningMm:number,maximumCantileverMm:number|null,geometryInterpretation:'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1',profile:object}} manufacturing
  * @property {{mode:'single-sheet'}} structure
  * @property {{kind:'none'|'image',name:string|null,mimeType:string|null,widthPx:number|null,heightPx:number|null,imageDataUrl:string|null}} source
  * @property {{sourceMask:EncodedMask|null,baseMask:EncodedMask|null}} raster
@@ -50,11 +51,12 @@ const DEFAULT_PROJECT = Object.freeze({
     sides: { top: true, right: true, bottom: true, left: true },
   },
   manufacturing: {
-    kerfMm: 0,
+    kerfMm: 1.2,
     minimumWebMm: 3,
     minimumOpeningMm: 2,
-    maximumCantileverMm: null,
+    maximumCantileverMm: 250,
     geometryInterpretation: FINISHED_BOUNDARY_CAM,
+    profile: createCuttingProfile(),
   },
   structure: { mode: "single-sheet" },
   source: {
@@ -74,6 +76,18 @@ const DEFAULT_PROJECT = Object.freeze({
 
 /** @param {Partial<StencilProject> & Record<string, any>} [overrides] @returns {StencilProject} */
 export function createProject(overrides = {}) {
+  const manufacturing = { ...DEFAULT_PROJECT.manufacturing, ...overrides.manufacturing };
+  if (!Object.hasOwn(overrides.manufacturing ?? {}, 'profile')) {
+    manufacturing.profile = createCuttingProfile({
+      limits: {
+        kerfMm: manufacturing.kerfMm,
+        minimumWebMm: manufacturing.minimumWebMm,
+        minimumOpeningMm: manufacturing.minimumOpeningMm,
+        supportWidthMm: manufacturing.supportWidthMm ?? 6,
+        maximumUnsupportedSpanMm: manufacturing.maximumCantileverMm,
+      },
+    });
+  }
   const candidate = {
     ...DEFAULT_PROJECT,
     ...overrides,
@@ -87,7 +101,7 @@ export function createProject(overrides = {}) {
       ...overrides.frame,
       sides: { ...DEFAULT_PROJECT.frame.sides, ...overrides.frame?.sides },
     },
-    manufacturing: { ...DEFAULT_PROJECT.manufacturing, ...overrides.manufacturing },
+    manufacturing,
     structure: { ...DEFAULT_PROJECT.structure, ...overrides.structure },
     source: { ...DEFAULT_PROJECT.source, ...overrides.source },
     raster: { ...DEFAULT_PROJECT.raster, ...overrides.raster },
@@ -222,6 +236,35 @@ export function migrateProject(input) {
     // the style is rendered again.
     project.version = PROJECT_VERSION;
   }
+  if (version < 5) {
+    // Version 5 turns anonymous manufacturing numbers into a versioned,
+    // provenance-bearing snapshot. Preserve every existing number exactly and
+    // make no claim that an old project was verified for a particular shop.
+    const storedUnit = project.editor?.controls?.['measurement-unit'] === 'in' ? 'in' : 'mm';
+    const storedPhysicalControl = (id) => {
+      const value = Number(project.editor?.controls?.[id]);
+      if (!Number.isFinite(value) || value <= 0) return undefined;
+      return storedUnit === 'in' ? value * 25.4 : value;
+    };
+    const legacyManufacturing = {
+      ...project.manufacturing,
+      supportWidthMm: storedPhysicalControl('bridge-width'),
+      maximumCantileverMm:
+        project.manufacturing?.maximumCantileverMm ?? storedPhysicalControl('max-cantilever'),
+    };
+    project.manufacturing = {
+      ...project.manufacturing,
+      profile: legacyCuttingProfile(legacyManufacturing),
+    };
+    project.version = PROJECT_VERSION;
+    if (project.editor?.projectSummary) {
+      project.editor.projectSummary = {
+        ...project.editor.projectSummary,
+        status: project.raster?.sourceMask ? 'needs-validation' : 'draft',
+        lastValidatedAt: null,
+      };
+    }
+  }
   return project;
 }
 
@@ -260,6 +303,7 @@ export function normalizeProject(input) {
   if (baseMask) validateEncodedMask(baseMask);
 
   const bridges = (input.bridges ?? []).map((bridge, index) => normalizeProjectBridge(bridge, index));
+  const profile = normalizeCuttingProfile(input.manufacturing?.profile);
   const normalized = {
     schema: PROJECT_SCHEMA,
     version: PROJECT_VERSION,
@@ -280,18 +324,14 @@ export function normalizeProject(input) {
       sides,
     },
     manufacturing: {
-      kerfMm: nonNegative(input.manufacturing?.kerfMm ?? DEFAULT_PROJECT.manufacturing.kerfMm, "manufacturing.kerfMm"),
-      minimumWebMm: nonNegative(input.manufacturing?.minimumWebMm ?? DEFAULT_PROJECT.manufacturing.minimumWebMm, "manufacturing.minimumWebMm"),
-      minimumOpeningMm: nonNegative(
-        input.manufacturing?.minimumOpeningMm ?? DEFAULT_PROJECT.manufacturing.minimumOpeningMm,
-        "manufacturing.minimumOpeningMm",
-      ),
-      maximumCantileverMm: input.manufacturing?.maximumCantileverMm == null
-        ? null
-        : nonNegative(input.manufacturing.maximumCantileverMm, "manufacturing.maximumCantileverMm"),
+      kerfMm: profile.limits.kerfMm,
+      minimumWebMm: profile.limits.minimumWebMm,
+      minimumOpeningMm: profile.limits.minimumOpeningMm,
+      maximumCantileverMm: profile.limits.maximumUnsupportedSpanMm,
       geometryInterpretation: normalizeGeometryInterpretation(
         input.manufacturing?.geometryInterpretation ?? FINISHED_BOUNDARY_CAM,
       ),
+      profile,
     },
     structure: { mode: structureMode },
     source: {

@@ -2543,6 +2543,11 @@ select:focus {
   align-items: flex-end;
 }
 
+.cutting-profile-card {
+  display: grid;
+  grid-template-columns: 35px minmax(0, 1fr) auto;
+}
+
 .profile-card label {
   display: flex;
   min-width: 0;
@@ -2556,6 +2561,106 @@ select:focus {
 .profile-card select {
   width: 100%;
 }
+
+.profile-status {
+  align-self: center;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #81570c;
+  background: var(--warning-soft);
+  font-size: 0.51rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.profile-status[data-status="verified"] {
+  color: #17645f;
+  background: var(--teal-soft);
+}
+
+.cutting-profile-summary {
+  display: grid;
+  gap: 3px;
+  margin: -10px 0 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--warning);
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--warning) 7%, white);
+}
+
+.cutting-profile-summary[data-status="verified"] {
+  border-left-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 6%, white);
+}
+
+.cutting-profile-summary strong { color: var(--ink); font-size: 0.66rem; }
+.cutting-profile-summary span { font-size: 0.59rem; line-height: 1.4; }
+.cutting-profile-summary small { font-size: 0.54rem; line-height: 1.4; }
+
+.cutting-profile-details {
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.cutting-profile-details > summary {
+  padding: 11px 12px;
+  color: var(--teal);
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 760;
+}
+
+.cutting-profile-details[open] > summary { border-bottom: 1px solid var(--line); }
+
+.profile-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.profile-fields > label {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  flex-direction: column;
+  color: var(--muted);
+  font-size: 0.57rem;
+  font-weight: 650;
+}
+
+.profile-fields input,
+.profile-fields select,
+.profile-fields textarea { width: 100%; }
+.profile-fields textarea { resize: vertical; }
+.profile-field-wide { grid-column: 1 / -1; }
+
+.profile-assumptions {
+  display: grid;
+  gap: 3px;
+  margin: 0 12px 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: white;
+}
+
+.profile-assumptions strong { color: var(--ink); font-size: 0.61rem; }
+.profile-assumptions span { color: var(--ink-soft); font-size: 0.58rem; }
+.profile-assumptions small,
+.profile-verification-copy { color: var(--muted); font-size: 0.54rem; line-height: 1.4; }
+.profile-verification-copy { margin: 0 12px 10px; }
+
+.profile-actions {
+  display: flex;
+  gap: 7px;
+  padding: 0 12px 12px;
+}
+
+.profile-actions .button { min-height: 36px; padding: 8px 10px; font-size: 0.58rem; }
 
 .manufacturing-summary {
   display: grid;

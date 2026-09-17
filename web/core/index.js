@@ -54,6 +54,14 @@ export {
 } from "./geometry-contract.js";
 export { countValidationLocations, issueLocationCount, validateDesign } from "./validation.js";
 export { zoomAroundPoint } from "./viewport.js";
+export {
+  CUTTING_PROFILE_SCHEMA,
+  CUTTING_PROFILE_VERSION,
+  createCuttingProfile,
+  cuttingProfileVerificationProblems,
+  legacyCuttingProfile,
+  normalizeCuttingProfile,
+} from "./cutting-profile.js";
 export { formatRulerValue, rulerStep, rulerTicks } from "./rulers.js";
 export { isCanvasShortcutTarget, isEditableShortcutTarget } from "./shortcuts.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";

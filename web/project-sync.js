@@ -174,6 +174,7 @@ export async function buildProjectBundle(record) {
     kind: artifact.kind,
     mimeType: artifact.mimeType,
     createdAt: artifact.createdAt,
+    profileSnapshot: artifact.profileSnapshot ?? null,
     dataUrl: await blobToDataUrl(artifact.blob),
   })));
   return {

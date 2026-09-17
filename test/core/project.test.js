@@ -9,6 +9,7 @@ import {
   PROJECT_VERSION,
   applyRasterLayers,
   buildDesignMask,
+  createCuttingProfile,
   createProject,
   decodeMask,
   deserializeProject,
@@ -20,8 +21,12 @@ import {
 import { maskFromAscii } from "./fixtures.js";
 
 test("a new project uses the standard CNC panel size", () => {
-  assert.deepEqual(createProject().sheet, { widthMm: 1250, heightMm: 2500 });
-  assert.equal(createProject().manufacturing.geometryInterpretation, FINISHED_BOUNDARY_CAM);
+  const project = createProject();
+  assert.deepEqual(project.sheet, { widthMm: 1250, heightMm: 2500 });
+  assert.equal(project.manufacturing.geometryInterpretation, FINISHED_BOUNDARY_CAM);
+  assert.equal(project.manufacturing.profile.status, 'provisional');
+  assert.equal(project.manufacturing.profile.revision, 1);
+  assert.equal(project.manufacturing.profile.limits.minimumWebMm, project.manufacturing.minimumWebMm);
 });
 
 test("binary masks use deterministic serializable run-length encoding", () => {
@@ -86,6 +91,40 @@ test("a versioned project round-trips without typed-array leakage", () => {
   assert.equal(restored.bridges[0].featureAlignmentPenalty, 0.05);
   assert.equal(restored.bridges[0].portraitPenalty, 0.4);
   assert.equal(restored.bridges[0].followsFeatures, true);
+});
+
+test("projects retain an exact cutting-profile snapshot instead of a preset name", () => {
+  const profile = createCuttingProfile({
+    id: null,
+    name: 'Table A · S235 2 mm',
+    revision: 7,
+    status: 'verified',
+    material: { name: 'Mild steel', grade: 'S235', thicknessMm: 2 },
+    machine: { name: 'Table A', consumable: '45 A fine-cut' },
+    limits: {
+      kerfMm: 1.05,
+      minimumWebMm: 2.6,
+      minimumOpeningMm: 2.2,
+      supportWidthMm: 5.5,
+      maximumUnsupportedSpanMm: 220,
+    },
+    provenance: {
+      kind: 'shop-test',
+      note: 'Coupon KF-17',
+      verifiedBy: 'Workshop owner',
+      verifiedAt: '2026-09-17T10:00:00.000Z',
+    },
+  });
+  const project = createProject({ manufacturing: { profile } });
+  profile.limits.minimumWebMm = 99;
+
+  const restored = deserializeProject(serializeProject(project));
+
+  assert.equal(restored.manufacturing.profile.revision, 7);
+  assert.equal(restored.manufacturing.profile.status, 'verified');
+  assert.equal(restored.manufacturing.profile.limits.minimumWebMm, 2.6);
+  assert.equal(restored.manufacturing.minimumWebMm, 2.6);
+  assert.equal(restored.manufacturing.maximumCantileverMm, 220);
 });
 
 test("draft version 0 projects migrate and future versions fail safely", () => {
@@ -165,6 +204,44 @@ test("version 3 projects migrate as raster-only until Variable Dots are rendered
 
   assert.equal(migrated.version, PROJECT_VERSION);
   assert.equal(migrated.editor, null);
+});
+
+test("version 4 projects preserve manufacturing values as a legacy provisional profile", () => {
+  const current = createProject({
+    raster: { sourceMask: encodeMask(maskFromAscii(["#.#"])) },
+    editor: {
+      controls: { 'measurement-unit': 'in', 'bridge-width': '0.25' },
+      candidates: [],
+      projectSummary: {
+        status: 'ready',
+        lastValidatedAt: '2026-09-17T09:00:00.000Z',
+      },
+    },
+  });
+  const legacy = JSON.parse(JSON.stringify(current));
+  legacy.version = 4;
+  legacy.manufacturing = {
+    kerfMm: 0.9,
+    minimumWebMm: 2.4,
+    minimumOpeningMm: 1.8,
+    maximumCantileverMm: 180,
+    geometryInterpretation: FINISHED_BOUNDARY_CAM,
+  };
+
+  const migrated = deserializeProject(JSON.stringify(legacy));
+
+  assert.equal(migrated.version, PROJECT_VERSION);
+  assert.equal(migrated.manufacturing.profile.name, 'Legacy project settings');
+  assert.equal(migrated.manufacturing.profile.status, 'provisional');
+  assert.equal(migrated.manufacturing.profile.provenance.kind, 'legacy-project');
+  assert.equal(migrated.manufacturing.profile.limits.kerfMm, 0.9);
+  assert.equal(migrated.manufacturing.profile.limits.minimumWebMm, 2.4);
+  assert.equal(migrated.manufacturing.profile.limits.minimumOpeningMm, 1.8);
+  assert.equal(migrated.manufacturing.profile.limits.supportWidthMm, 6.35);
+  assert.equal(migrated.manufacturing.profile.limits.maximumUnsupportedSpanMm, 180);
+  assert.deepEqual([...decodeMask(migrated.raster.sourceMask).data], [1, 0, 1]);
+  assert.equal(migrated.editor.projectSummary.status, 'needs-validation');
+  assert.equal(migrated.editor.projectSummary.lastValidatedAt, null);
 });
 
 test("portable project files never include the browser-local source photograph", () => {

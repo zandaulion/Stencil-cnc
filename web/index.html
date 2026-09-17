@@ -768,23 +768,87 @@
 
             <div class="control-section" id="manufacturing-settings">
               <h2>Manufacturing &amp; cutting</h2>
-              <div class="profile-card">
+              <div class="profile-card cutting-profile-card">
                 <span class="profile-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4"></path></svg>
                 </span>
                 <label for="manufacturing-profile"><span>Manufacturing profile</span>
-                  <select id="manufacturing-profile" name="manufacturingProfile" disabled title="Custom profiles are planned for a later version">
-                    <option value="plasma" selected>Plasma · 2 mm holes · 3 mm gap default</option>
+                  <select id="manufacturing-profile" name="manufacturingProfile">
+                    <option value="general-plasma" selected>General plasma starting point</option>
+                    <option value="project-custom">This project · custom profile</option>
                   </select>
                 </label>
+                <span class="profile-status" id="cutting-profile-status" data-status="provisional">Provisional</span>
               </div>
+              <div class="cutting-profile-summary" id="cutting-profile-summary" data-status="provisional">
+                <strong id="cutting-profile-summary-title">General plasma starting point</strong>
+                <span id="cutting-profile-summary-copy">Material, thickness, and machine are not set.</span>
+                <small>Profile revision <b id="cutting-profile-revision">1</b> · values must be confirmed for the actual shop setup.</small>
+              </div>
+              <details class="cutting-profile-details" id="cutting-profile-details">
+                <summary>Profile identity &amp; verification evidence</summary>
+                <div class="profile-fields">
+                  <label for="cutting-profile-name">Profile name
+                    <input id="cutting-profile-name" type="text" maxlength="80" value="General plasma starting point">
+                  </label>
+                  <label for="cutting-profile-process">Cutting process
+                    <select id="cutting-profile-process">
+                      <option value="plasma" selected>Plasma</option>
+                      <option value="laser" disabled>Laser · later</option>
+                      <option value="router" disabled>Router · later</option>
+                      <option value="waterjet" disabled>Waterjet · later</option>
+                      <option value="other" disabled>Other · later</option>
+                    </select>
+                  </label>
+                  <label for="cutting-profile-material">Material
+                    <input id="cutting-profile-material" type="text" maxlength="80" placeholder="e.g. mild steel">
+                  </label>
+                  <label for="cutting-profile-grade">Grade / specification
+                    <input id="cutting-profile-grade" type="text" maxlength="80" placeholder="Optional">
+                  </label>
+                  <label for="cutting-profile-thickness">Stock thickness
+                    <span class="number-field"><input id="cutting-profile-thickness" type="number" min="0.1" max="500" step="0.1" placeholder="Not set"><span data-unit-label>mm</span></span>
+                  </label>
+                  <label for="cutting-profile-machine">Machine
+                    <input id="cutting-profile-machine" type="text" maxlength="100" placeholder="Machine or table identity">
+                  </label>
+                  <label for="cutting-profile-consumable">Consumable / tool
+                    <input id="cutting-profile-consumable" type="text" maxlength="100" placeholder="Optional torch, nozzle, or tool">
+                  </label>
+                  <label for="cutting-profile-provenance">Evidence source
+                    <select id="cutting-profile-provenance">
+                      <option value="custom">Custom assumptions</option>
+                      <option value="machine-documentation">Machine documentation</option>
+                      <option value="shop-test">Shop test coupon</option>
+                      <option value="kerfloom-default" disabled>Kerfloom starting point</option>
+                      <option value="legacy-project" disabled>Migrated project values</option>
+                    </select>
+                  </label>
+                  <label class="profile-field-wide" for="cutting-profile-evidence">Evidence note
+                    <textarea id="cutting-profile-evidence" rows="3" maxlength="500" placeholder="Record the document, test coupon, settings, or measurement supporting these limits."></textarea>
+                  </label>
+                  <label class="profile-field-wide" for="cutting-profile-verified-by">Verified by
+                    <input id="cutting-profile-verified-by" type="text" maxlength="100" placeholder="Operator or shop name">
+                  </label>
+                </div>
+                <div class="profile-assumptions">
+                  <strong>Support assumptions</strong>
+                  <span id="cutting-profile-support-summary">6 mm support width · 250 mm maximum unsupported span</span>
+                  <small>These values are captured in the profile; edit them in Support.</small>
+                </div>
+                <p class="profile-verification-copy" id="cutting-profile-verification-copy">Provisional profiles guide geometry but are not evidence that a setup has been tested.</p>
+                <div class="profile-actions">
+                  <button class="button button-secondary" id="btn-verify-cutting-profile" type="button">Mark verified from evidence</button>
+                  <button class="button button-quiet" id="btn-unverify-cutting-profile" type="button" hidden>Return to provisional</button>
+                </div>
+              </details>
               <h3 class="subsection-title">Plasma constraints</h3>
               <label class="field-row" for="kerf">
                 <span>Kerf / tool diameter <small>Used for CAM offset feasibility and legacy simulation</small></span>
                 <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-web">
-                <span>Minimum gap between cuts <small>Finished metal; 3 mm default, 2 mm machine-verified minimum</small></span>
+                <span>Minimum gap between cuts <small>Finished metal; 3 mm default, 2 mm lower exploration limit—confirm for the selected setup</small></span>
                 <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="2" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
               </label>
               <label class="field-row" for="min-opening">
