@@ -487,6 +487,7 @@ export function planManufacturingRepairs(mask, options) {
   const durableFallbackCategories = new Set();
   const protectedGapClosureIds = new Set();
   const protectedOpeningClosureIds = new Set();
+  const openingRepairRejectionReasons = new Set();
   let supportCount = 0;
   let cleanupRound = 0;
 
@@ -497,7 +498,29 @@ export function planManufacturingRepairs(mask, options) {
     validation = validate(candidate);
     return stageItems;
   };
-  const tryCleanupPlan = (plan, category, issueCode, pass) => {
+  const tryIndividuallyCheckedPlan = (plan, category, issueCode, pass) => {
+    const stageItems = repairPlanItems(plan, category, issueCode, pass);
+    const accepted = [];
+    for (const item of stageItems) {
+      const proposed = applySmallOpeningRepairPlan(candidate, { items: [item] });
+      const proposedValidation = validate(proposed);
+      const rejection = blockingRepairRejectionReason(validation, proposedValidation, issueCode);
+      if (rejection) {
+        openingRepairRejectionReasons.add(rejection);
+        continue;
+      }
+      candidate = proposed;
+      validation = proposedValidation;
+      accepted.push(item);
+    }
+    return accepted;
+  };
+  const tryCleanupPlan = (plan, category, issueCode, pass, { individuallyChecked = false } = {}) => {
+    if (individuallyChecked) {
+      const accepted = tryIndividuallyCheckedPlan(plan, category, issueCode, pass);
+      items.push(...accepted);
+      return accepted.length > 0;
+    }
     const previousMask = candidate;
     const previousValidation = validation;
     const previousErrors = countValidationLocations(previousValidation, "error");
@@ -511,13 +534,13 @@ export function planManufacturingRepairs(mask, options) {
     validation = previousValidation;
     return false;
   };
-  const tryCleanupPlanner = (planner, category, issueCode, pass) => {
-    if (tryCleanupPlan(planner(strategy), category, issueCode, pass)) return true;
+  const tryCleanupPlanner = (planner, category, issueCode, pass, checkOptions) => {
+    if (tryCleanupPlan(planner(strategy), category, issueCode, pass, checkOptions)) return true;
     // Preserve-detail is a contract, not merely a preference. Only Balanced
     // may escalate a rejected local choice to the metal-preserving Durable
     // action, and the UI reports that fallback explicitly.
     if (strategy !== "balanced") return false;
-    const accepted = tryCleanupPlan(planner("durable"), category, issueCode, pass);
+    const accepted = tryCleanupPlan(planner("durable"), category, issueCode, pass, checkOptions);
     if (accepted) durableFallbackCategories.add(category);
     return accepted;
   };
@@ -538,7 +561,7 @@ export function planManufacturingRepairs(mask, options) {
           if (item.closureProtected) protectedOpeningClosureIds.add(item.id);
         }
         return openingPlan;
-      }, "opening", "MIN_OPENING_UNCUTTABLE", stagePass + 2);
+      }, "opening", "MIN_OPENING_UNCUTTABLE", stagePass + 2, { individuallyChecked: true });
     }
     if (categories.gaps) {
       for (let pass = 1; pass <= 3; pass += 1) {
@@ -685,6 +708,13 @@ export function planManufacturingRepairs(mask, options) {
   const afterErrors = countValidationLocations(afterValidation, "error");
   const beforeWarnings = countValidationLocations(beforeValidation, "warning");
   const afterWarnings = countValidationLocations(afterValidation, "warning");
+  const beforeOpeningErrors = countValidationLocations(
+    beforeValidation, "error", new Set(["MIN_OPENING_UNCUTTABLE"]),
+  );
+  const afterOpeningErrors = countValidationLocations(
+    afterValidation, "error", new Set(["MIN_OPENING_UNCUTTABLE"]),
+  );
+  const acceptedOpeningRepairs = items.filter((item) => item.category === "opening").length;
   const improved = afterErrors < beforeErrors ||
     (beforeErrors === 0 && afterErrors === 0 && afterWarnings < beforeWarnings);
   const safeToApply = items.length > 0 && afterErrors <= beforeErrors && improved;
@@ -707,7 +737,19 @@ export function planManufacturingRepairs(mask, options) {
   if (protectedOpeningClosureIds.size > 0) {
     const count = protectedOpeningClosureIds.size;
     notes.unshift(
-      `Protected ${count} long or significant ${count === 1 ? "opening" : "openings"} from whole-opening closure. Any remaining minimum-opening errors need source-pattern adjustment or manual review.`,
+      afterOpeningErrors > 0
+        ? `Protected ${count} long or significant ${count === 1 ? "opening" : "openings"} from whole-opening closure. Any remaining minimum-opening errors need source-pattern adjustment or manual review.`
+        : `Protected ${count} long or significant ${count === 1 ? "opening" : "openings"} from whole-opening closure; safer neighbouring changes resolved the opening checks.`,
+    );
+  }
+  if (acceptedOpeningRepairs > 0) {
+    const resolved = Math.max(0, beforeOpeningErrors - afterOpeningErrors);
+    notes.unshift(afterOpeningErrors > 0
+      ? `Resolved ${resolved} of ${beforeOpeningErrors} minimum-opening blockers with independently validated changes; ${afterOpeningErrors} ${afterOpeningErrors === 1 ? "remains" : "remain"} because the proposed changes did not safely improve the complete geometry check.`
+      : `Resolved all ${beforeOpeningErrors} minimum-opening blockers with ${acceptedOpeningRepairs} independently validated ${acceptedOpeningRepairs === 1 ? "change" : "changes"}.`);
+  } else if (afterOpeningErrors > 0 && openingRepairRejectionReasons.size > 0) {
+    notes.unshift(
+      `${afterOpeningErrors} minimum-opening ${afterOpeningErrors === 1 ? "blocker remains" : "blockers remain"}: ${[...openingRepairRejectionReasons].join("; ")}.`,
     );
   }
 
@@ -726,6 +768,11 @@ export function planManufacturingRepairs(mask, options) {
       afterErrors,
       beforeWarnings,
       afterWarnings,
+      beforeOpeningErrors,
+      afterOpeningErrors,
+      acceptedOpeningRepairs,
+      remainingOpeningErrors: afterOpeningErrors,
+      openingRepairRejectionReasons: [...openingRepairRejectionReasons],
       beforeConnectivityErrors: connectivityErrorCount(beforeValidation),
       afterConnectivityErrors: connectivityErrorCount(afterValidation),
       beforeWeakWebs: weakWebCount(beforeValidation),
@@ -887,6 +934,35 @@ function thinAreaPixelCount(validation) {
   return validation?.issues?.find((issue) =>
     issue.code === "MIN_WEB_THIN_AREAS" || issue.code === "MIN_WEB_NO_SURVIVING_CORE")
     ?.details?.pixelCount ?? 0;
+}
+
+/**
+ * Accept one local repair only when it resolves at least one location of the
+ * issue it targets and does not increase any other blocking issue group. This
+ * lets dense artwork retain safe fixes even when a neighbouring proposal is
+ * unsafe, without weakening the complete-design validation gate.
+ */
+function blockingRepairRejectionReason(before, after, targetCode) {
+  const onlyTarget = new Set([targetCode]);
+  const beforeTarget = countValidationLocations(before, "error", onlyTarget);
+  const afterTarget = countValidationLocations(after, "error", onlyTarget);
+  if (afterTarget >= beforeTarget) {
+    return "the proposed local change did not resolve its opening";
+  }
+
+  const codes = new Set([
+    ...(before?.errors ?? []).map((issue) => issue.code),
+    ...(after?.errors ?? []).map((issue) => issue.code),
+  ]);
+  const worsened = [...codes].filter((code) =>
+    code !== targetCode &&
+    countValidationLocations(after, "error", new Set([code])) >
+      countValidationLocations(before, "error", new Set([code])));
+  if (worsened.length > 0) {
+    return `the proposed local change would create or increase ${worsened.join(", ")}`;
+  }
+
+  return null;
 }
 
 function structuralWarningRejectionReason(before, after) {

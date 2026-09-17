@@ -429,6 +429,46 @@ test("manufacturing repair never accepts a proposal that worsens blockers", () =
   assert.equal(plan.outcome.safeToApply, plan.items.length > 0 && plan.outcome.improved);
 });
 
+test("manufacturing repair keeps safe opening fixes when another opening proposal is unsafe", () => {
+  // This dense fixture contains two undersized cut regions. Repairing them as
+  // one batch makes the complete validation result worse, while one region can
+  // be repaired independently without creating any other blocker. The safe
+  // repair must not be discarded with its unsafe neighbour.
+  const mask = maskFromAscii([
+    "############",
+    "###.####..##",
+    "##.##.#.####",
+    "##.###.#.###",
+    "###.#####..#",
+    "##.#####.###",
+    "#...#####.##",
+    "####..##..##",
+    "####.#...###",
+    "#..###.#####",
+    "##...#.#####",
+    "############",
+  ]);
+  const plan = planManufacturingRepairs(mask, {
+    sheet: { widthMm: 12, heightMm: 12 },
+    kerfMm: 0,
+    minimumWebMm: 2,
+    minimumOpeningMm: 2,
+    targetWebMm: 2.4,
+    targetOpeningMm: 2.4,
+    strategy: "balanced",
+    categories: { slivers: true, gaps: false, webs: false },
+    bridgeWidthMm: 2.4,
+    maximumBridges: 20,
+  });
+
+  assert.equal(plan.outcome.beforeErrors, 3);
+  assert.ok(plan.items.some((item) => item.category === "opening"));
+  assert.equal(plan.outcome.afterErrors, 0);
+  assert.equal(plan.outcome.safeToApply, true);
+  assert.equal(plan.outcome.acceptedOpeningRepairs, 1);
+  assert.equal(plan.outcome.remainingOpeningErrors, 0);
+});
+
 test("structural-warning repair is opt-in and thickens material only while validation improves", () => {
   const mask = maskFromAscii([
     ".......###.......",
