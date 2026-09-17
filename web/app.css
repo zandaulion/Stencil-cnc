@@ -51,6 +51,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+body.editor-open {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 button,
 input,
 select {
@@ -610,7 +616,13 @@ svg {
 
 #app-main,
 .app-shell {
-  min-height: 100dvh;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+}
+
+#app-main {
+  overflow: hidden;
 }
 
 .app-shell {
@@ -4662,12 +4674,6 @@ select:focus {
 }
 
 @media (max-width: 1020px) {
-  .app-shell {
-    height: auto;
-    min-height: 100dvh;
-    overflow: visible;
-  }
-
   .app-header {
     grid-template-columns: 1fr auto;
   }
@@ -4681,88 +4687,54 @@ select:focus {
   }
 
   .editor-layout {
-    min-height: calc(100dvh - var(--header-height) - var(--workflow-height));
-    grid-template-columns: 306px 58px minmax(0, 1fr);
-    grid-template-rows: minmax(640px, calc(100dvh - var(--header-height) - var(--workflow-height))) auto;
-    overflow: visible;
+    min-height: 0;
+    grid-template-columns: minmax(220px, 286px) 54px minmax(240px, 1fr) minmax(180px, 220px);
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .controls-pane {
-    height: calc(100dvh - var(--header-height) - var(--workflow-height));
-    position: sticky;
-    top: 0;
+    height: auto;
+    position: relative;
   }
 
   .tools-rail {
-    position: sticky;
-    top: 0;
-    height: calc(100dvh - var(--header-height) - var(--workflow-height));
+    position: relative;
+    height: auto;
   }
 
   .workspace-pane {
-    min-height: 640px;
+    min-height: 0;
   }
 
   .issues-pane {
-    display: grid;
+    display: block;
     min-height: 0;
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(220px, 0.7fr) minmax(300px, 1.3fr) minmax(180px, 0.55fr);
-    gap: 17px;
-    padding: 19px 22px 24px;
-    border-top: 1px solid var(--line);
-    border-left: 0;
-  }
-
-  .issues-heading {
-    grid-column: 1 / -1;
-  }
-
-  .side-rail-tabs,
-  .candidate-side-panel {
-    grid-column: 1 / -1;
+    padding: 18px 13px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
   }
 
   .candidate-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .health-summary {
-    grid-column: 1;
-    align-self: start;
-  }
-
-  .issue-filters,
-  .repair-panel,
-  .issue-list {
-    grid-column: 2;
+    grid-template-columns: 1fr;
   }
 
   .issue-filters {
-    margin: 0;
+    margin: 17px 0 12px;
   }
 
   .repair-panel {
-    grid-row: 4;
-    margin: 0;
-  }
-
-  .issue-list {
-    grid-row: 5 / span 2;
+    margin-top: 15px;
   }
 
   .legend {
-    grid-column: 3;
-    grid-row: 3 / span 3;
-    margin: 0;
-    padding: 0;
-    border: 0;
+    margin-top: 20px;
+    padding-top: 17px;
+    border-top: 1px solid var(--line);
   }
 
   .issues-validate {
-    grid-column: 1;
-    align-self: end;
-    margin: 0;
+    margin-top: 17px;
   }
 }
 
@@ -4796,7 +4768,25 @@ select:focus {
   }
 
   .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    max-height: none;
     display: block;
+    overflow: visible;
+  }
+
+  body.editor-open {
+    height: auto;
+    min-height: 100%;
+    overflow: auto;
+    overscroll-behavior: auto;
+  }
+
+  body.editor-open #app-main {
+    height: auto;
+    min-height: 100dvh;
+    max-height: none;
+    overflow: visible;
   }
 
   .app-header {

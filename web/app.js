@@ -39,6 +39,7 @@ async function requestJson(path, options = {}) {
 }
 
 function showGate(prefilledCode = '') {
+  document.body.classList.remove('editor-open');
   document.getElementById('gate-screen')?.removeAttribute('hidden');
   document.getElementById('app-main')?.setAttribute('hidden', '');
   const input = document.getElementById('invite-code-input');
@@ -56,6 +57,7 @@ async function openEditor(device, { offline = false } = {}) {
     throw new Error('Reconnect once so Kerfloom can identify this device workspace.');
   }
   state.device = device || null;
+  document.body.classList.add('editor-open');
   document.getElementById('gate-screen')?.setAttribute('hidden', '');
   document.getElementById('app-main')?.removeAttribute('hidden');
   const deviceLabel = document.getElementById('device-label');

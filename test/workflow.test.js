@@ -52,6 +52,16 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   assert.match(editor, /function refresh\([\s\S]*?invalidateValidation\(/);
 });
 
+test('the desktop editor stays within the viewport while side panels scroll internally', () => {
+  const app = fs.readFileSync(path.join(projectRoot, 'web/app.js'), 'utf8');
+  assert.match(app, /document\.body\.classList\.add\('editor-open'\)/);
+  assert.match(app, /document\.body\.classList\.remove\('editor-open'\)/);
+  assert.match(css, /body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
+  assert.match(css, /#app-main,\s*\.app-shell \{[\s\S]*?height: 100dvh;[\s\S]*?max-height: 100dvh;/);
+  assert.match(css, /@media \(max-width: 1020px\)[\s\S]*?\.editor-layout \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);[\s\S]*?overflow: hidden;/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?body\.editor-open \{[\s\S]*?overflow: auto;/);
+});
+
 test('server-backed project management is searchable, recoverable, and offline safe', () => {
   for (const id of [
     'btn-projects', 'btn-projects-mobile', 'btn-sync-mobile', 'btn-undo-mobile', 'btn-redo-mobile',
