@@ -276,6 +276,8 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /function scheduleManualValidationReview\(reviewAnchor\)/);
   assert.match(editor, /nextIssueReviewTarget\(state\.validation\.issues/);
   assert.match(editor, /Updating the issue queue/);
+  assert.match(editor, /function clearIssueHighlight\(\)[\s\S]*?state\.highlightedIssue = null;[\s\S]*?renderIssues\(state\.issues\);[\s\S]*?draw\(\);/);
+  assert.match(editor, /event\.key === 'Escape'[\s\S]*?clearIssueHighlight\(\)/);
   assert.match(editor, /manualGeometryEdit = false/);
   assert.match(editor, /!preserveManufacturingRepairs && !manualGeometryEdit/);
   assert.match(editor, /retireConflictingRepairEdit\(\s*state\.manufacturingRepairs/);

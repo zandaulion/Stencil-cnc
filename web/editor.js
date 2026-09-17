@@ -2517,6 +2517,15 @@ function focusIssue(issue) {
   applyTransform();
 }
 
+function clearIssueHighlight() {
+  if (!state.highlightedIssue) return false;
+  state.highlightedIssue = null;
+  state.highlightedIssueLocation = 0;
+  renderIssues(state.issues);
+  draw();
+  return true;
+}
+
 function toggleIssueHighlight(index) {
   const issue = state.issues[index];
   if (!issue?.details?.bounds) return;
@@ -2524,8 +2533,8 @@ function toggleIssueHighlight(index) {
   if (state.highlightedIssue === issue && Array.isArray(locations) && locations.length > 1) {
     state.highlightedIssueLocation = (state.highlightedIssueLocation + 1) % locations.length;
   } else if (state.highlightedIssue === issue) {
-    state.highlightedIssue = null;
-    state.highlightedIssueLocation = 0;
+    clearIssueHighlight();
+    return;
   } else {
     state.highlightedIssue = issue;
     state.highlightedIssueLocation = 0;
@@ -7926,6 +7935,7 @@ function wire() {
     if (event.key === 'Escape') {
       event.preventDefault();
       if (toolOptionsKind) closeToolOptions({ returnFocus: true });
+      else if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
       else if (state.selectedBridge) selectBridge(null);
       else setTool('pan');
       return;
