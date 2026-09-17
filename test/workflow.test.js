@@ -244,6 +244,8 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
     assert.match(html, new RegExp(`name="touchupMode" value="${mode}"`), mode);
   }
   assert.match(editor, /physicalStrokeIndices\(/);
+  assert.match(editor, /function touchupFootprintIntersectsMask[\s\S]*?physicalDiscIndices[\s\S]*?length > 0/);
+  assert.match(editor, /const canStart = mode === 'region'[\s\S]*?inside[\s\S]*?touchupFootprintIntersectsMask\(\{ x, y \}\)/);
   assert.match(editor, /connectedRegionIndices\(/);
   assert.match(editor, /state\.bridgePreview = \{ start: drawingFrom, end/);
   assert.match(editor, /function bridgeHandleAtPointer\(/);

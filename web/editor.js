@@ -6239,6 +6239,11 @@ function paintDisc(point, diameterMm = touchupSizeMm(), { liveStructureMask = nu
   return changed;
 }
 
+function touchupFootprintIntersectsMask(point, diameterMm = touchupSizeMm()) {
+  if (!state.sourceMask) return false;
+  return physicalDiscIndices(state.sourceMask, point, diameterMm, sheet()).length > 0;
+}
+
 function paintSegment(start, end, { liveStructureMask = null } = {}) {
   if (!state.sourceMask) return false;
   let changed = false;
@@ -7107,8 +7112,14 @@ function wire() {
       return;
     }
     if (state.tool === 'keep' || state.tool === 'remove') {
-      if (!inside) return;
       const mode = touchupMode();
+      // Region selection needs a cell under the pointer. Brush gestures only
+      // need their physical footprint to overlap the sheet, so edge work still
+      // applies when the cursor centre is just outside the drawing.
+      const canStart = mode === 'region'
+        ? inside
+        : touchupFootprintIntersectsMask({ x, y });
+      if (!canStart) return;
       const liveStructureMask = mode === 'freehand' ? touchupStructureMask() : null;
       touchupStroke = {
         mode,
