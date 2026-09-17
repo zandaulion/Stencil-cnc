@@ -70,6 +70,10 @@ export function planSmallOpeningRepairs(mask, validation, options) {
     const shortSpanMm = Math.min(component.bounds.width * pixel.x, component.bounds.height * pixel.y);
     const longSpanMm = Math.max(component.bounds.width * pixel.x, component.bounds.height * pixel.y);
     const elongated = longSpanMm / Math.max(shortSpanMm, Math.min(pixel.x, pixel.y)) >= 2.4;
+    const maximumClosureDiameterMm = targetOpeningMm * 1.75;
+    const maximumClosureSpanMm = Math.max(targetOpeningMm * 2, minimumWebMm * 1.5);
+    const closureProtected = longSpanMm > maximumClosureSpanMm ||
+      equivalentDiameterMm > maximumClosureDiameterMm;
     const meaningful = isMeaningful({
       strategy,
       equivalentDiameterMm,
@@ -89,11 +93,22 @@ export function planSmallOpeningRepairs(mask, validation, options) {
       : null;
     const canEnlarge = enlarge.some((index) => mask.data[index] === RETAINED);
     const canMerge = Boolean(merge?.some((index) => mask.data[index] === RETAINED));
+    const availableActions = {
+      close: !closureProtected,
+      enlarge: canEnlarge,
+      merge: canMerge,
+    };
     const recommended = meaningful && canMerge
       ? "merge"
       : meaningful && canEnlarge
         ? "enlarge"
-        : "close";
+        : availableActions.close
+          ? "close"
+          : canEnlarge
+            ? "enlarge"
+            : canMerge
+              ? "merge"
+              : "close";
 
     return {
       id: `opening-${component.id}`,
@@ -105,16 +120,13 @@ export function planSmallOpeningRepairs(mask, validation, options) {
       equivalentDiameterMm,
       shortSpanMm,
       longSpanMm,
+      closureProtected,
       similarityKey: `${elongated ? "elongated" : "compact"}-${sizeBand(equivalentDiameterMm / targetOpeningMm)}`,
       action: recommended,
       recommended,
-      availableActions: {
-        close: true,
-        enlarge: canEnlarge,
-        merge: canMerge,
-      },
+      availableActions,
       edits: {
-        close: { keep: indices, remove: [] },
+        close: closureProtected ? null : { keep: indices, remove: [] },
         enlarge: { keep: [], remove: enlarge },
         merge: canMerge ? { keep: [], remove: merge } : null,
       },
@@ -128,6 +140,7 @@ export function planSmallOpeningRepairs(mask, validation, options) {
     targetOpeningMm,
     minimumWebMm,
     items,
+    protectedClosureCount: items.filter((item) => item.closureProtected).length,
     counts: countActions(items),
   };
   return plan;
@@ -174,6 +187,7 @@ export function planCutGapRepairs(mask, validation, options) {
       targetGapMm,
       targetOpeningMm,
       items: [],
+      protectedClosureCount: 0,
       counts: { close: 0, enlarge: 0, merge: 0 },
     };
   }
@@ -212,7 +226,20 @@ export function planCutGapRepairs(mask, validation, options) {
     );
     const mergeProtected = merge.some((index) =>
       protectedMask?.data[index] === RETAINED && mask.data[index] === RETAINED);
-    const canClose = close.some((index) => mask.data[index] === REMOVED);
+    const smallerWidthMm = (smaller?.bounds.width ?? 0) * pixel.x;
+    const smallerHeightMm = (smaller?.bounds.height ?? 0) * pixel.y;
+    const smallerLongSpanMm = Math.max(smallerWidthMm, smallerHeightMm);
+    const smallerAreaMm2 = (smaller?.pixelCount ?? 0) * pixel.x * pixel.y;
+    const smallerDiameterMm = 2 * Math.sqrt(smallerAreaMm2 / Math.PI);
+    // Closing means filling the complete cut component with metal. It is safe
+    // only for a genuinely minor mark. A long slat, hatch stroke, letterform,
+    // or portrait opening may be the smaller member of a conflicting pair but
+    // is never disposable merely because doing so makes validation pass.
+    const maximumClosureDiameterMm = targetOpeningMm * 1.75;
+    const maximumClosureSpanMm = Math.max(targetOpeningMm * 2, targetGapMm * 1.5);
+    const closureProtected = smallerLongSpanMm > maximumClosureSpanMm ||
+      smallerDiameterMm > maximumClosureDiameterMm;
+    const canClose = !closureProtected && close.some((index) => mask.data[index] === REMOVED);
     const canWiden = widen.some((index) => mask.data[index] === REMOVED);
     const canMerge = !mergeProtected && merge.some((index) => mask.data[index] === RETAINED);
     const preferred = { preserve: "merge", balanced: "enlarge", durable: "close" }[strategy];
@@ -220,8 +247,6 @@ export function planCutGapRepairs(mask, validation, options) {
     const recommended = availableActions[preferred]
       ? preferred
       : ["enlarge", "merge", "close"].find((action) => availableActions[action]) ?? "close";
-    const smallerAreaMm2 = (smaller?.pixelCount ?? 0) * pixel.x * pixel.y;
-    const smallerDiameterMm = 2 * Math.sqrt(smallerAreaMm2 / Math.PI);
 
     return {
       id: `cut-gap-${firstId}-${secondId}`,
@@ -234,6 +259,8 @@ export function planCutGapRepairs(mask, validation, options) {
       deficitMm,
       smallerComponentId: smaller?.id ?? null,
       smallerDiameterMm,
+      smallerLongSpanMm,
+      closureProtected,
       similarityKey: `gap-${sizeBand(location.gapMm / targetGapMm)}-${sizeBand(smallerDiameterMm / targetOpeningMm)}`,
       action: recommended,
       recommended,
@@ -252,6 +279,7 @@ export function planCutGapRepairs(mask, validation, options) {
     targetGapMm,
     targetOpeningMm,
     items,
+    protectedClosureCount: items.filter((item) => item.closureProtected).length,
     counts: countActions(items),
   };
 }
@@ -426,6 +454,8 @@ export function planManufacturingRepairs(mask, options) {
   const items = [];
   const notes = [];
   const durableFallbackCategories = new Set();
+  const protectedGapClosureIds = new Set();
+  const protectedOpeningClosureIds = new Set();
   let supportCount = 0;
   let cleanupRound = 0;
 
@@ -468,17 +498,29 @@ export function planManufacturingRepairs(mask, options) {
       tryCleanupPlanner((attemptStrategy) => planLoosePieceRepairs(candidate, validation, {
         sheet: options.sheet, strategy: attemptStrategy, minimumWebMm: targetWebMm, protectedMask,
       }), "sliver", "DISCONNECTED_RETAINED_MATERIAL", stagePass + 1);
-      tryCleanupPlanner((attemptStrategy) => planSmallOpeningRepairs(candidate, validation, {
-        sheet: options.sheet, strategy: attemptStrategy,
-        targetOpeningMm: targetRasterOpeningMm, minimumWebMm: targetRasterWebMm, protectedMask,
-      }), "opening", "MIN_OPENING_UNCUTTABLE", stagePass + 2);
+      tryCleanupPlanner((attemptStrategy) => {
+        const openingPlan = planSmallOpeningRepairs(candidate, validation, {
+          sheet: options.sheet, strategy: attemptStrategy,
+          targetOpeningMm: targetRasterOpeningMm, minimumWebMm: targetRasterWebMm, protectedMask,
+        });
+        for (const item of openingPlan.items) {
+          if (item.closureProtected) protectedOpeningClosureIds.add(item.id);
+        }
+        return openingPlan;
+      }, "opening", "MIN_OPENING_UNCUTTABLE", stagePass + 2);
     }
     if (categories.gaps) {
       for (let pass = 1; pass <= 3; pass += 1) {
-        const accepted = tryCleanupPlanner((attemptStrategy) => planCutGapRepairs(candidate, validation, {
-          sheet: options.sheet, strategy: attemptStrategy,
-          targetGapMm: targetRasterWebMm, targetOpeningMm: targetRasterOpeningMm, protectedMask,
-        }), "gap", "MIN_CUT_GAP", stagePass + 2 + pass);
+        const accepted = tryCleanupPlanner((attemptStrategy) => {
+          const gapPlan = planCutGapRepairs(candidate, validation, {
+            sheet: options.sheet, strategy: attemptStrategy,
+            targetGapMm: targetRasterWebMm, targetOpeningMm: targetRasterOpeningMm, protectedMask,
+          });
+          for (const item of gapPlan.items) {
+            if (item.closureProtected) protectedGapClosureIds.add(item.id);
+          }
+          return gapPlan;
+        }, "gap", "MIN_CUT_GAP", stagePass + 2 + pass);
         if (!accepted) break;
       }
     }
@@ -620,6 +662,19 @@ export function planManufacturingRepairs(mask, options) {
       `Used the durable fallback for ${[...durableFallbackCategories].join(", ")} only where the selected strategy failed its safety check.`,
     );
   }
+  if (protectedGapClosureIds.size > 0) {
+    const count = protectedGapClosureIds.size;
+    const slats = options.bridgeStrategy?.kind === "lamele";
+    notes.unshift(slats
+      ? `Protected ${count} long slat ${count === 1 ? "cut" : "cuts"} from whole-cut closure. Any remaining close-gap errors need a more widely spaced Slats render or manual review.`
+      : `Protected ${count} long or significant ${count === 1 ? "cut" : "cuts"} from whole-cut closure. Any remaining close-gap errors need a roomier source pattern or manual review.`);
+  }
+  if (protectedOpeningClosureIds.size > 0) {
+    const count = protectedOpeningClosureIds.size;
+    notes.unshift(
+      `Protected ${count} long or significant ${count === 1 ? "opening" : "openings"} from whole-opening closure. Any remaining minimum-opening errors need source-pattern adjustment or manual review.`,
+    );
+  }
 
   return {
     kind: "manufacturing",
@@ -712,6 +767,7 @@ function emptyPlan(strategy, targetOpeningMm, minimumWebMm) {
     targetOpeningMm,
     minimumWebMm,
     items: [],
+    protectedClosureCount: 0,
     counts: { close: 0, enlarge: 0, merge: 0 },
   };
 }

@@ -184,6 +184,89 @@ test("durable close-cut repair closes the smaller conflicting cut", () => {
   assert.equal(repaired.data[1 * mask.width + 2], RETAINED);
 });
 
+test("cut-gap repair never closes portrait-spanning slat channels", () => {
+  const width = 17;
+  const height = 30;
+  const mask = createMask(width, height, true);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      if (x % 3 !== 0) mask.data[y * width + x] = 0;
+    }
+  }
+  const sheet = { widthMm: width, heightMm: height };
+  const validation = validateDesign(mask, {
+    sheet,
+    minimumOpeningMm: 0,
+    minimumWebMm: 2,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const plan = planCutGapRepairs(mask, validation, {
+    sheet,
+    strategy: "durable",
+    targetGapMm: 2.4,
+    targetOpeningMm: 1,
+  });
+
+  assert.ok(plan.protectedClosureCount > 0);
+  assert.equal(plan.counts.close, 0);
+  assert.ok(plan.items.every((item) => item.closureProtected && !item.availableActions.close));
+});
+
+test("small-opening repair never closes a long narrow artwork channel", () => {
+  const width = 9;
+  const height = 30;
+  const mask = createMask(width, height, true);
+  for (let y = 1; y < height - 1; y += 1) mask.data[y * width + 4] = 0;
+  const sheet = { widthMm: width, heightMm: height };
+  const validation = validateDesign(mask, {
+    sheet,
+    minimumOpeningMm: 2,
+    minimumWebMm: 2,
+    requireAnchored: false,
+    requireSingleComponent: true,
+  });
+  const plan = planSmallOpeningRepairs(mask, validation, {
+    sheet,
+    strategy: "durable",
+    targetOpeningMm: 2.4,
+    minimumWebMm: 2.4,
+  });
+
+  assert.equal(plan.items.length, 1);
+  assert.equal(plan.items[0].closureProtected, true);
+  assert.equal(plan.items[0].availableActions.close, false);
+  assert.notEqual(plan.items[0].action, "close");
+});
+
+test("balanced manufacturing repair does not escalate slat gaps into destructive closures", () => {
+  const width = 17;
+  const height = 30;
+  const mask = createMask(width, height, true);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      if (x % 3 !== 0) mask.data[y * width + x] = 0;
+    }
+  }
+  const plan = planManufacturingRepairs(mask, {
+    sheet: { widthMm: width, heightMm: height },
+    kerfMm: 0,
+    minimumWebMm: 2,
+    minimumOpeningMm: 0,
+    targetWebMm: 2.4,
+    targetOpeningMm: 1,
+    strategy: "balanced",
+    categories: { slivers: false, gaps: true, webs: false },
+    bridgeWidthMm: 2.4,
+    bridgeStrategy: { mode: "smart", kind: "lamele", level: 2 },
+    maximumBridges: 20,
+  });
+
+  assert.equal(plan.counts.close, 0);
+  assert.deepEqual([...plan.mask.data], [...mask.data]);
+  assert.match(plan.outcome.notes[0], /Protected \d+ long slat cuts from whole-cut closure/);
+});
+
 test("preserve cleanup removes one-cell loose specks but leaves larger artwork for support", () => {
   const mask = maskFromAscii([
     "#####....",
