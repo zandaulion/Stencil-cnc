@@ -4754,6 +4754,27 @@ select:focus {
   letter-spacing: -0.025em;
 }
 
+.project-library-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.project-library-header-actions .button {
+  min-height: 38px;
+}
+
+.project-library-header-actions .button svg {
+  width: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.7;
+}
+
+#linked-device-count:not(:empty)::before {
+  content: "· ";
+}
+
 .project-library-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 190px auto;
@@ -5089,6 +5110,260 @@ select:focus {
 .share-project-dialog,
 .received-share-dialog {
   width: min(620px, calc(100vw - 32px));
+}
+
+.device-manager-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.device-manager-dialog form {
+  max-height: min(820px, calc(100dvh - 32px));
+  overflow-y: auto;
+}
+
+.device-manager-dialog h2 {
+  margin-top: 4px;
+}
+
+.device-manager-dialog h3 {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.device-manager-dialog > form > p,
+.device-invite-panel > p {
+  margin-bottom: 14px;
+}
+
+.device-manager-status {
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #12615c !important;
+  background: #e7f6f3;
+}
+
+.device-manager-status[data-tone="danger"] {
+  color: var(--danger) !important;
+  background: var(--danger-soft);
+}
+
+.device-list,
+.pending-device-invites ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-list > li,
+.pending-device-invites li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+
+.device-list-copy,
+.pending-device-invite-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.device-list-copy strong,
+.pending-device-invite-copy strong {
+  font-size: 0.7rem;
+}
+
+.device-list-copy span,
+.pending-device-invite-copy span {
+  color: var(--muted);
+  font-size: 0.61rem;
+  line-height: 1.35;
+}
+
+.device-badge {
+  margin-left: 5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #12615c;
+  background: #dff2ef;
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.device-list-actions,
+.pending-device-invite-actions,
+.device-invite-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.device-list-actions button,
+.pending-device-invite-actions button,
+.device-invite-actions button {
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.device-list-actions button[data-confirm="true"] {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.device-invite-panel,
+.pending-device-invites {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.device-invite-panel .dialog-field {
+  margin-top: 12px;
+}
+
+.device-invite-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.app-dialog .device-invite-create input[type="text"],
+.app-dialog .device-invite-details input[type="text"] {
+  margin: 0;
+}
+
+.device-invite-progress {
+  margin: 10px 0 0 !important;
+  color: var(--muted);
+}
+
+.device-invite-progress[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.device-invite-result {
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #acd9d4;
+  border-radius: 10px;
+  background: #eff9f7;
+}
+
+.device-invite-result[hidden] {
+  display: none;
+}
+
+.device-invite-qr-wrap {
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: white;
+}
+
+.device-invite-qr-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.device-invite-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+}
+
+.device-invite-details strong {
+  font-size: 0.75rem;
+}
+
+.device-invite-details span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.device-invite-details code {
+  align-self: flex-start;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: var(--ink);
+  background: white;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.device-invite-details input {
+  min-width: 0;
+  font-size: 0.62rem !important;
+}
+
+.device-invite-warning {
+  margin: 11px 0 0 !important;
+  color: #6b5418 !important;
+  font-size: 0.62rem !important;
+}
+
+.device-manager-dialog .dialog-actions {
+  margin-top: 18px;
+}
+
+@media (max-width: 620px) {
+  .device-manager-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .device-manager-dialog form {
+    max-height: 100dvh;
+    padding: max(20px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+  }
+
+  .device-invite-result {
+    grid-template-columns: 1fr;
+  }
+
+  .device-invite-qr-wrap {
+    width: min(220px, 100%);
+    justify-self: center;
+  }
+
+  .device-list > li,
+  .pending-device-invites li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .device-list-actions button,
+  .pending-device-invite-actions button {
+    flex: 1;
+  }
 }
 
 .share-project-dialog form,

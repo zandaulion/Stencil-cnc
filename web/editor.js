@@ -4258,6 +4258,7 @@ let versionProjectId = null;
 let versionRows = [];
 let sharingProject = null;
 let receivedShare = null;
+let deviceManagerInvite = null;
 let projectThumbnailRender = 0;
 let duplicateConflictGroups = [];
 const projectThumbnailCache = new Map();
@@ -4595,6 +4596,224 @@ function closeProjectLibrary() {
   if (dialog?.open) dialog.close();
 }
 
+function deviceInviteLink(invite) {
+  if (invite?.url) return invite.url;
+  const url = new URL('/', location.origin);
+  url.hash = `invite=${encodeURIComponent(invite?.code || '')}`;
+  return url.toString();
+}
+
+function renderDeviceAccess({ devices = [], invites = [], current_device_id: currentDeviceId } = {}) {
+  const activeDevices = devices.filter((device) => !device.revoked);
+  const count = el('linked-device-count');
+  if (count) count.textContent = activeDevices.length ? String(activeDevices.length) : '';
+  const status = el('device-manager-status');
+  if (status) {
+    status.dataset.tone = 'success';
+    status.textContent = `${activeDevices.length} linked ${activeDevices.length === 1 ? 'device' : 'devices'} can access this workspace.`;
+  }
+
+  const list = el('device-list');
+  list?.replaceChildren(...devices.map((device) => {
+    const item = document.createElement('li');
+    item.dataset.deviceId = device.id;
+    const copy = document.createElement('div');
+    copy.className = 'device-list-copy';
+    const title = document.createElement('strong');
+    title.textContent = device.label;
+    if (device.id === currentDeviceId) {
+      const badge = document.createElement('span');
+      badge.className = 'device-badge';
+      badge.textContent = 'This device';
+      title.append(' ', badge);
+    } else if (device.revoked) {
+      const badge = document.createElement('span');
+      badge.className = 'device-badge';
+      badge.textContent = 'Disconnected';
+      title.append(' ', badge);
+    }
+    const detail = document.createElement('span');
+    detail.textContent = device.revoked
+      ? `Access revoked · last connected ${formatProjectDate(device.last_seen)}`
+      : `Last connected ${formatProjectDate(device.last_seen)} · linked ${formatProjectDate(device.created_at)}`;
+    copy.append(title, detail);
+    item.append(copy);
+    if (device.id !== currentDeviceId && !device.revoked) {
+      const actions = document.createElement('div');
+      actions.className = 'device-list-actions';
+      const disconnect = document.createElement('button');
+      disconnect.type = 'button';
+      disconnect.dataset.deviceAction = 'disconnect';
+      disconnect.dataset.deviceId = device.id;
+      disconnect.dataset.deviceLabel = device.label;
+      disconnect.textContent = 'Disconnect';
+      disconnect.title = `Disconnect ${device.label} from this workspace`;
+      actions.append(disconnect);
+      item.append(actions);
+    }
+    return item;
+  }));
+
+  const pendingSection = el('pending-device-invites-section');
+  const pendingList = el('pending-device-invites');
+  if (pendingSection) pendingSection.hidden = invites.length === 0;
+  pendingList?.replaceChildren(...invites.map((invite) => {
+    const item = document.createElement('li');
+    const copy = document.createElement('div');
+    copy.className = 'pending-device-invite-copy';
+    const title = document.createElement('strong');
+    title.textContent = invite.label;
+    const detail = document.createElement('span');
+    detail.textContent = `Unused · expires ${formatProjectDate(invite.expires_at)}`;
+    copy.append(title, detail);
+    const actions = document.createElement('div');
+    actions.className = 'pending-device-invite-actions';
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.dataset.inviteAction = 'copy';
+    copyButton.dataset.inviteLink = deviceInviteLink(invite);
+    copyButton.textContent = 'Copy';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.dataset.inviteAction = 'cancel';
+    cancelButton.dataset.inviteId = String(invite.id);
+    cancelButton.textContent = 'Cancel link';
+    actions.append(copyButton, cancelButton);
+    item.append(copy, actions);
+    return item;
+  }));
+}
+
+async function refreshDeviceAccess() {
+  const result = await requestWorkspaceJson('/api/workspace/devices');
+  renderDeviceAccess(result);
+  return result;
+}
+
+async function openDeviceManager() {
+  if (state.offline || !navigator.onLine) {
+    toast('Connect to the server to manage linked devices.');
+    return;
+  }
+  closeProjectLibrary();
+  deviceManagerInvite = null;
+  el('device-invite-result').hidden = true;
+  el('device-invite-progress').hidden = true;
+  const status = el('device-manager-status');
+  status.dataset.tone = 'neutral';
+  status.textContent = 'Loading linked devices…';
+  const dialog = el('device-manager-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+  try {
+    await refreshDeviceAccess();
+    requestAnimationFrame(() => el('device-invite-label')?.focus());
+  } catch (error) {
+    console.error(error);
+    status.dataset.tone = 'danger';
+    status.textContent = error.message || 'Linked devices could not be loaded.';
+  }
+}
+
+async function createDeviceInvite() {
+  const labelInput = el('device-invite-label');
+  const label = labelInput?.value.trim() || '';
+  const progress = el('device-invite-progress');
+  if (!label) {
+    progress.hidden = false;
+    progress.dataset.tone = 'danger';
+    progress.textContent = 'Name the phone or computer you are linking.';
+    labelInput?.focus();
+    return;
+  }
+  const button = el('btn-create-device-invite');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  progress.hidden = false;
+  progress.dataset.tone = 'neutral';
+  progress.textContent = 'Creating a private one-time invitation…';
+  try {
+    const invite = await requestWorkspaceJson('/api/workspace/device-invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    deviceManagerInvite = { ...invite, link: deviceInviteLink(invite) };
+    const result = el('device-invite-result');
+    const qr = el('device-invite-qr');
+    const qrWrap = qr.closest('.device-invite-qr-wrap');
+    qrWrap.hidden = !invite.qr_data_url;
+    if (invite.qr_data_url) qr.src = invite.qr_data_url;
+    el('device-invite-expiry').textContent = `Expires ${formatProjectDate(invite.expires_at)} · works once`;
+    el('device-invite-code').textContent = invite.code;
+    el('device-invite-link').value = deviceManagerInvite.link;
+    el('btn-share-device-invite').hidden = typeof navigator.share !== 'function';
+    result.hidden = false;
+    progress.hidden = true;
+    labelInput.value = '';
+    await refreshDeviceAccess();
+    result.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    toast('One-time device link created.');
+  } catch (error) {
+    console.error(error);
+    progress.dataset.tone = 'danger';
+    progress.textContent = error.message || 'The device invitation could not be created.';
+  } finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
+}
+
+async function disconnectWorkspaceDevice(button) {
+  if (button.dataset.confirm !== 'true') {
+    for (const other of all('[data-device-action="disconnect"]')) {
+      other.dataset.confirm = 'false';
+      other.textContent = 'Disconnect';
+    }
+    button.dataset.confirm = 'true';
+    button.textContent = 'Confirm disconnect';
+    button.focus();
+    return;
+  }
+  button.disabled = true;
+  try {
+    await requestWorkspaceJson(`/api/workspace/devices/${encodeURIComponent(button.dataset.deviceId)}/revoke`, {
+      method: 'POST',
+    });
+    await refreshDeviceAccess();
+    toast(`“${button.dataset.deviceLabel}” can no longer access this workspace.`);
+  } catch (error) {
+    console.error(error);
+    toast(error.message || 'That device could not be disconnected.');
+    button.disabled = false;
+  }
+}
+
+async function handlePendingDeviceInvite(button) {
+  if (button.dataset.inviteAction === 'copy') {
+    await copyText(button.dataset.inviteLink);
+    toast('One-time device link copied.');
+    return;
+  }
+  if (button.dataset.inviteAction !== 'cancel') return;
+  button.disabled = true;
+  try {
+    await requestWorkspaceJson(`/api/workspace/device-invites/${encodeURIComponent(button.dataset.inviteId)}`, {
+      method: 'DELETE',
+    });
+    if (String(deviceManagerInvite?.id) === button.dataset.inviteId) {
+      deviceManagerInvite = null;
+      el('device-invite-result').hidden = true;
+    }
+    await refreshDeviceAccess();
+    toast('Unused device invitation cancelled.');
+  } catch (error) {
+    console.error(error);
+    toast(error.message || 'The invitation could not be cancelled.');
+    button.disabled = false;
+  }
+}
+
 async function openStoredProject(id) {
   if (id === state.projectId) {
     closeProjectLibrary();
@@ -4820,6 +5039,25 @@ async function requestShareJson(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.error || `Sharing request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function requestWorkspaceJson(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `Workspace request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }
@@ -7994,12 +8232,52 @@ function wire() {
   for (const id of ['btn-projects', 'btn-projects-mobile']) {
     el(id)?.addEventListener('click', () => void openProjectLibrary());
   }
+  el('btn-manage-devices')?.addEventListener('click', () => void openDeviceManager());
   el('btn-close-projects')?.addEventListener('click', closeProjectLibrary);
   el('project-library-dialog')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeProjectLibrary();
   });
   el('project-search')?.addEventListener('input', renderProjectLibrary);
   el('project-status-filter')?.addEventListener('change', renderProjectLibrary);
+  el('btn-create-device-invite')?.addEventListener('click', () => void createDeviceInvite());
+  el('device-invite-label')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void createDeviceInvite();
+    }
+  });
+  el('btn-copy-device-invite')?.addEventListener('click', async () => {
+    if (!deviceManagerInvite?.link) return;
+    await copyText(deviceManagerInvite.link);
+    toast('One-time device link copied.');
+  });
+  el('btn-share-device-invite')?.addEventListener('click', async () => {
+    if (!deviceManagerInvite?.link || typeof navigator.share !== 'function') return;
+    try {
+      await navigator.share({
+        title: 'Link a device to Kerfloom',
+        text: `Open this one-time link to join my Kerfloom workspace as “${deviceManagerInvite.label || 'Linked device'}”.`,
+        url: deviceManagerInvite.link,
+      });
+    } catch (error) {
+      if (error?.name !== 'AbortError') toast('The device link could not be shared. You can copy it instead.');
+    }
+  });
+  el('device-list')?.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-device-action="disconnect"]');
+    if (button) void disconnectWorkspaceDevice(button);
+  });
+  el('pending-device-invites')?.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-invite-action]');
+    if (button) void handlePendingDeviceInvite(button);
+  });
+  el('device-manager-dialog')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
+  el('device-manager-dialog')?.addEventListener('close', () => {
+    deviceManagerInvite = null;
+    void openProjectLibrary({ flush: false });
+  });
   el('btn-import-legacy-projects')?.addEventListener('click', async () => {
     const legacy = await legacyProjectSummary();
     if (!legacy.count) {

@@ -98,7 +98,7 @@ export class AuthService {
     this.clock = options.clock || (() => new Date());
   }
 
-  createInvite(label = null, workspaceId = null) {
+  createInvite(label = null, workspaceId = null, requestedBaseUrl = null) {
     const cleanedLabel = cleanLabel(label);
     const linkedWorkspace = typeof workspaceId === 'string' && workspaceId
       ? this.db.prepare('SELECT id FROM workspaces WHERE id = ?').get(workspaceId)?.id ?? null
@@ -107,6 +107,7 @@ export class AuthService {
       throw new AuthError(404, 'Workspace not found.', 'workspace_not_found');
     }
     const createdAt = this.clock().toISOString();
+    const inviteBaseUrl = publicBase(requestedBaseUrl) || this.publicBaseUrl;
     const expiresAt = new Date(
       Date.parse(createdAt) + this.inviteTtlDays * 24 * 60 * 60 * 1000
     ).toISOString();
@@ -115,8 +116,11 @@ export class AuthService {
     // event rather than an opaque UNIQUE-constraint failure.
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const code = randomCode();
-      const url = this.publicBaseUrl
-        ? `${this.publicBaseUrl}/?code=${encodeURIComponent(code)}`
+      // Keep the credential in the fragment so it is not sent in HTTP request
+      // targets, proxy logs, or referrer headers. The gate still accepts the
+      // legacy query-string form for already-issued invitations.
+      const url = inviteBaseUrl
+        ? `${inviteBaseUrl}/#invite=${encodeURIComponent(code)}`
         : null;
       try {
         const result = this.db.prepare(`
@@ -339,6 +343,60 @@ export class AuthService {
         has_push: Boolean(row.has_push)
       }))
     };
+  }
+
+  listWorkspaceAccess(workspaceId) {
+    const now = this.clock().toISOString();
+    this.db.prepare(`
+      UPDATE invites SET code = NULL, url = NULL
+      WHERE workspace_id = ? AND expires_at <= ? AND code IS NOT NULL
+    `).run(workspaceId, now);
+
+    return {
+      devices: this.db.prepare(`
+        SELECT id, label, created_at, last_seen, revoked, has_push
+        FROM devices
+        WHERE workspace_id = ?
+        ORDER BY revoked ASC, last_seen DESC, created_at DESC
+      `).all(workspaceId).map((row) => ({
+        id: row.id,
+        label: row.label || 'Unnamed device',
+        created_at: row.created_at,
+        last_seen: row.last_seen,
+        revoked: Boolean(row.revoked),
+        has_push: Boolean(row.has_push),
+      })),
+      invites: this.db.prepare(`
+        SELECT id, label, code, url, created_at, expires_at
+        FROM invites
+        WHERE workspace_id = ?
+          AND used_at IS NULL
+          AND revoked = 0
+          AND expires_at > ?
+        ORDER BY created_at DESC
+      `).all(workspaceId, now).map((row) => ({
+        id: row.id,
+        label: row.label || 'New device',
+        code: row.code,
+        url: row.url,
+        created_at: row.created_at,
+        expires_at: row.expires_at,
+      })),
+    };
+  }
+
+  revokeWorkspaceDevice(workspaceId, id) {
+    return this.db.prepare(`
+      UPDATE devices SET revoked = 1
+      WHERE id = ? AND workspace_id = ? AND revoked = 0
+    `).run(id, workspaceId).changes === 1;
+  }
+
+  revokeWorkspaceInvite(workspaceId, id) {
+    return this.db.prepare(`
+      UPDATE invites SET revoked = 1, code = NULL, url = NULL
+      WHERE id = ? AND workspace_id = ? AND used_at IS NULL AND revoked = 0
+    `).run(id, workspaceId).changes === 1;
   }
 
   setDeviceRevoked(id, revoked) {

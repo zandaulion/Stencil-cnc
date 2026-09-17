@@ -27,7 +27,7 @@ test('invite redemption creates one device and drops the plaintext code', () => 
 
   const invite = auth.createInvite('Workshop laptop');
   assert.match(invite.code, /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
-  assert.equal(invite.url, `https://stencil.example/?code=${invite.code}`);
+  assert.equal(invite.url, `https://stencil.example/#invite=${invite.code}`);
 
   const redeemed = auth.redeemInvite(invite.code.toLowerCase(), 'Main laptop');
   assert.ok(redeemed.token.length >= 40);
@@ -76,6 +76,35 @@ test('administrator revocation wins over the invite rebind grace period', () => 
   now = new Date('2026-09-13T10:05:00.000Z');
   assert.throws(() => auth.redeemInvite(invite.code), /already been used/);
   assert.equal(auth.listDevices().devices[0].revoked, true);
+  db.close();
+});
+
+test('workspace access lists and revocations remain scoped to one workspace', () => {
+  const db = memoryDatabase();
+  const auth = new AuthService(db, {
+    publicBaseUrl: 'https://kerfloom.example',
+    clock: () => new Date('2026-09-13T10:00:00.000Z'),
+  });
+  const firstOwner = auth.redeemInvite(auth.createInvite('First owner').code);
+  const secondOwner = auth.redeemInvite(auth.createInvite('Second owner').code);
+  const phoneInvite = auth.createInvite('Phone', firstOwner.device.workspaceId);
+
+  const firstAccess = auth.listWorkspaceAccess(firstOwner.device.workspaceId);
+  assert.deepEqual(firstAccess.devices.map((device) => device.id), [firstOwner.device.id]);
+  assert.deepEqual(firstAccess.invites.map((invite) => invite.id), [phoneInvite.id]);
+  assert.equal(auth.listWorkspaceAccess(secondOwner.device.workspaceId).invites.length, 0);
+  assert.equal(
+    auth.revokeWorkspaceDevice(secondOwner.device.workspaceId, firstOwner.device.id),
+    false,
+    'another workspace cannot revoke this device',
+  );
+  assert.equal(
+    auth.revokeWorkspaceInvite(secondOwner.device.workspaceId, phoneInvite.id),
+    false,
+    'another workspace cannot cancel this invitation',
+  );
+  assert.equal(auth.revokeWorkspaceInvite(firstOwner.device.workspaceId, phoneInvite.id), true);
+  assert.equal(auth.listWorkspaceAccess(firstOwner.device.workspaceId).invites.length, 0);
   db.close();
 });
 

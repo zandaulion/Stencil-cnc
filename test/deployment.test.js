@@ -130,6 +130,86 @@ test('revoking through the console immediately blocks online protected assets', 
   assert.equal((await request('/editor.js', { headers: { Cookie: session.cookie } })).status, 401);
 });
 
+test('linked devices can securely manage only their own workspace access', async () => {
+  const owner = await register('Studio desktop');
+  const outsider = await register('Other workspace');
+  const initial = await request('/api/workspace/devices', {
+    headers: { Cookie: owner.cookie },
+  });
+  assert.equal(initial.status, 200);
+  const initialAccess = await initial.json();
+  assert.equal(initialAccess.current_device_id, owner.body.device.id);
+  assert.deepEqual(initialAccess.devices.map((device) => device.label), ['Studio desktop']);
+
+  const inviteResponse = await request('/api/workspace/device-invites', {
+    method: 'POST',
+    headers: { Cookie: owner.cookie, Origin: base },
+    body: JSON.stringify({ label: 'My phone' }),
+  });
+  assert.equal(inviteResponse.status, 201);
+  const invite = await inviteResponse.json();
+  assert.equal(invite.url, `${base}/#invite=${invite.code}`);
+  assert.match(invite.qr_data_url, /^data:image\/png;base64,/);
+
+  const pending = await request('/api/workspace/devices', {
+    headers: { Cookie: owner.cookie },
+  });
+  assert.deepEqual((await pending.json()).invites.map((row) => row.id), [invite.id]);
+
+  const phoneResponse = await request('/api/auth/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code: invite.code, label: 'My phone' }),
+  });
+  assert.equal(phoneResponse.status, 200);
+  const phoneBody = await phoneResponse.json();
+  const phoneCookie = phoneResponse.headers.get('set-cookie').split(';')[0];
+  assert.equal(phoneBody.device.workspaceId, owner.body.device.workspaceId);
+
+  const linked = await request('/api/workspace/devices', {
+    headers: { Cookie: owner.cookie },
+  });
+  const linkedAccess = await linked.json();
+  assert.equal(linkedAccess.devices.filter((device) => !device.revoked).length, 2);
+  assert.equal(linkedAccess.invites.length, 0);
+
+  const selfRevoke = await request(`/api/workspace/devices/${owner.body.device.id}/revoke`, {
+    method: 'POST',
+    headers: { Cookie: owner.cookie },
+  });
+  assert.equal(selfRevoke.status, 409);
+  assert.equal((await selfRevoke.json()).code, 'current_device');
+
+  const crossWorkspaceRevoke = await request(`/api/workspace/devices/${phoneBody.device.id}/revoke`, {
+    method: 'POST',
+    headers: { Cookie: outsider.cookie },
+  });
+  assert.equal(crossWorkspaceRevoke.status, 404);
+
+  const revoke = await request(`/api/workspace/devices/${phoneBody.device.id}/revoke`, {
+    method: 'POST',
+    headers: { Cookie: owner.cookie },
+  });
+  assert.equal(revoke.status, 200);
+  assert.equal((await request('/api/auth/me', { headers: { Cookie: phoneCookie } })).status, 401);
+
+  const spareInviteResponse = await request('/api/workspace/device-invites', {
+    method: 'POST',
+    headers: { Cookie: owner.cookie },
+    body: JSON.stringify({ label: 'Spare tablet' }),
+  });
+  const spareInvite = await spareInviteResponse.json();
+  const crossWorkspaceCancel = await request(`/api/workspace/device-invites/${spareInvite.id}`, {
+    method: 'DELETE',
+    headers: { Cookie: outsider.cookie },
+  });
+  assert.equal(crossWorkspaceCancel.status, 404);
+  const cancel = await request(`/api/workspace/device-invites/${spareInvite.id}`, {
+    method: 'DELETE',
+    headers: { Cookie: owner.cookie },
+  });
+  assert.equal(cancel.status, 200);
+});
+
 test('encrypted project snapshots are claimable by one invited recipient and revocable by the owner', async () => {
   const owner = await register('Project owner');
   const recipient = await register('Project recipient');

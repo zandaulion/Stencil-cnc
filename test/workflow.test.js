@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const html = fs.readFileSync(path.join(projectRoot, 'web/index.html'), 'utf8');
+const app = fs.readFileSync(path.join(projectRoot, 'web/app.js'), 'utf8');
 const editor = fs.readFileSync(path.join(projectRoot, 'web/editor.js'), 'utf8');
 const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
 const storage = fs.readFileSync(path.join(projectRoot, 'web/storage.js'), 'utf8');
@@ -91,7 +92,6 @@ test('readiness, storage, sharing, and input-format copy matches actual behavior
 });
 
 test('the desktop editor stays within the viewport while side panels scroll internally', () => {
-  const app = fs.readFileSync(path.join(projectRoot, 'web/app.js'), 'utf8');
   assert.match(app, /document\.body\.classList\.add\('editor-open'\)/);
   assert.match(app, /document\.body\.classList\.remove\('editor-open'\)/);
   assert.match(css, /body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
@@ -99,6 +99,27 @@ test('the desktop editor stays within the viewport while side panels scroll inte
   assert.match(css, /@media \(max-width: 1020px\)[\s\S]*?\.editor-layout \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);[\s\S]*?overflow: hidden;/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.workspace-pane \{[\s\S]*?height: 100%;[\s\S]*?min-height: 0;/);
+});
+
+test('workspace devices can be linked, reviewed, and disconnected without using project sharing', () => {
+  for (const id of [
+    'btn-manage-devices', 'linked-device-count', 'device-manager-dialog', 'device-list',
+    'device-invite-label', 'btn-create-device-invite', 'device-invite-result',
+    'device-invite-qr', 'device-invite-code', 'device-invite-link',
+    'btn-copy-device-invite', 'btn-share-device-invite', 'pending-device-invites',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(html, /work on the same live projects/);
+  assert.match(html, /different from sharing an independent project copy/);
+  assert.match(editor, /\/api\/workspace\/devices/);
+  assert.match(editor, /\/api\/workspace\/device-invites/);
+  assert.match(editor, /disconnect\.dataset\.deviceAction = 'disconnect'/);
+  assert.match(editor, /button\.dataset\.confirm !== 'true'/);
+  assert.match(editor, /typeof navigator\.share/);
+  assert.match(app, /location\.hash\.slice\(1\)/);
+  assert.match(app, /fragment\.get\('invite'\)/);
+  assert.match(app, /Keep current workspace|btn-cancel-relink/);
+  assert.match(css, /\.device-manager-dialog/);
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.device-manager-dialog/);
 });
 
 test('mobile controls, keyboard tabs, announcements, and gestures have accessible paths', () => {

@@ -38,12 +38,20 @@ async function requestJson(path, options = {}) {
   return data;
 }
 
-function showGate(prefilledCode = '') {
+function showGate(prefilledCode = '', { relink = false, currentLabel = '' } = {}) {
   document.body.classList.remove('editor-open');
   document.getElementById('gate-screen')?.removeAttribute('hidden');
   document.getElementById('app-main')?.setAttribute('hidden', '');
   const input = document.getElementById('invite-code-input');
   if (input && prefilledCode) input.value = prefilledCode;
+  const help = document.getElementById('invite-help');
+  if (help) {
+    help.textContent = relink
+      ? `This browser is currently “${currentLabel || 'Linked device'}”. Continue only if you want it to use the invited workspace.`
+      : 'Use the one-time code shared by the workspace owner.';
+  }
+  const cancel = document.getElementById('btn-cancel-relink');
+  if (cancel) cancel.hidden = !relink;
   input?.focus();
 }
 
@@ -81,10 +89,15 @@ async function openEditor(device, { offline = false } = {}) {
 
 async function checkAccess() {
   const params = new URLSearchParams(location.search);
-  const code = params.get('code') || params.get('invite') || '';
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const code = params.get('code') || params.get('invite') || fragment.get('invite') || '';
 
   try {
     const result = await requestJson('/api/auth/me', { cache: 'no-store' });
+    if (code) {
+      showGate(code, { relink: true, currentLabel: result.device.label });
+      return;
+    }
     localStorage.setItem(AUTH_MARKER, '1');
     localStorage.setItem(AUTH_WORKSPACE, result.device.workspaceId);
     localStorage.setItem(AUTH_DEVICE_LABEL, result.device.label || 'Linked device');
@@ -101,7 +114,7 @@ async function checkAccess() {
     // Revocation takes effect on the next successful online check; cached code
     // and local projects cannot be remotely erased while the device is offline.
     const offlineWorkspaceId = localStorage.getItem(AUTH_WORKSPACE);
-    if (localStorage.getItem(AUTH_MARKER) === '1' && offlineWorkspaceId) {
+    if (!code && localStorage.getItem(AUTH_MARKER) === '1' && offlineWorkspaceId) {
       await openEditor({
         workspaceId: offlineWorkspaceId,
         label: localStorage.getItem(AUTH_DEVICE_LABEL) || 'Offline workspace',
@@ -146,6 +159,10 @@ function wireGate() {
     } finally {
       if (submit) submit.disabled = false;
     }
+  });
+  document.getElementById('btn-cancel-relink')?.addEventListener('click', () => {
+    clearInviteFromUrl();
+    void checkAccess();
   });
 }
 

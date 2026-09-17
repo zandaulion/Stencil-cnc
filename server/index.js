@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import express from 'express';
+import QRCode from 'qrcode';
 
 import { openDatabase } from './db.js';
 import {
@@ -55,6 +56,17 @@ function clearDeviceCookie(res) {
     sameSite: 'lax',
     path: '/'
   });
+}
+
+function sameOriginBase(req) {
+  const supplied = String(req.get('origin') || '').trim();
+  if (!supplied) return null;
+  try {
+    const origin = new URL(supplied);
+    return origin.host === req.get('host') ? origin.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function redemptionKey(req, trustProxyHeaders) {
@@ -300,19 +312,68 @@ export function createApp(options = {}) {
 
   // A linked device can issue a one-use invite into its own workspace. Admin
   // invites still create isolated workspaces unless a workspace is explicit.
-  app.post('/api/workspace/device-invites', requireDevice, (req, res) => {
+  app.get('/api/workspace/devices', requireDevice, (req, res) => {
+    setPrivateNoStore(res);
+    return res.json({
+      current_device_id: req.device.id,
+      ...auth.listWorkspaceAccess(req.device.workspaceId),
+    });
+  });
+
+  app.post('/api/workspace/device-invites', requireDevice, async (req, res, next) => {
     if (req.body?.label !== undefined && typeof req.body.label !== 'string') {
       return errorResponse(res, 400, 'label must be a string', 'bad_request');
     }
+    let invite = null;
     try {
+      invite = auth.createInvite(
+        req.body?.label,
+        req.device.workspaceId,
+        sameOriginBase(req),
+      );
+      const qrDataUrl = invite.url
+        ? await QRCode.toDataURL(invite.url, {
+          errorCorrectionLevel: 'M',
+          margin: 2,
+          width: 264,
+          color: { dark: '#13242c', light: '#ffffff' },
+        })
+        : null;
       setPrivateNoStore(res);
-      return res.status(201).json(auth.createInvite(req.body?.label, req.device.workspaceId));
+      return res.status(201).json({ ...invite, qr_data_url: qrDataUrl });
     } catch (error) {
+      // Do not leave a live credential behind when its QR response could not
+      // be completed. The user can safely retry and receive a fresh link.
+      if (invite) auth.revokeWorkspaceInvite(req.device.workspaceId, invite.id);
       if (error instanceof AuthError) {
         return errorResponse(res, error.status, error.message, error.code);
       }
-      throw error;
+      return next(error);
     }
+  });
+
+  app.delete('/api/workspace/device-invites/:id', requireDevice, (req, res) => {
+    if (!auth.revokeWorkspaceInvite(req.device.workspaceId, req.params.id)) {
+      return errorResponse(res, 404, 'Active invitation not found', 'not_found');
+    }
+    setPrivateNoStore(res);
+    return res.json({ revoked: Number(req.params.id) });
+  });
+
+  app.post('/api/workspace/devices/:id/revoke', requireDevice, (req, res) => {
+    if (req.params.id === req.device.id) {
+      return errorResponse(
+        res,
+        409,
+        'This device cannot disconnect itself. Use another linked device or the administrator console.',
+        'current_device',
+      );
+    }
+    if (!auth.revokeWorkspaceDevice(req.device.workspaceId, req.params.id)) {
+      return errorResponse(res, 404, 'Linked device not found', 'not_found');
+    }
+    setPrivateNoStore(res);
+    return res.json({ id: req.params.id, revoked: true });
   });
 
   app.post(

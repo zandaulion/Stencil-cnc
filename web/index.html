@@ -39,7 +39,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v10H6z"></path></svg>
           <input id="invite-code-input" name="inviteCode" type="text" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" required aria-describedby="invite-help gate-error">
         </div>
-        <p class="field-help" id="invite-help">Use the one-time code shared by the workshop owner.</p>
+        <p class="field-help" id="invite-help">Use the one-time code shared by the workspace owner.</p>
 
         <label for="device-label-input">Name this device</label>
         <div class="invite-field">
@@ -52,6 +52,7 @@
           <span>Open Kerfloom</span>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
         </button>
+        <button class="button button-quiet gate-cancel-relink" id="btn-cancel-relink" type="button" hidden>Keep current workspace</button>
       </form>
 
       <div class="gate-assurance">
@@ -1533,9 +1534,15 @@
           <span class="eyebrow">Encrypted server workspace</span>
           <h2 id="project-library-title">Projects</h2>
         </div>
-        <button class="icon-button" id="btn-close-projects" type="button" aria-label="Close projects" title="Close">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
-        </button>
+        <div class="project-library-header-actions">
+          <button class="button button-secondary" id="btn-manage-devices" type="button" aria-haspopup="dialog" aria-controls="device-manager-dialog">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="12" height="9" rx="1.5"></rect><path d="M7 18h4M9 14v4M18 9h3v10h-7v-3"></path></svg>
+            Devices <span id="linked-device-count" aria-label="linked devices"></span>
+          </button>
+          <button class="icon-button" id="btn-close-projects" type="button" aria-label="Close projects" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </div>
       </header>
 
       <div class="project-library-toolbar">
@@ -1600,6 +1607,53 @@
         Complete projects, original photographs, recovery points, and retained exports are encrypted on the server. This device keeps an offline cache and upload queue.
       </footer>
     </section>
+  </dialog>
+
+  <dialog class="app-dialog device-manager-dialog" id="device-manager-dialog" aria-labelledby="device-manager-title">
+    <form method="dialog">
+      <span class="eyebrow">One encrypted workspace</span>
+      <h2 id="device-manager-title">Linked devices</h2>
+      <p>Link your phone, tablet, or another computer to work on the same live projects. This is different from sharing an independent project copy.</p>
+
+      <p class="device-manager-status" id="device-manager-status" role="status">Loading linked devices…</p>
+      <ul class="device-list" id="device-list" aria-label="Devices with workspace access"></ul>
+
+      <section class="device-invite-panel" aria-labelledby="device-invite-title">
+        <h3 id="device-invite-title">Link another device</h3>
+        <p>Give it a recognizable name, then scan the one-time QR code on that device.</p>
+        <label class="dialog-field" for="device-invite-label">Device name</label>
+        <div class="device-invite-create">
+          <input id="device-invite-label" type="text" maxlength="60" autocomplete="off" placeholder="e.g. My phone" required>
+          <button class="button button-primary" id="btn-create-device-invite" type="button">Create link</button>
+        </div>
+        <p class="device-invite-progress" id="device-invite-progress" role="status" hidden></p>
+        <section class="device-invite-result" id="device-invite-result" aria-labelledby="device-invite-result-title" hidden>
+          <div class="device-invite-qr-wrap">
+            <img id="device-invite-qr" alt="QR code for the one-time Kerfloom device invitation">
+          </div>
+          <div class="device-invite-details">
+            <strong id="device-invite-result-title">Invitation ready</strong>
+            <span id="device-invite-expiry"></span>
+            <code id="device-invite-code"></code>
+            <input id="device-invite-link" type="text" readonly aria-label="One-time device invitation link">
+            <div class="device-invite-actions">
+              <button type="button" id="btn-copy-device-invite">Copy link</button>
+              <button type="button" id="btn-share-device-invite" hidden>Share to phone</button>
+            </div>
+          </div>
+        </section>
+        <p class="device-invite-warning">Anyone holding an unused link can join this workspace. Send it privately and cancel it if it is no longer needed.</p>
+      </section>
+
+      <section class="pending-device-invites" id="pending-device-invites-section" aria-labelledby="pending-device-invites-title" hidden>
+        <h3 id="pending-device-invites-title">Pending invitations</h3>
+        <ul id="pending-device-invites"></ul>
+      </section>
+
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Back to projects</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog class="app-dialog" id="rename-project-dialog" aria-labelledby="rename-project-title">
