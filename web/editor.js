@@ -131,6 +131,8 @@ const PANEL_SIZE_PRESETS = Object.freeze({
   'sheet-1250-2500': Object.freeze({ widthMm: 1250, heightMm: 2500 }),
 });
 const BASE_STYLE_SETTINGS = Object.freeze({
+  'style-tone-brightness': '0',
+  'style-tone-contrast': '0',
   'style-gain': '2.2',
   'style-smooth': '0.55',
   'style-curve': '1.4',
@@ -165,6 +167,7 @@ const STYLE_DEFAULT_SETTINGS = Object.freeze({
   }),
 });
 const STYLE_SHARED_CONTROL_IDS = Object.freeze([
+  'style-tone-brightness', 'style-tone-contrast',
   'style-gain', 'style-smooth', 'style-curve', 'style-cutout', 'style-clothes',
 ]);
 
@@ -572,7 +575,10 @@ function applySharedStyleSettings(recipe) {
 
 function activateStyleSettings(style) {
   rememberStyleSettings();
-  const recipe = state.styleSettings[style] || styleDefaults(style);
+  // Older projects can have a complete recipe from before newer shared tone
+  // controls existed. Merge it over current defaults so omitted controls do
+  // not leak across styles while switching filters.
+  const recipe = { ...styleDefaults(style), ...(state.styleSettings[style] || {}) };
   applySharedStyleSettings(recipe);
   state.activeStyle = style;
   rememberStyleSettings(style);
@@ -735,6 +741,8 @@ function styleParams(stil = selectedCutStyle()) {
   form.set('castig', String(numberField('style-gain', 2.2)));
   form.set('netezire', String(numberField('style-smooth', 0.55)));
   form.set('gamma', String(numberField('style-curve', 1.4)));
+  form.set('luminozitate_ton', String(numberField('style-tone-brightness', 0)));
+  form.set('contrast_ton', String(numberField('style-tone-contrast', 0)));
   form.set('inverseaza', String(
     document.querySelector('input[name="polarity"]:checked')?.value === 'white-retained',
   ));
@@ -1107,6 +1115,7 @@ function reflectModeControls() {
   el('style-controls')?.removeAttribute('hidden');
   el('tone-controls')?.toggleAttribute('hidden', !lineArt);
   el('style-photo-common')?.toggleAttribute('hidden', lineArt);
+  el('tone-adjustments')?.toggleAttribute('hidden', lineArt);
   el('style-curve-control')?.toggleAttribute(
     'hidden', !['lamele', 'hasura', 'puncte', 'gravura', 'raze'].includes(style),
   );
@@ -4291,7 +4300,7 @@ async function importReceivedShare() {
 /* ----------------------------------------------------------------- import */
 
 function setSourceRecipeAvailability(available) {
-  for (const node of all('#polarity input, #style-controls input, #style-controls button')) {
+  for (const node of all('#polarity input, #style-controls input, #style-controls button, #tone-inspector input, #tone-inspector button')) {
     node.disabled = !available;
   }
   if (available) reflectModeControls();
@@ -6339,7 +6348,8 @@ function wire() {
     'style-icon-line-width', 'style-icon-simplify', 'style-icon-halo', 'style-icon-halo-scale',
     'style-pitch', 'style-slat-angle', 'style-angle',
     'style-dot-pitch', 'style-dot-max', 'style-dot-angle', 'style-dot-cutoff',
-    'style-row-pitch', 'style-cell', 'style-gain', 'style-smooth', 'style-curve',
+    'style-row-pitch', 'style-cell', 'style-tone-brightness', 'style-tone-contrast',
+    'style-gain', 'style-smooth', 'style-curve',
     'style-line-detail', 'style-line-width', 'style-wood-spacing', 'style-wood-length',
     'style-graphic-balance', 'style-graphic-detail', 'style-graphic-simplify',
     'style-silhouette-smooth', 'style-contour-levels', 'style-contour-width',
@@ -6359,9 +6369,25 @@ function wire() {
     });
   }
   el('btn-restyle')?.addEventListener('click', renderStyle);
+  el('btn-open-tone-adjustments')?.addEventListener('click', () => {
+    setView('tone');
+    const adjustments = el('tone-adjustments');
+    if (adjustments) adjustments.open = true;
+  });
+  el('btn-reset-tone-adjustments')?.addEventListener('click', () => {
+    const defaults = styleDefaults(selectedCutStyle());
+    for (const id of ['style-tone-brightness', 'style-tone-contrast', 'style-gain', 'style-smooth']) {
+      if (el(id)) el(id).value = defaults[id];
+    }
+    rememberStyleSettings();
+    updateRangeOutputs();
+    restyle();
+    pushHistory();
+  });
   el('btn-reset-photo-interpretation')?.addEventListener('click', () => {
     const defaults = styleDefaults(selectedCutStyle());
-    for (const id of ['style-gain', 'style-smooth', 'style-cutout', 'style-clothes']) {
+    for (const id of ['style-tone-brightness', 'style-tone-contrast',
+      'style-gain', 'style-smooth', 'style-cutout', 'style-clothes']) {
       const node = el(id);
       if (!node) continue;
       if (node.type === 'checkbox') node.checked = defaults[id] === true;
@@ -7215,6 +7241,7 @@ function wire() {
 
 function updateRangeOutputs() {
   const set = (id, text) => { const node = el(id); if (node) node.textContent = text; };
+  const signed = (value) => value > 0 ? `+${value}` : String(value);
   set('threshold-value', `${numberField('threshold', 50)}%`);
   set('contrast-value', String(numberField('contrast', 0)));
   set('blur-value', `${numberField('blur', 0)} px`);
@@ -7224,6 +7251,8 @@ function updateRangeOutputs() {
   const secure = Number(el('bridge-count')?.value || 2);
   set('bridge-count-value', ['Minimal', 'Aesthetic', 'Secure'][secure - 1] ?? 'Aesthetic');
   set('stabilizer-organic-value', `${numberField('stabilizer-organic', 75)}%`);
+  set('style-tone-brightness-value', signed(numberField('style-tone-brightness', 0)));
+  set('style-tone-contrast-value', signed(numberField('style-tone-contrast', 0)));
   set('style-gain-value', numberField('style-gain', 2.2).toFixed(1));
   set('style-smooth-value', numberField('style-smooth', 0.55).toFixed(2));
   set('style-curve-value', numberField('style-curve', 1.4).toFixed(1));

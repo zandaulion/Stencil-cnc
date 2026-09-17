@@ -464,6 +464,8 @@ test('photograph styles start from the benchmarked creative defaults', () => {
     'style-dot-max': '33.8',
     'style-dot-angle': '10',
     'style-dot-cutoff': '42',
+    'style-tone-brightness': '0',
+    'style-tone-contrast': '0',
     'style-gain': '2.2',
     'style-smooth': '0.55',
     'style-curve': '1.4',
@@ -473,6 +475,12 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   }
   assert.match(html, /id="style-cutout"[^>]*type="checkbox">/);
   assert.match(html, /id="style-clothes"[^>]*type="checkbox" checked>/);
+  assert.match(html, /id="tone-adjustments"/);
+  assert.match(html, /These adjustments change both the interpretation and the generated artwork/);
+  assert.match(editor, /form\.set\('luminozitate_ton', String\(numberField\('style-tone-brightness', 0\)\)\)/);
+  assert.match(editor, /form\.set\('contrast_ton', String\(numberField\('style-tone-contrast', 0\)\)\)/);
+  assert.match(editor, /'style-tone-brightness', 'style-tone-contrast'/);
+  assert.match(css, /\.tone-inspector[\s\S]*?pointer-events: auto/);
   assert.match(editor, /form\.set\('gamma', String\(numberField\('style-curve', 1\.4\)\)\)/);
   assert.match(html, /name="cutStyle" value="icoana"/);
   assert.match(html, /id="style-icon-halo"[^>]*type="checkbox" checked/);

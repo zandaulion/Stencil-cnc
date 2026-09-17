@@ -2878,7 +2878,7 @@ select:focus {
   z-index: 5;
   right: 18px;
   bottom: 18px;
-  width: min(310px, calc(100% - 72px));
+  width: min(350px, calc(100% - 72px));
   padding: 12px 14px;
   border: 1px solid rgb(20 33 41 / 18%);
   border-radius: 11px;
@@ -2886,7 +2886,7 @@ select:focus {
   background: rgb(255 255 255 / 94%);
   box-shadow: 0 10px 28px rgb(20 33 41 / 18%);
   backdrop-filter: blur(10px);
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .tone-inspector > div:first-child {
@@ -2916,6 +2916,40 @@ select:focus {
 .tone-inspector dl div { display: flex; gap: 5px; justify-content: center; }
 .tone-inspector dt { color: var(--muted); font-size: 0.55rem; }
 .tone-inspector dd { margin: 0; font: 700 0.56rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.tone-adjustments {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.tone-adjustments summary {
+  color: var(--teal);
+  cursor: pointer;
+  font-size: 0.64rem;
+  font-weight: 750;
+  list-style-position: outside;
+}
+
+.tone-adjustments-heading {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: 8px 0 11px;
+}
+
+.tone-adjustments-heading small { max-width: 225px; }
+.tone-adjustments-heading .text-button { flex: 0 0 auto; font-size: 0.58rem; }
+.tone-adjustments .range-control { margin-bottom: 9px; }
+.tone-adjustments .range-control:last-child { margin-bottom: 1px; }
+.tone-adjustments .range-control > label { margin-bottom: 3px; font-size: 0.59rem; }
+.tone-adjustments .range-control output { font-size: 0.56rem; }
+
+.tone-adjustment-button {
+  width: 100%;
+  margin: 3px 0 15px;
+}
 
 .image-interpretation-title h3 small {
   margin-left: 5px;
@@ -5001,6 +5035,15 @@ select:focus {
     bottom: 42px;
     left: 35px;
     min-width: 0;
+  }
+
+  .tone-inspector {
+    right: 8px;
+    bottom: 45px;
+    left: 28px;
+    width: auto;
+    max-height: calc(100% - 96px);
+    overflow-y: auto;
   }
 
   .ruler-horizontal {

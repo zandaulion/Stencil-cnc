@@ -12,7 +12,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "analiza"))
 
-from ton import portret, previzualizare_ton, ton  # noqa: E402
+from ton import ajusteaza_ton, portret, previzualizare_ton, ton  # noqa: E402
 
 
 def plan(inaltime, latime, valoare):
@@ -20,6 +20,25 @@ def plan(inaltime, latime, valoare):
 
 
 class TestTon(unittest.TestCase):
+    def test_luminozitatea_deplaseaza_campul_fara_sa_iasa_din_interval(self):
+        camp = np.array([[0.0, 0.25, 0.5, 0.75, 1.0]], np.float32)
+        mai_deschis = ajusteaza_ton(camp, luminozitate=20)
+        mai_inchis = ajusteaza_ton(camp, luminozitate=-20)
+        np.testing.assert_allclose(mai_deschis, [[0.0, 0.2, 0.4, 0.6, 0.8]])
+        np.testing.assert_allclose(mai_inchis, [[0.2, 0.4, 0.6, 0.8, 1.0]])
+
+    def test_contrastul_separa_tonurile_in_jurul_mijlocului(self):
+        camp = np.array([[0.0, 0.25, 0.5, 0.75, 1.0]], np.float32)
+        ridicat = ajusteaza_ton(camp, contrast=50)
+        np.testing.assert_allclose(ridicat, [[0.0, 0.0, 0.5, 1.0, 1.0]])
+
+    def test_reglajele_de_ton_refuza_valori_in_afara_interfetei(self):
+        camp = np.zeros((2, 2), np.float32)
+        with self.assertRaises(ValueError):
+            ajusteaza_ton(camp, luminozitate=51)
+        with self.assertRaises(ValueError):
+            ajusteaza_ton(camp, contrast=-51)
+
     def test_previzualizarea_arata_campul_real_si_raportul_tonal(self):
         camp = np.array([[0.0, 0.2, 0.4, 0.7, 1.0]], np.float32)
         imagine, rezumat = previzualizare_ton(camp)

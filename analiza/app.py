@@ -44,7 +44,7 @@ from stiluri import (
     silueta,
 )
 from subiect import FaraSubiect, aplica, subiect, subiect_icoana
-from ton import portret, previzualizare_ton, ton
+from ton import ajusteaza_ton, portret, previzualizare_ton, ton
 
 # The working resolution is chosen per request, from the panel and the limits.
 #
@@ -171,6 +171,8 @@ async def analizeaza(
     netezire: float = Form(0.55),
     castig: float = Form(2.2),
     gamma: float = Form(1.4),
+    luminozitate_ton: float = Form(0.0),
+    contrast_ton: float = Form(0.0),
     inverseaza: bool = Form(False),
     # line art (the browser renders these immediately, then asks for a finer copy)
     prag_linie: float = Form(0.5),
@@ -287,6 +289,18 @@ async def analizeaza(
             camp = aplica(camp, masca_subiect)
     if inverseaza:
         camp = np.where(masca_subiect, 1.0 - camp, camp).astype(np.float32)
+    try:
+        camp = ajusteaza_ton(
+            camp,
+            luminozitate=luminozitate_ton,
+            contrast=contrast_ton,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    if fara_fundal:
+        # Darkening moves zero toward shadow; reapply the subject mask so that
+        # a tonal adjustment can never paint the removed background back in.
+        camp = aplica(camp, masca_subiect)
 
     zona_ton = masca_subiect if fara_fundal or stil in {"silueta", "grafic", "icoana"} else None
     ton_intermediar = previzualizare_ton(camp, zona=zona_ton, latime_maxima=LATIME_ANALIZA)

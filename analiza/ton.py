@@ -30,6 +30,36 @@ RAZA_IMPLICITA = 0.06
 CASTIG_IMPLICIT = 2.2
 
 
+def ajusteaza_ton(
+    camp: np.ndarray,
+    luminozitate: float = 0.0,
+    contrast: float = 0.0,
+) -> np.ndarray:
+    """Apply predictable photographic adjustments to a 0..1 darkness field.
+
+    Positive brightness moves the result toward white (zero darkness), while
+    positive contrast separates values around the middle of the tonal range.
+    The bounded percentage controls are intentionally gentler than an image
+    editor: their output becomes manufacturing geometry, not just a display.
+    """
+    if camp.ndim != 2 or not np.isfinite(camp).all():
+        raise ValueError("Expected a finite two-dimensional tone field")
+    if not np.isfinite(luminozitate) or not -50.0 <= luminozitate <= 50.0:
+        raise ValueError("Tone brightness must be between -50 and 50")
+    if not np.isfinite(contrast) or not -50.0 <= contrast <= 50.0:
+        raise ValueError("Tone contrast must be between -50 and 50")
+
+    valori = np.clip(camp.astype(np.float32), 0.0, 1.0)
+    balans = luminozitate / 100.0
+    if balans >= 0:
+        valori = valori * (1.0 - balans)
+    else:
+        valori = valori + (1.0 - valori) * -balans
+
+    factor = 2.0 ** (contrast / 50.0)
+    return np.clip((valori - 0.5) * factor + 0.5, 0.0, 1.0).astype(np.float32)
+
+
 def previzualizare_ton(
     camp: np.ndarray,
     zona: np.ndarray | None = None,
