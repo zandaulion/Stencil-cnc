@@ -530,6 +530,13 @@ test('photograph styles start from the benchmarked creative defaults', () => {
   assert.match(editor, /form\.set\('diametru_max_puncte_mm'/);
   assert.match(editor, /puncte: Object\.freeze\(\{/);
   assert.match(editor, /puncte: Object\.freeze\(\{[\s\S]*?'style-gain': '3\.3'[\s\S]*?'style-smooth': '0\.30'[\s\S]*?'style-curve': '1\.2'[\s\S]*?'style-cutout': true[\s\S]*?'style-clothes': false/);
+  assert.match(html, /name="cutStyle" value="flux"/);
+  assert.match(html, /<strong>Flow engraving<\/strong>/);
+  assert.match(html, /id="style-flow-follow"[^>]*value="72"/);
+  assert.match(html, /id="style-flow-width"[^>]*value="7"/);
+  assert.match(editor, /form\.set\('pas_flux_mm'/);
+  assert.match(editor, /form\.set\('urmarire_flux'/);
+  assert.match(editor, /flux: Object\.freeze\(\{[\s\S]*?'style-cutout': true[\s\S]*?'style-clothes': false/);
 });
 
 test('cut styles use a compact categorized picker on desktop and mobile', () => {
@@ -538,7 +545,7 @@ test('cut styles use a compact categorized picker on desktop and mobile', () => 
   for (const category of ['Prepared artwork', 'Portrait and stencil', 'Lines and engraving', 'Geometric patterns', 'Decorative']) {
     assert.match(html, new RegExp(`>${category}<`), category);
   }
-  assert.equal((html.match(/name="cutStyle"/g) || []).length, 13);
+  assert.equal((html.match(/name="cutStyle"/g) || []).length, 14);
   assert.match(editor, /function syncStylePicker\(\)/);
   assert.match(editor, /function openStylePicker\(\)/);
   assert.match(editor, /function positionStylePicker\(\)[\s\S]*?max-width: 720px/);

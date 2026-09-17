@@ -167,6 +167,14 @@ const STYLE_DEFAULT_SETTINGS = Object.freeze({
     'style-clothes': false,
     polarity: 'black-retained',
   }),
+  flux: Object.freeze({
+    'style-gain': '2.6',
+    'style-smooth': '0.65',
+    'style-curve': '1.2',
+    'style-cutout': true,
+    'style-clothes': false,
+    polarity: 'black-retained',
+  }),
 });
 const STYLE_SHARED_CONTROL_IDS = Object.freeze([
   'style-tone-brightness', 'style-tone-contrast',
@@ -605,6 +613,7 @@ function visibleContentValue() {
   }
   // These styles draw the picture as retained metal. The other photograph
   // styles draw it as openings in a retained plate.
+  if (style === 'flux') return el('style-cutout')?.checked !== false ? RETAINED : REMOVED;
   return style === 'grafic' || style === 'lamele' ? RETAINED : REMOVED;
 }
 
@@ -798,6 +807,13 @@ function styleParams(stil = selectedCutStyle()) {
   } else if (stil === 'gravura') {
     form.set('pas_gravura_mm', String(toMm(numberField('style-wood-spacing', 12))));
     form.set('lungime_gravura_mm', String(toMm(numberField('style-wood-length', 20))));
+  } else if (stil === 'flux') {
+    form.set('pas_flux_mm', String(toMm(numberField('style-flow-pitch', 12))));
+    form.set('latime_flux_mm', String(toMm(numberField('style-flow-width', 7))));
+    form.set('unghi_flux', String(numberField('style-flow-angle', -15)));
+    form.set('urmarire_flux', String(numberField('style-flow-follow', 72) / 100));
+    form.set('netezire_flux_mm', String(toMm(numberField('style-flow-smooth', 10))));
+    form.set('prag_flux', String(numberField('style-flow-cutoff', 16) / 100));
   } else if (stil === 'silueta') {
     form.set('netezire_silueta_mm', String(toMm(numberField('style-silhouette-smooth', 8))));
   } else if (stil === 'contururi') {
@@ -857,6 +873,8 @@ function enforceStyleSpacing() {
       ? [['style-dot-pitch', 'dot pitch']]
     : style === 'gravura'
       ? [['style-wood-spacing', 'mark spacing']]
+    : style === 'flux'
+      ? [['style-flow-pitch', 'ribbon pitch']]
       : style === 'raze' ? [['style-ray-cell', 'radial pitch']] : [];
   for (const [id, eticheta] of spacingFields) {
     const node = el(id);
@@ -937,6 +955,20 @@ function enforceStyleSpacing() {
     if (numberField('style-wood-length', 20) < minimumLength) {
       node.value = roundUnit(minimumLength);
       ajustate.push(`mark length to ${node.value} ${state.unit}`);
+    }
+  }
+  if (style === 'flux') {
+    const widthNode = el('style-flow-width');
+    const minimumWidth = fromMm(slot);
+    const maximumWidth = fromMm(Math.max(slot, toMm(numberField('style-flow-pitch', 12)) - web));
+    widthNode.min = String(roundUnit(minimumWidth));
+    widthNode.max = String(roundUnit(maximumWidth));
+    if (numberField('style-flow-width', 7) < minimumWidth) {
+      widthNode.value = roundUnit(minimumWidth);
+      ajustate.push(`maximum ribbon width to ${widthNode.value} ${state.unit}`);
+    } else if (numberField('style-flow-width', 7) > maximumWidth) {
+      widthNode.value = roundUnit(maximumWidth);
+      ajustate.push(`maximum ribbon width to ${widthNode.value} ${state.unit}`);
     }
   }
   return ajustate;
@@ -1121,7 +1153,7 @@ function reflectModeControls() {
   el('style-photo-common')?.toggleAttribute('hidden', lineArt);
   el('tone-adjustments')?.toggleAttribute('hidden', lineArt);
   el('style-curve-control')?.toggleAttribute(
-    'hidden', !['lamele', 'hasura', 'puncte', 'gravura', 'raze'].includes(style),
+    'hidden', !['lamele', 'hasura', 'puncte', 'gravura', 'flux', 'raze'].includes(style),
   );
   el('btn-restyle')?.toggleAttribute('hidden', lineArt);
   el('style-stencil')?.toggleAttribute('hidden', style !== 'sablon');
@@ -1132,6 +1164,7 @@ function reflectModeControls() {
   el('style-dots')?.toggleAttribute('hidden', style !== 'puncte');
   el('style-linework')?.toggleAttribute('hidden', style !== 'linii');
   el('style-woodcut')?.toggleAttribute('hidden', style !== 'gravura');
+  el('style-flow')?.toggleAttribute('hidden', style !== 'flux');
   el('style-silhouette')?.toggleAttribute('hidden', style !== 'silueta');
   el('style-contours')?.toggleAttribute('hidden', style !== 'contururi');
   el('style-radial')?.toggleAttribute('hidden', style !== 'raze');
@@ -4771,6 +4804,7 @@ const CUT_STYLE_NAMES = {
   grafic: 'Graphic portrait',
   linii: 'Negative-space linework',
   gravura: 'Icon / Woodcut',
+  flux: 'Flow engraving',
   silueta: 'Silhouette',
   contururi: 'Contour bands',
   raze: 'Radial cuts',
@@ -5385,6 +5419,8 @@ function smartBridgeStrategy({ sampleImage = true } = {}) {
     }
   } else if (style === 'hasura') {
     strategy.preferredAngleDeg = numberField('style-angle', 30) + artworkTransform().rotationDeg + 90;
+  } else if (style === 'flux') {
+    strategy.preferredAngleDeg = numberField('style-flow-angle', -15) + artworkTransform().rotationDeg + 90;
   } else if (style === 'icoana') {
     // Horizontal ties read as intentional icon construction and align with
     // the segmented halo instead of crossing facial features diagonally.
@@ -5658,6 +5694,7 @@ function preferredManualSupportAngle(start, end) {
   const rotationDeg = artworkTransform().rotationDeg;
   if (style === 'lamele') return numberField('style-slat-angle', -55) + rotationDeg + 90;
   if (style === 'hasura') return numberField('style-angle', 30) + rotationDeg + 90;
+  if (style === 'flux') return numberField('style-flow-angle', -15) + rotationDeg + 90;
   if (style === 'icoana') return 0;
   if (style === 'raze') {
     const center = sourcePointOnSheet(
@@ -6541,6 +6578,8 @@ function wire() {
     'style-row-pitch', 'style-cell', 'style-tone-brightness', 'style-tone-contrast',
     'style-gain', 'style-smooth', 'style-curve',
     'style-line-detail', 'style-line-width', 'style-wood-spacing', 'style-wood-length',
+    'style-flow-pitch', 'style-flow-width', 'style-flow-angle', 'style-flow-follow',
+    'style-flow-smooth', 'style-flow-cutoff',
     'style-graphic-balance', 'style-graphic-detail', 'style-graphic-simplify',
     'style-silhouette-smooth', 'style-contour-levels', 'style-contour-width',
     'style-ray-count', 'style-ray-cell', 'style-ray-hub', 'style-ray-center-auto', 'style-ray-center-x', 'style-ray-center-y', 'style-ray-cutoff', 'style-ornament-detail',
@@ -6626,6 +6665,7 @@ function wire() {
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
+      'style-flow-pitch', 'style-flow-width', 'style-flow-smooth',
       'style-contour-width', 'style-ray-cell', 'style-ray-hub', 'style-ornament-width',
       'style-dot-pitch', 'style-dot-max']) {
       const node = el(id);
@@ -7484,6 +7524,8 @@ function updateRangeOutputs() {
   set('style-ray-center-y-value', `${numberField('style-ray-center-y', 50)}%`);
   set('style-ray-cutoff-value', `${numberField('style-ray-cutoff', 12)}%`);
   set('style-dot-cutoff-value', `${numberField('style-dot-cutoff', 42)}%`);
+  set('style-flow-follow-value', `${numberField('style-flow-follow', 72)}%`);
+  set('style-flow-cutoff-value', `${numberField('style-flow-cutoff', 16)}%`);
   set('style-ornament-detail-value', `${numberField('style-ornament-detail', 40)}%`);
 }
 

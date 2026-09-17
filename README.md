@@ -10,7 +10,8 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 - Converts line art locally in the browser and photographs through a private analysis service.
 - Shows the actual light, midtone, and shadow interpretation before any cut pattern is applied.
-- Provides 13 cut styles: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
+- Provides 14 cut styles: Line art, Poster stencil, Icon stencil, Graphic portrait, Silhouette, Negative-space linework, Icon / Woodcut, Flow engraving, Contour bands, Slats, Hatch, Radial cuts, Variable dots, and Ornamental symmetry.
+- Flow engraving bends long, parallel cut ribbons around broad facial forms while enforcing the selected opening and finished-web limits during generation.
 - Radial cuts use a directly controlled solid-hub diameter and split rays progressively toward the panel edge.
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
 - Models a configurable panel frame and preserves unused letterbox areas as metal.

@@ -277,6 +277,142 @@ def gravura(
     return ~taiat
 
 
+def gravura_flux(
+    camp: np.ndarray,
+    subiect: np.ndarray,
+    mm_pe_px: float,
+    pas_mm: float = 12.0,
+    latime_max_mm: float = 7.0,
+    unghi: float = -15.0,
+    urmarire: float = 0.72,
+    netezire_mm: float = 10.0,
+    prag_lumina: float = 0.16,
+    fanta_min_mm: float = 2.0,
+    punte_min_mm: float = 3.0,
+    gamma: float = 1.2,
+    elimina_fundal: bool = True,
+) -> np.ndarray:
+    """Long CNC-aware ribbons warped by the broad forms of a portrait.
+
+    The pattern is a level set, rather than a collection of unrelated short
+    marks.  Starting with parallel lines and displacing their shared phase by
+    a smoothed tone field gives long ribbons that bend together around brows,
+    cheeks, hair, and clothing without crossing one another.  Light controls
+    the ribbon width while deep shadow remains solid material.
+
+    A warped phase changes the *physical* spacing between neighbouring lines.
+    The local phase gradient therefore participates in both width bounds: the
+    narrowest opening still admits the configured tool and the metal between
+    adjacent ribbons still leaves ``punte_min_mm``.  Where curvature makes
+    those two promises incompatible, that small area is left uncut instead of
+    creating geometry for a later repair pass to destroy.
+    """
+    if camp.ndim != 2 or camp.shape != subiect.shape:
+        raise ValueError("Câmpul şi masca subiectului trebuie să aibă aceeaşi mărime.")
+    if pas_mm < fanta_min_mm + punte_min_mm:
+        raise ReglajImposibil(
+            f"Un pas de {pas_mm:g} mm nu poate ţine o fantă de {fanta_min_mm:g} mm "
+            f"şi o punte de {punte_min_mm:g} mm."
+        )
+    if not fanta_min_mm <= latime_max_mm <= pas_mm - punte_min_mm:
+        raise ReglajImposibil(
+            f"Lăţimea maximă trebuie să fie între {fanta_min_mm:g} mm şi "
+            f"{pas_mm - punte_min_mm:g} mm pentru pasul şi puntea alese."
+        )
+    if not np.isfinite(unghi) or not -90.0 <= unghi <= 90.0:
+        raise ReglajImposibil("Unghiul benzilor trebuie să fie între -90 şi 90 de grade.")
+    if not 0.0 <= urmarire <= 1.0:
+        raise ReglajImposibil("Urmărirea formelor trebuie să fie între 0 şi 1.")
+    if not np.isfinite(netezire_mm) or netezire_mm <= 0:
+        raise ReglajImposibil("Netezirea fluxului trebuie să fie pozitivă.")
+    if not 0.0 <= prag_lumina < 1.0:
+        raise ReglajImposibil("Pragul de lumină trebuie să fie între 0 şi 1.")
+    if not np.isfinite(gamma) or gamma <= 0:
+        raise ReglajImposibil("Separarea tonului trebuie să fie pozitivă.")
+    _verifica_rezolutie(mm_pe_px, **{
+        "Puntea": punte_min_mm,
+        "Fanta": fanta_min_mm,
+    })
+
+    zona = subiect.astype(bool)
+    inaltime, latime = camp.shape
+    yy, xx = np.mgrid[0:inaltime, 0:latime].astype(np.float32)
+    centru_x = (latime - 1) / 2.0
+    centru_y = (inaltime - 1) / 2.0
+    radiani = np.radians(unghi)
+
+    # ``u`` runs across the ribbons.  Adding a smooth tone displacement bends
+    # every neighbouring ribbon coherently, unlike independent line segments.
+    u = -(xx - centru_x) * np.sin(radiani) + (yy - centru_y) * np.cos(radiani)
+    sigma = max(0.75, netezire_mm / mm_pe_px / 2.0)
+    forma = cv2.GaussianBlur(
+        np.clip(camp.astype(np.float32), 0.0, 1.0),
+        (0, 0), sigmaX=sigma, sigmaY=sigma,
+        borderType=cv2.BORDER_REPLICATE,
+    )
+    valori = forma[zona]
+    centru_tonal = float(np.median(valori)) if valori.size else 0.5
+    pas_px = pas_mm / mm_pe_px
+    amplitudine = urmarire * pas_px * 2.25
+    faza = u + amplitudine * (forma - centru_tonal)
+
+    # Phase units are not pixels after warping.  Convert every requested
+    # physical width through the local gradient so both the tool and web limits
+    # remain real distances in the finished panel.
+    gradient_y, gradient_x = np.gradient(faza)
+    scara_locala = np.clip(np.hypot(gradient_x, gradient_y), 0.20, 4.0)
+    fanta_px = fanta_min_mm / mm_pe_px
+    punte_px = punte_min_mm / mm_pe_px
+    latime_max_px = latime_max_mm / mm_pe_px
+    latime_min_faza = fanta_px * scara_locala
+    latime_max_faza = np.minimum(
+        latime_max_px * scara_locala,
+        pas_px - punte_px * scara_locala,
+    )
+    poate_taia = latime_max_faza >= latime_min_faza
+
+    lumina = np.clip(1.0 - camp, 0.0, 1.0)
+    intensitate = np.power(
+        np.clip((lumina - prag_lumina) / (1.0 - prag_lumina), 0.0, 1.0),
+        gamma,
+    )
+    latime_faza = latime_min_faza + intensitate * np.maximum(
+        0.0, latime_max_faza - latime_min_faza,
+    )
+    distanta_faza = np.abs(np.mod(faza + pas_px / 2.0, pas_px) - pas_px / 2.0)
+    taiat = (
+        zona
+        & poate_taia
+        & (lumina > prag_lumina)
+        & (distanta_faza <= latime_faza / 2.0)
+    )
+
+    # Tone thresholds make deliberate endpoints.  Opening the cut phase with
+    # the tool diameter rounds those ends and drops fragments too short for the
+    # cutter, while only adding material and therefore never weakening a web.
+    taiat = cv2.morphologyEx(
+        taiat.astype(np.uint8),
+        cv2.MORPH_OPEN,
+        _elipsa_mm(fanta_min_mm, mm_pe_px),
+        borderType=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    ).astype(bool)
+
+    baza = zona if elimina_fundal else np.ones(camp.shape, dtype=bool)
+    material = baza & ~taiat
+    if elimina_fundal:
+        # The outer silhouette is positive geometry.  Apply only the web-side
+        # opening here; the ribbon openings were already generated to size.
+        material = cv2.morphologyEx(
+            material.astype(np.uint8),
+            cv2.MORPH_OPEN,
+            _elipsa_mm(punte_min_mm, mm_pe_px),
+            borderType=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        ).astype(bool)
+    return material
+
+
 def silueta(
     subiect: np.ndarray,
     mm_pe_px: float,

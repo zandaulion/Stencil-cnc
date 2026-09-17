@@ -30,6 +30,7 @@ from stiluri import (
     benzi_contur,
     centru_automat_raze,
     gravura,
+    gravura_flux,
     hasura,
     lamele,
     linie_art,
@@ -202,6 +203,13 @@ async def analizeaza(
     # gravură
     pas_gravura_mm: float = Form(12.0),
     lungime_gravura_mm: float = Form(20.0),
+    # gravură în flux
+    pas_flux_mm: float = Form(12.0),
+    latime_flux_mm: float = Form(7.0),
+    unghi_flux: float = Form(-15.0),
+    urmarire_flux: float = Form(0.72),
+    netezire_flux_mm: float = Form(10.0),
+    prag_flux: float = Form(0.16),
     # siluetă
     netezire_silueta_mm: float = Form(8.0),
     # raze
@@ -270,7 +278,7 @@ async def analizeaza(
     masca_subiect = np.ones(mic.shape[:2], dtype=bool)
     # A silhouette has no meaningful whole-image fallback: without a detected
     # subject it would simply remove the entire artwork rectangle.
-    if fara_fundal or stil in {"silueta", "grafic", "icoana"}:
+    if fara_fundal or stil in {"silueta", "grafic", "icoana", "flux"}:
         try:
             masca_subiect = (
                 subiect_icoana(mic, cu_haine=cu_haine)
@@ -279,7 +287,7 @@ async def analizeaza(
             )
         except FaraSubiect as e:
             raise HTTPException(422, str(e)) from e
-    if stil in {"sablon", "icoana", "grafic", "hasura", "puncte", "linii", "gravura", "contururi", "raze", "ornament", "lamele"}:
+    if stil in {"sablon", "icoana", "grafic", "hasura", "puncte", "linii", "gravura", "flux", "contururi", "raze", "ornament", "lamele"}:
         camp = portret(mic, masca=masca_subiect, castig=castig, netezire=netezire)
         if stil == "lamele" and fara_fundal:
             camp = aplica(camp, masca_subiect)
@@ -302,7 +310,7 @@ async def analizeaza(
         # a tonal adjustment can never paint the removed background back in.
         camp = aplica(camp, masca_subiect)
 
-    zona_ton = masca_subiect if fara_fundal or stil in {"silueta", "grafic", "icoana"} else None
+    zona_ton = masca_subiect if fara_fundal or stil in {"silueta", "grafic", "icoana", "flux"} else None
     ton_intermediar = previzualizare_ton(camp, zona=zona_ton, latime_maxima=LATIME_ANALIZA)
 
     inaltime = round(mic.shape[0] * lat_geometrie / mic.shape[1])
@@ -371,6 +379,20 @@ async def analizeaza(
             masca = gravura(camp, masca_subiect, mm_pe_px, pas_mm=pas_gravura_mm,
                              lungime_mm=lungime_gravura_mm, fanta_min_mm=fanta_min_mm,
                              punte_min_mm=punte_min_mm, gamma=gamma)
+        elif stil == "flux":
+            masca = gravura_flux(
+                camp, masca_subiect, mm_pe_px,
+                pas_mm=pas_flux_mm,
+                latime_max_mm=latime_flux_mm,
+                unghi=unghi_flux,
+                urmarire=urmarire_flux,
+                netezire_mm=netezire_flux_mm,
+                prag_lumina=prag_flux,
+                fanta_min_mm=fanta_min_mm,
+                punte_min_mm=punte_min_mm,
+                gamma=gamma,
+                elimina_fundal=fara_fundal,
+            )
         elif stil == "silueta":
             masca = silueta(masca_subiect, mm_pe_px, netezire_mm=netezire_silueta_mm)
         elif stil == "contururi":

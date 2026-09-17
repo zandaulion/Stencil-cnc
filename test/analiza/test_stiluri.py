@@ -25,6 +25,7 @@ from stiluri import (  # noqa: E402
     benzi_contur,
     centru_automat_raze,
     gravura,
+    gravura_flux,
     hasura,
     lamele,
     linie_art,
@@ -284,6 +285,68 @@ class TestHasura(unittest.TestCase):
                        fanta_min_mm=1, punte_min_mm=1.5, zona=zona)
         self.assertTrue(masca[10, 10])
         self.assertFalse(masca[40:120, 40:120].all())
+
+
+class TestGravuraFlux(unittest.TestCase):
+    def test_refuza_o_banda_care_nu_lasa_puntea_ceruta(self):
+        camp = camp_uniform(160, 160, 0.2)
+        zona = np.ones_like(camp, dtype=bool)
+        with self.assertRaises(ReglajImposibil):
+            gravura_flux(
+                camp, zona, MM_PE_PX,
+                pas_mm=8, latime_max_mm=6,
+                fanta_min_mm=2, punte_min_mm=3,
+            )
+
+    def test_umbra_ramane_solida_iar_lumina_deschide_benzi(self):
+        zona = np.ones((240, 240), dtype=bool)
+        umbra = gravura_flux(
+            camp_uniform(240, 240, 1.0), zona, MM_PE_PX,
+            elimina_fundal=False,
+        )
+        lumina = gravura_flux(
+            camp_uniform(240, 240, 0.0), zona, MM_PE_PX,
+            elimina_fundal=False,
+        )
+        self.assertTrue(umbra.all())
+        self.assertGreater((~lumina).mean(), 0.20)
+
+    def test_benzile_drepte_respecta_fanta_si_puntea(self):
+        zona = np.ones((360, 200), dtype=bool)
+        masca = gravura_flux(
+            camp_uniform(360, 200, 0.0), zona, MM_PE_PX,
+            pas_mm=12, latime_max_mm=7, unghi=0, urmarire=0,
+            fanta_min_mm=2, punte_min_mm=3, elimina_fundal=False,
+        )
+        coloana = masca[:, 100]
+        schimbari = np.flatnonzero(np.diff(coloana.astype(np.int8)))
+        margini = np.concatenate(([0], schimbari + 1, [coloana.size]))
+        rulari = [
+            (bool(coloana[margini[i]]), int(margini[i + 1] - margini[i]))
+            for i in range(len(margini) - 1)
+        ][1:-1]
+        material = [lungime * MM_PE_PX for valoare, lungime in rulari if valoare]
+        taiat = [lungime * MM_PE_PX for valoare, lungime in rulari if not valoare]
+        self.assertTrue(material and taiat)
+        self.assertGreaterEqual(min(material), 3.0 - MM_PE_PX)
+        self.assertGreaterEqual(min(taiat), 2.0 - MM_PE_PX)
+
+    def test_urmarirea_formelor_curbeaza_fluxul_fara_a_schimba_silueta(self):
+        h, w = 260, 260
+        yy, xx = np.mgrid[0:h, 0:w]
+        camp = np.clip(0.18 + 0.75 * np.exp(
+            -((xx - 135) ** 2 / 2500 + (yy - 120) ** 2 / 5200)
+        ), 0, 1).astype(np.float32)
+        zona = ((xx - 130) ** 2 / 120 ** 2 + (yy - 130) ** 2 / 125 ** 2) <= 1
+        drept = gravura_flux(
+            camp, zona, MM_PE_PX, urmarire=0, elimina_fundal=True,
+        )
+        curbat = gravura_flux(
+            camp, zona, MM_PE_PX, urmarire=1, elimina_fundal=True,
+        )
+        self.assertFalse(drept[0, 0])
+        self.assertFalse(curbat[0, 0])
+        self.assertGreater(float((drept != curbat).mean()), 0.02)
 
 
 class TestPuncteVariabile(unittest.TestCase):
