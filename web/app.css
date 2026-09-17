@@ -3431,6 +3431,11 @@ select:focus {
   background: conic-gradient(var(--teal) 0 100%);
 }
 
+.health-summary[data-state="checking"] .health-ring {
+  color: var(--teal);
+  background: conic-gradient(var(--teal) 0 28%, #d5dbd8 28% 100%);
+}
+
 .issue-filters {
   display: flex;
   gap: 5px;

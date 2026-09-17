@@ -45,6 +45,7 @@ import {
   physicalStrokeIndices,
   normalizeCuttingProfile,
   normalizeVectorDots,
+  nextIssueReviewTarget,
   placeVectorDots,
   planManufacturingRepairs,
   placeMaskOnSheet,
@@ -259,6 +260,7 @@ const state = {
   selectedCandidateId: null,
   analysis: null,
   validation: null,
+  validationPending: false,
   supportAnalysis: null,
   issues: [],
   issueFilter: 'all',
@@ -1507,6 +1509,7 @@ function finishedGeometryPreview(mask) {
 }
 
 function invalidateValidation({ clearAnalysis = false } = {}) {
+  cancelManualValidationReview();
   state.revision += 1;
   state.validated = false;
   state.validatedRevision = -1;
@@ -1661,8 +1664,67 @@ function currentGeometryIsValidated() {
   );
 }
 
+let manualValidationTimer = null;
+let pendingManualReview = null;
+
+function cancelManualValidationReview() {
+  if (manualValidationTimer !== null) clearTimeout(manualValidationTimer);
+  manualValidationTimer = null;
+  pendingManualReview = null;
+  state.validationPending = false;
+}
+
+function captureManualValidationReview() {
+  if (state.validation && state.validatedRevision === state.revision) {
+    const issue = state.highlightedIssue;
+    const details = issue ? activeIssueDetails(issue) : null;
+    return {
+      code: issue?.code ?? null,
+      severity: issue?.severity ?? null,
+      bounds: details?.bounds ? { ...details.bounds } : null,
+    };
+  }
+  return pendingManualReview ? {
+    ...pendingManualReview,
+    bounds: pendingManualReview.bounds ? { ...pendingManualReview.bounds } : null,
+  } : null;
+}
+
+function scheduleManualValidationReview(reviewAnchor) {
+  if (!reviewAnchor || !state.designMask) return;
+  if (manualValidationTimer !== null) clearTimeout(manualValidationTimer);
+  pendingManualReview = reviewAnchor;
+  const requestedRevision = state.revision;
+  state.validationPending = true;
+  renderIssues([]);
+  updateExportReadiness();
+  manualValidationTimer = setTimeout(() => {
+    manualValidationTimer = null;
+    if (!state.designMask || requestedRevision !== state.revision) {
+      pendingManualReview = null;
+      state.validationPending = false;
+      return;
+    }
+    const anchor = pendingManualReview;
+    pendingManualReview = null;
+    const result = validateCurrentGeometry({
+      reviewAnchor: anchor,
+      focusReview: Boolean(anchor?.code),
+    });
+    setSidePanel('issues');
+    setView('issues');
+    markDirty();
+    if (result.blockingLocations === 0) {
+      toast(result.advisoryLocations > 0
+        ? `Manual review cleared every blocker; ${result.advisoryLocations} advisory ${result.advisoryLocations === 1 ? 'location remains' : 'locations remain'}.`
+        : 'Manual review cleared every geometry issue. Ready for CAM review.');
+    }
+  }, 280);
+}
+
 async function runValidation() {
   if (!state.designMask) { toast('Import an image first.'); return; }
+  cancelManualValidationReview();
   setSidePanel('issues');
   if (state.source && !state.offline && !hasFreshStyleMask()) {
     clearTimeout(styleTimer);
@@ -1671,6 +1733,17 @@ async function runValidation() {
     const ready = await renderStyle();
     if (!ready || !hasFreshStyleMask()) return;
   }
+  const { blockingLocations, advisoryLocations } = validateCurrentGeometry();
+  toast(state.validation.valid
+    ? advisoryLocations > 0
+      ? `No blocking geometry issues found; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'} before CAM review.`
+      : 'No blocking geometry issues or advisories found. Ready for CAM review.'
+    : `${blockingLocations} blocking geometry ${blockingLocations === 1 ? 'location must' : 'locations must'} be corrected before SVG or DXF export. A watermarked draft PNG remains available.`);
+  markDirty();
+  await createRecoveryPoint(state.validation.valid ? 'Geometry checks passed' : 'Geometry checks run');
+}
+
+function validateCurrentGeometry({ reviewAnchor = null, focusReview = false } = {}) {
   const validationMask = geometryForExport();
   state.validation = validateDesign(validationMask, {
     sheet: sheet(),
@@ -1682,35 +1755,53 @@ async function runValidation() {
     requireAnchored: false,
     requireSingleComponent: true,
   });
+  state.validationPending = false;
   state.validated = state.validation.valid;
   state.validatedRevision = state.revision;
   state.exportTimestamp = state.validation.valid ? new Date() : null;
   state.lastValidatedAt = new Date().toISOString();
+  const reviewTarget = nextIssueReviewTarget(state.validation.issues ?? [], reviewAnchor);
+  state.highlightedIssue = reviewTarget?.issue ?? null;
+  state.highlightedIssueLocation = reviewTarget?.locationIndex ?? 0;
   renderIssues(state.validation.issues ?? []);
   updateConnectivityCard();
   updateExportReadiness();
+  if (focusReview && reviewTarget) focusIssue(reviewTarget.issue);
   draw();
   const blockingLocations = countValidationLocations(state.validation, 'error');
   const advisoryLocations = countValidationLocations(state.validation, 'warning');
-  toast(state.validation.valid
-    ? advisoryLocations > 0
-      ? `No blocking geometry issues found; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'} before CAM review.`
-      : 'No blocking geometry issues or advisories found. Ready for CAM review.'
-    : `${blockingLocations} blocking geometry ${blockingLocations === 1 ? 'location must' : 'locations must'} be corrected before SVG or DXF export. A watermarked draft PNG remains available.`);
-  markDirty();
-  await createRecoveryPoint(state.validation.valid ? 'Geometry checks passed' : 'Geometry checks run');
+  return { blockingLocations, advisoryLocations, reviewTarget };
 }
 
 /* ----------------------------------------------------------------- issues */
 
 function renderIssues(issues) {
+  const list = el('issue-list');
+  if (!list) return;
+  if (state.validationPending) {
+    state.issues = [];
+    for (const id of ['issue-total', 'filter-count-all', 'filter-count-error', 'filter-count-warning']) {
+      if (el(id)) el(id).textContent = '…';
+    }
+    const health = el('health-summary');
+    if (health) {
+      health.dataset.state = 'checking';
+      const ring = health.querySelector('.health-ring span');
+      const text = health.querySelector('div:last-child');
+      if (ring) ring.textContent = '…';
+      if (text) text.innerHTML = '<strong>Rechecking geometry</strong><small>The issue queue will continue automatically after this manual edit.</small>';
+    }
+    renderRepairPanel();
+    list.innerHTML = `<li class="issues-empty" data-empty>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.3-5.7M20 4v7h-7"></path></svg>
+      <p><strong>Updating the issue queue…</strong><span>Resolved locations will disappear and the nearest remaining problem will be selected.</span></p></li>`;
+    return;
+  }
   if (state.highlightedIssue && !issues.includes(state.highlightedIssue)) {
     state.highlightedIssue = null;
     state.highlightedIssueLocation = 0;
   }
   state.issues = issues;
-  const list = el('issue-list');
-  if (!list) return;
 
   const errors = issues
     .filter((issue) => issue.severity === 'error')
@@ -5983,11 +6074,13 @@ function translateBridge(bridge, requestedDx, requestedDy) {
 function deleteSelectedBridge() {
   const bridge = state.selectedBridge;
   if (!bridge) return false;
+  const reviewAnchor = captureManualValidationReview();
   state.bridges = state.bridges.filter((candidate) => candidate !== bridge);
   if (state.hoveredBridge === bridge) state.hoveredBridge = null;
   selectBridge(null);
   refresh({ immediate: true, rebuildSourceMask: false });
   pushHistory();
+  scheduleManualValidationReview(reviewAnchor);
   toast('Support deleted.');
   return true;
 }
@@ -6657,10 +6750,14 @@ function reportTouchupResult() {
   if (el('touchup-safety')?.checked !== true || !state.analysis) return;
   const loose = Math.max(0, state.analysis.componentCount - 1);
   if (loose > 0) {
-    toast(`Edit leaves ${loose} loose ${loose === 1 ? 'piece' : 'pieces'}. They are highlighted in Problems.`);
+    toast(state.validationPending
+      ? `Edit leaves ${loose} loose ${loose === 1 ? 'piece' : 'pieces'}; rechecking the complete issue queue now.`
+      : `Edit leaves ${loose} loose ${loose === 1 ? 'piece' : 'pieces'}. They are highlighted in Problems.`);
     setSidePanel('issues');
   } else {
-    toast('Edit keeps the panel connected. Run validation for hole and gap checks.');
+    toast(state.validationPending
+      ? 'Edit keeps the panel connected; rechecking opening and gap limits now.'
+      : 'Edit keeps the panel connected. Run validation for hole and gap checks.');
   }
 }
 
@@ -7160,27 +7257,33 @@ function wire() {
   el('btn-delete-bridge')?.addEventListener('click', deleteSelectedBridge);
   el('selected-bridge-width')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
+    const reviewAnchor = captureManualValidationReview();
     promoteBridgeToManual(state.selectedBridge);
     state.selectedBridge.width = safeBridgeWidthMm(toMm(Number(event.target.value)));
     event.target.value = roundUnit(fromMm(state.selectedBridge.width));
     refresh({ immediate: true, rebuildSourceMask: false });
     pushHistory();
+    scheduleManualValidationReview(reviewAnchor);
   });
   el('selected-bridge-length')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
+    const reviewAnchor = captureManualValidationReview();
     promoteBridgeToManual(state.selectedBridge);
     setBridgeGeometry(state.selectedBridge, { lengthMm: toMm(Number(event.target.value)) });
     syncSelectedBridgeControls();
     refresh({ immediate: true, rebuildSourceMask: false });
     pushHistory();
+    scheduleManualValidationReview(reviewAnchor);
   });
   el('selected-bridge-angle')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
+    const reviewAnchor = captureManualValidationReview();
     promoteBridgeToManual(state.selectedBridge);
     setBridgeGeometry(state.selectedBridge, { angleDeg: Number(event.target.value) });
     syncSelectedBridgeControls();
     refresh({ immediate: true, rebuildSourceMask: false });
     pushHistory();
+    scheduleManualValidationReview(reviewAnchor);
   });
 
   // --- validation and export
@@ -7458,6 +7561,7 @@ function wire() {
   let panning = null;
   let draggingArtwork = null;
   let drawingFrom = null;
+  let drawingReviewAnchor = null;
   let draggingBridge = null;
   let touchupStroke = null;
   let touchupDrawFrame = null;
@@ -7486,6 +7590,7 @@ function wire() {
       origin: { x: point.mmX, y: point.mmY },
       start: { ...bridge.start },
       end: { ...bridge.end },
+      reviewAnchor: captureManualValidationReview(),
     };
     viewport.setPointerCapture(event.pointerId);
     viewport.style.cursor = mode === 'move' ? 'move' : 'crosshair';
@@ -7515,6 +7620,7 @@ function wire() {
       }
       const point = pointerToMm(event);
       drawingFrom = manualSupportPoint({ x: point.mmX, y: point.mmY });
+      drawingReviewAnchor = captureManualValidationReview();
       state.bridgePreview = { start: drawingFrom, end: drawingFrom, width: safeBridgeWidthMm() };
       viewport.setPointerCapture(event.pointerId);
       draw();
@@ -7535,6 +7641,7 @@ function wire() {
         start: { x, y },
         last: { x, y },
         liveStructureMask,
+        reviewAnchor: captureManualValidationReview(),
         changed: mode === 'region'
           ? paintConnectedRegion({ x, y })
           : mode === 'freehand'
@@ -7656,6 +7763,7 @@ function wire() {
       finishArtworkTransform();
     }
     if (draggingBridge) {
+      const reviewAnchor = draggingBridge.reviewAnchor;
       draggingBridge.bridge.lengthMm = Math.hypot(
         draggingBridge.bridge.end.x - draggingBridge.bridge.start.x,
         draggingBridge.bridge.end.y - draggingBridge.bridge.start.y,
@@ -7664,6 +7772,7 @@ function wire() {
       draggingBridge = null;
       refresh({ immediate: true, rebuildSourceMask: false });
       pushHistory();
+      scheduleManualValidationReview(reviewAnchor);
     }
     if (drawingFrom) {
       const end = state.bridgePreview?.end;
@@ -7679,13 +7788,16 @@ function wire() {
         refresh({ immediate: true, rebuildSourceMask: false });
         selectBridge(bridge);
         pushHistory();
+        scheduleManualValidationReview(drawingReviewAnchor);
         toast('Support added. Drag either endpoint handle to refine it.');
       }
       drawingFrom = null;
+      drawingReviewAnchor = null;
       state.drawingBridge = state.tool === 'support';
       state.bridgePreview = null;
     }
     if (touchupStroke) {
+      const reviewAnchor = touchupStroke.reviewAnchor;
       if (touchupStroke.mode === 'straight') {
         touchupStroke.changed = paintSegment(touchupStroke.start, releasePoint) || touchupStroke.changed;
       } else if (touchupStroke.mode === 'freehand') {
@@ -7703,6 +7815,7 @@ function wire() {
       if (changed) {
         refresh({ immediate: true });
         pushHistory();
+        scheduleManualValidationReview(reviewAnchor);
         reportTouchupResult();
       } else {
         draw();
@@ -7724,10 +7837,12 @@ function wire() {
     const painted = touchupStroke?.changed === true;
     const movedBridge = Boolean(draggingBridge);
     const movedArtwork = Boolean(draggingArtwork);
+    const reviewAnchor = touchupStroke?.reviewAnchor ?? draggingBridge?.reviewAnchor ?? drawingReviewAnchor;
     touchupStroke = null;
     state.touchupLive = false;
     cancelLiveTouchupDraw();
     drawingFrom = null;
+    drawingReviewAnchor = null;
     draggingBridge = null;
     draggingArtwork = null;
     panning = null;
@@ -7739,10 +7854,12 @@ function wire() {
     if (painted) {
       refresh({ immediate: true });
       pushHistory();
+      scheduleManualValidationReview(reviewAnchor);
       reportTouchupResult();
     } else if (movedBridge) {
       refresh({ immediate: true, rebuildSourceMask: false });
       pushHistory();
+      scheduleManualValidationReview(reviewAnchor);
     } else if (movedArtwork) {
       finishArtworkTransform();
     } else {
@@ -7805,6 +7922,7 @@ function wire() {
     }
     if (state.selectedBridge && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
+      const reviewAnchor = captureManualValidationReview();
       const distanceMm = event.shiftKey ? 10 : 1;
       const movement = {
         ArrowLeft: [-distanceMm, 0],
@@ -7817,6 +7935,7 @@ function wire() {
       syncSelectedBridgeControls();
       refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false });
       pushHistory();
+      scheduleManualValidationReview(reviewAnchor);
       return;
     }
     if (state.tool === 'artwork' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {

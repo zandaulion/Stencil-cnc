@@ -53,6 +53,7 @@ export {
   requiredOpeningMm,
 } from "./geometry-contract.js";
 export { countValidationLocations, issueLocationCount, validateDesign } from "./validation.js";
+export { nextIssueReviewTarget } from "./issue-review.js";
 export { zoomAroundPoint } from "./viewport.js";
 export {
   CUTTING_PROFILE_SCHEMA,

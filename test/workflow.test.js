@@ -273,6 +273,10 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /state\.bridgePreview = \{ start: drawingFrom, end/);
   assert.match(editor, /function bridgeHandleAtPointer\(/);
   assert.match(editor, /function nearestRetainedPoint\(/);
+  assert.match(editor, /function scheduleManualValidationReview\(reviewAnchor\)/);
+  assert.match(editor, /nextIssueReviewTarget\(state\.validation\.issues/);
+  assert.match(editor, /Updating the issue queue/);
+  assert.match(editor, /scheduleManualValidationReview\(reviewAnchor\);/);
   assert.match(editor, /promoteBridgeToManual\(draggingBridge\.bridge\)/);
 });
 
