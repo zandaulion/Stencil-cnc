@@ -1447,11 +1447,15 @@ async function runValidation() {
   updateConnectivityCard();
   updateExportReadiness();
   draw();
+  const blockingLocations = countValidationLocations(state.validation, 'error');
+  const advisoryLocations = countValidationLocations(state.validation, 'warning');
   toast(state.validation.valid
-    ? 'Checks passed. The panel holds together.'
-    : 'Connectivity errors block SVG and DXF; a watermarked draft PNG remains available.');
+    ? advisoryLocations > 0
+      ? `No blocking geometry issues found; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'} before CAM review.`
+      : 'No blocking geometry issues or advisories found. Ready for CAM review.'
+    : `${blockingLocations} blocking geometry ${blockingLocations === 1 ? 'location must' : 'locations must'} be corrected before SVG or DXF export. A watermarked draft PNG remains available.`);
   markDirty();
-  await createRecoveryPoint(state.validation.valid ? 'Validation passed' : 'Validation checked');
+  await createRecoveryPoint(state.validation.valid ? 'Geometry checks passed' : 'Geometry checks run');
 }
 
 /* ----------------------------------------------------------------- issues */
@@ -1484,7 +1488,7 @@ function renderIssues(issues) {
     if (!state.designMask) {
       health.dataset.state = 'idle';
       if (ring) ring.textContent = '—';
-      if (text) text.innerHTML = '<strong>Waiting for artwork</strong><small>Connectivity and strength checks will appear here.</small>';
+      if (text) text.innerHTML = '<strong>Waiting for artwork</strong><small>Connectivity and configured minimum-feature checks will appear here.</small>';
     } else if (errors > 0) {
       health.dataset.state = 'error';
       if (ring) ring.textContent = String(errors);
@@ -1500,11 +1504,11 @@ function renderIssues(issues) {
     } else if (warnings > 0) {
       health.dataset.state = 'warning';
       if (ring) ring.textContent = String(warnings);
-      if (text) text.innerHTML = `<strong>${warnings} ${warnings === 1 ? 'location' : 'locations'} to review</strong><small>Thin or fragile, but it holds together.</small>`;
+      if (text) text.innerHTML = `<strong>${warnings} advisory ${warnings === 1 ? 'location' : 'locations'} to review</strong><small>No blockers found; review material thinner than the configured limits.</small>`;
     } else {
       health.dataset.state = 'ok';
       if (ring) ring.textContent = '✓';
-      if (text) text.innerHTML = '<strong>Ready to cut</strong><small>One connected piece, within the limits given.</small>';
+      if (text) text.innerHTML = '<strong>Ready for CAM review</strong><small>No blocking issues or advisories found for the configured geometry limits.</small>';
     }
   }
 
@@ -1569,17 +1573,17 @@ function detailText(issue) {
 const REPAIR_STRATEGY_COPY = Object.freeze({
   manufacturing: Object.freeze({
     preserve: 'Keeps the most image detail: cleans only raster noise, prefers merging cuts, and adds the fewest structural ties.',
-    balanced: 'Balances recognizable detail with reliable plasma geometry and adds a sparse filter-aware support network.',
-    durable: 'Prefers stronger metal: closes marginal cuts, removes more slivers, and accepts broader structural corrections.',
+    balanced: 'Balances recognizable detail with the configured plasma geometry limits and adds a sparse filter-aware support network.',
+    durable: 'Prefers more retained metal: closes marginal cuts, removes more slivers, and accepts broader structural corrections.',
   }),
   'small-openings': Object.freeze({
     preserve: 'Enlarges more recognizable marks and closes only clearly insignificant specks.',
-    balanced: 'Keeps recognizable details, but closes isolated specks that will not cut reliably.',
-    durable: 'Favors strong metal and closes nearly every marginal feature.',
+    balanced: 'Keeps recognizable details, but closes isolated specks that do not meet the configured minimum opening.',
+    durable: 'Favors more retained metal and closes nearly every marginal feature.',
   }),
   'cut-gaps': Object.freeze({
     preserve: 'Joins nearby cuts into one opening, retaining the negative-space detail while removing the undersized web.',
-    balanced: 'Adds a small local metal pad so both cuts remain separate with a manufacturing-safe gap.',
+    balanced: 'Adds a small local metal pad so both cuts remain separate at the selected geometry target.',
     durable: 'Closes the smaller conflicting cut. This preserves the most metal but removes fine detail.',
   }),
   'loose-pieces': Object.freeze({
@@ -1773,7 +1777,7 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
       state.repairPreviewKerfMask = null;
       const explanation = plan.outcome.notes[0] ??
         'The selected categories found no change that reduced blocking defects without creating new ones.';
-      toast(`No safe automatic changes were kept. ${explanation}`);
+      toast(`No automatic changes met the current geometry checks. ${explanation}`);
       renderRepairPanel();
       draw();
       return false;
@@ -1961,7 +1965,7 @@ function renderRepairPanel() {
         ? `${result.count} repairs applied · ${remaining} still need review.`
         : result.remainingWarnings > 0
           ? `${result.count} ${noun} applied · no blockers; ${result.remainingWarnings} warning locations remain.`
-        : `${result.count} repairs applied and validation passed.`;
+        : `${result.count} repairs applied; the configured geometry checks pass.`;
   }
   if (!issue && !state.repairPlan) return;
 
@@ -1993,20 +1997,20 @@ function renderRepairPanel() {
   el('repair-after-warnings').textContent = String(outcome?.afterWarnings ?? '—');
   const status = el('repair-plan-status');
   const note = el('repair-plan-note');
-  const safe = outcome?.safeToApply === true;
-  const fullyRepaired = safe && outcome.complete;
-  status.dataset.state = safe ? 'safe' : 'unsafe';
+  const applicable = outcome?.safeToApply === true;
+  const fullyRepaired = applicable && outcome.complete;
+  status.dataset.state = applicable ? 'safe' : 'unsafe';
   status.textContent = fullyRepaired
     ? state.repairPlan.categories.warnings && outcome.afterWarnings > 0
-      ? `Safe preview · all blockers are resolved and warnings are reduced to ${outcome.afterWarnings}.`
-      : 'Safe preview · all blocking locations are resolved.'
-    : safe
-      ? `Safe partial improvement · ${outcome.afterErrors} blocking ${outcome.afterErrors === 1 ? 'location remains' : 'locations remain'} for review.`
-      : 'Unsafe preview · this proposal will not be applied.';
+      ? `Preview resolves all blockers; ${outcome.afterWarnings} advisory ${outcome.afterWarnings === 1 ? 'location remains' : 'locations remain'}.`
+      : 'Preview resolves all detected blocking locations.'
+    : applicable
+      ? `Preview improves the geometry checks; ${outcome.afterErrors} blocking ${outcome.afterErrors === 1 ? 'location remains' : 'locations remain'} for review.`
+      : 'Preview does not improve the geometry checks and cannot be applied.';
   const notes = outcome?.notes ?? [];
   note.hidden = notes.length === 0;
   note.textContent = notes.join(' ');
-  el('btn-apply-repairs').disabled = !safe;
+  el('btn-apply-repairs').disabled = !applicable;
 
   state.repairItemIndex = Math.min(state.repairItemIndex, items.length - 1);
   const item = items[state.repairItemIndex];
@@ -2074,7 +2078,7 @@ async function applyRepairPlan() {
   if (!state.sourceMask || !state.repairPlan?.items.length ||
       !state.repairPreviewBaseMask || !state.repairPreviewMask) return;
   if (state.repairPlan.outcome?.safeToApply !== true) {
-    toast('This preview does not safely improve the complete validation result, so it cannot be applied.');
+    toast('This preview does not improve the complete geometry-check result, so it cannot be applied.');
     return;
   }
   // Merge this pass into the active reversible layer. Warning correction can
@@ -2807,10 +2811,11 @@ function updateExportReadiness() {
   const card = el('export-readiness');
   const hasGeometry = Boolean(state.designMask);
   const ready = currentGeometryIsValidated();
+  const advisoryLocations = ready ? countValidationLocations(state.validation, 'warning') : 0;
   if (card) {
     card.dataset.state = ready ? 'ready' : hasGeometry ? 'draft' : 'blocked';
     card.querySelector('span').innerHTML = ready
-      ? '<strong>Ready for cutting export</strong><small>Checks passed for the current geometry. PNG has no watermark.</small>'
+      ? `<strong>Ready for CAM review</strong><small>No blocking geometry issues found${advisoryLocations ? `; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'}` : ' or advisories'}. Review CAM settings before cutting. PNG has no watermark.</small>`
       : hasGeometry
         ? '<strong>Draft preview available</strong><small>PNG includes a validation watermark. Run all checks to enable SVG and DXF.</small>'
         : '<strong>Artwork required</strong><small>Import or create artwork before exporting a preview.</small>';
@@ -3697,7 +3702,7 @@ function projectStatusLabel(status) {
   return {
     draft: 'Draft',
     'needs-validation': 'Needs validation',
-    ready: 'Ready to export',
+    ready: 'Geometry checks passed',
   }[status] ?? 'Draft';
 }
 
@@ -4478,18 +4483,20 @@ async function importReceivedShare() {
         blob: dataUrlToBlob(artifact.dataUrl),
       });
     }
-    await syncStoredProject(saved);
-    saved = await loadProject(saved.id) || saved;
+    const syncResult = await syncStoredProject(saved);
+    const syncedProjectId = syncResult.projectId || saved.id;
+    saved = await loadProject(syncedProjectId) || saved;
     styleAbort?.abort();
     await loadProjectState(saved);
     await setLastProject(saved.id);
     state.dirty = false;
-    setSaveState('saved', savedAtLabel(new Date(saved.updatedAt)));
     el('received-share-dialog').close('imported');
     receivedShare = null;
     history.replaceState({}, document.title, '/');
     pushHistory();
-    toast('Shared project imported as a complete editable server project.');
+    toast(['synced', 'conflict'].includes(syncResult.status)
+      ? 'Shared project imported as a complete editable server project.'
+      : 'Shared project imported and cached on this device; server synchronization is pending.');
   } catch (error) {
     console.error(error);
     if (saved?.id) await deleteProject(saved.id).catch(() => {});
@@ -4718,6 +4725,10 @@ async function importFile(file) {
   if (!await flushPendingSave()) return;
   if (file.name.toLowerCase().endsWith('.stencil.json') || file.type === 'application/json') {
     await importProjectFile(file);
+    return;
+  }
+  if (/\.(?:heic|heif)$/i.test(file.name) || /image\/(?:heic|heif)/i.test(file.type)) {
+    toast('HEIC/HEIF import is not supported in this browser build. Convert the image to JPG or PNG first.');
     return;
   }
   if (!file.type.startsWith('image/')) { toast('That file is not an image.'); return; }
@@ -5544,10 +5555,10 @@ async function autoBridge() {
       ? ' Image guidance was unavailable, so structural placement was used.'
       : '';
     const resultMessage = suggested.length
-      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} safe fallback` : ''}.${repairSummary}${finishedConnected ? ' Finished geometry stays connected.' : ' Some finished geometry is still separate; run validation to locate it.'}`
+      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} shortest-path fallback` : ''}.${repairSummary}${finishedConnected ? ' The connectivity check finds one finished piece.' : ' Some finished geometry is still separate; run validation to locate it.'}`
       : finishedConnected
         ? 'Everything is already one connected finished piece.'
-        : 'No safe automatic repair was found; reduce detail or add a manual support.';
+        : 'No automatic support plan passed the connectivity check; reduce detail or add a manual support.';
     toast(`${resultMessage}${fallbackNotice}`);
     if (suggested.length) await createRecoveryPoint('Smart supports generated');
   } catch (error) {
@@ -5600,7 +5611,7 @@ function syncSelectedBridgeControls() {
     const styleName = CUT_STYLE_NAMES[bridge.strategy] || 'Artwork';
     if (bridge.source !== 'automatic') metadata.textContent = `Manual support${length}`;
     else if (bridge.stabilizer) metadata.textContent = `${bridge.followsFeatures ? 'Feature-following slat stabilizer' : 'Slat stabilizer'} · ${roundUnit(fromMm(bridge.targetSpanMm || toMm(numberField('max-cantilever', 250))))} ${state.unit} target span${length}`;
-    else if (bridge.fallback) metadata.textContent = `Safe shortest-path fallback${length} · review its placement`;
+    else if (bridge.fallback) metadata.textContent = `Shortest-path fallback${length} · review its placement`;
     else if (bridge.redundant) metadata.textContent = `${styleName}-aware secure redundancy${length}`;
     else metadata.textContent = `${bridge.followsFeatures ? 'Feature-following' : `${styleName}-aware`} smart support${length}`;
   }
@@ -6852,6 +6863,7 @@ function wire() {
     if (!state.sourceMask) { toast('Import an image first.'); return; }
     await persist();
     downloadText(exportFilename('project', new Date()), serializeProject(projectFromState(), { pretty: true }));
+    toast('Portable project downloaded without the source photograph.');
   });
 
   for (const chip of all('[data-issue-filter]')) {

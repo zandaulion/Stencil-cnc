@@ -3524,6 +3524,13 @@ select:focus {
   font-size: 0.57rem;
 }
 
+.repair-target > small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.5rem;
+  line-height: 1.35;
+}
+
 .repair-stage {
   display: grid;
   gap: 10px;

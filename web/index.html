@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#142129">
-  <meta name="description" content="Kerfloom turns line art and photographs into connected, CNC-ready stencil geometry.">
+  <meta name="description" content="Kerfloom turns line art and photographs into editable CNC stencil geometry with configurable manufacturing checks.">
   <meta name="color-scheme" content="light">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -107,9 +107,9 @@
       <div class="project-identity">
         <label class="visually-hidden" for="project-name">Project name</label>
         <input id="project-name" name="projectName" value="Untitled stencil" autocomplete="off" spellcheck="false">
-        <button class="save-state" id="save-state" type="button" data-state="saved" title="Project is saved to the server">
+        <button class="save-state" id="save-state" type="button" data-state="draft" title="Loading workspace">
           <span class="status-dot" aria-hidden="true"></span>
-          <span id="save-state-label" aria-live="polite">Saved to server</span>
+          <span id="save-state-label" aria-live="polite">Loading workspace…</span>
         </button>
         <button class="button button-secondary save-project-button" id="btn-save-project" type="button" hidden>Save to Projects</button>
       </div>
@@ -192,7 +192,7 @@
                 <span class="upload-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24"><path d="M12 16V5m0 0L8 9m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"></path></svg>
                 </span>
-                <span><strong>Drop an image here</strong><small>or open PNG, JPG, WebP, HEIC, or a Kerfloom project</small></span>
+                <span><strong>Drop an image here</strong><small>PNG, JPG, WebP, or a Kerfloom project · convert HEIC/HEIF first</small></span>
               </label>
               <div class="source-file" id="source-file" hidden>
                 <img id="source-preview" alt="Imported source preview">
@@ -889,7 +889,7 @@
                 <div class="range-ends" aria-hidden="true"><span>Orderly</span><span>Organic</span></div>
               </div>
               <input id="stabilizer-version" type="hidden" value="2">
-              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Follow features searches for dark, locally aligned positions where added metal is less visible, and may use one extra sparse slat station to route around a face. Secure adds a small number of separated backup ties. Slat stabilizers meet the finished-web requirement, and the completed finished geometry is checked. Their span target is a guide, not a strength certification; confirm it for the stock, thickness, mounting, and cut sequence. Orange dashed ties are safe fallbacks to review.</p>
+              <p class="section-help">Minimal chooses the shortest connector tree. Aesthetic also follows the active filter and avoids important detail. Follow features searches for dark, locally aligned positions where added metal is less visible, and may use one extra sparse slat station to route around a face. Secure adds a small number of separated backup ties. Slat stabilizers target the configured finished-web requirement, and the completed geometry is checked against it. Their span target is a guide, not a strength certification; confirm it for the stock, thickness, mounting, and cut sequence. Orange dashed ties are shortest-path fallbacks to review.</p>
             </div>
 
             <div class="button-stack">
@@ -1042,7 +1042,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"></path><path d="M3 7V5h7l2 2"></path></svg>
             <span>Projects</span>
           </button>
-          <button class="rail-tool mobile-sync-tool" id="btn-sync-mobile" type="button" data-state="saved" aria-label="Sync projects. Saved to server" title="Saved to server">
+          <button class="rail-tool mobile-sync-tool" id="btn-sync-mobile" type="button" data-state="draft" aria-label="Sync projects. Loading workspace" title="Loading workspace">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 8.5A7 7 0 0 1 18.4 7L20 12M4 12l1.6 5A7 7 0 0 0 17.9 15.5"></path></svg>
             <span><span id="sync-action-label">Sync</span> <b class="sync-pending-count" id="sync-pending-count" hidden aria-hidden="true"></b></span>
             <i class="sync-status-dot" aria-hidden="true"></i>
@@ -1147,7 +1147,7 @@
                 </svg>
               </span>
               <h3>Start with an image</h3>
-              <p>Import black-and-white artwork or a photograph. Your source stays on this machine.</p>
+              <p>Import black-and-white artwork or a photograph. Photographs use private server analysis; saved Projects include the source in the encrypted workspace.</p>
               <button class="button button-primary" id="btn-empty-import" type="button">Choose an image</button>
               <small>PNG, JPG, or WebP · up to 30 MB</small>
             </div>
@@ -1189,7 +1189,7 @@
             </div>
             <span class="candidate-total" id="candidate-total" aria-label="No saved candidates">0</span>
           </div>
-          <p class="candidate-intro">Keep promising versions while you explore styles and settings. Candidates remain on this device.</p>
+          <p class="candidate-intro">Keep promising versions while you explore. Candidates are saved with the project and sync across linked devices; candidates in a recoverable draft stay on this device until you save it to Projects.</p>
           <button class="button button-primary button-full" id="btn-save-candidate" type="button" disabled>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
             Save current candidate
@@ -1210,7 +1210,7 @@
 
         <div class="health-summary" id="health-summary" data-state="idle">
           <div class="health-ring" aria-hidden="true"><span>—</span></div>
-          <div><strong>Waiting for artwork</strong><small>Connectivity and strength checks will appear here.</small></div>
+          <div><strong>Waiting for artwork</strong><small>Connectivity and configured minimum-feature checks will appear here.</small></div>
         </div>
 
         <div class="issue-filters" role="group" aria-label="Filter issues">
@@ -1244,15 +1244,16 @@
               <label><input name="openingRepairStrategy" type="radio" value="balanced" checked><span>Balanced</span></label>
               <label><input name="openingRepairStrategy" type="radio" value="durable"><span>Durable</span></label>
             </div>
-            <p id="repair-strategy-description">Keeps recognizable details, but closes isolated specks that will not cut reliably.</p>
+            <p id="repair-strategy-description">Keeps recognizable details, but closes isolated specks that do not meet the configured minimum opening.</p>
           </fieldset>
 
           <label class="repair-target" id="repair-target-control" for="repair-safety">
-            <span>Manufacturing target</span>
+            <span>Geometry target</span>
             <select id="repair-safety">
-              <option value="safe" selected>Safe · add 0.4 mm allowance</option>
+              <option value="safe" selected>Configured minimum + 0.4 mm target margin</option>
               <option value="minimum">Exact configured minimum</option>
             </select>
+            <small>Passing this check is not a strength or cut-process certification.</small>
           </label>
 
           <section class="repair-stage" id="repair-error-step" data-state="ready" aria-labelledby="repair-error-step-title">
@@ -1283,7 +1284,7 @@
               <strong>Proposed changes</strong>
               <span id="repair-plan-strategy">Balanced</span>
             </div>
-            <p class="repair-plan-status" id="repair-plan-status" data-state="safe" role="status">Safe preview</p>
+            <p class="repair-plan-status" id="repair-plan-status" data-state="safe" role="status">Preview not calculated</p>
             <p class="repair-plan-note" id="repair-plan-note" hidden></p>
             <dl class="repair-plan-counts">
               <div><dt id="repair-close-label">Close</dt><dd id="repair-close-count">0</dd></div>
@@ -1467,13 +1468,13 @@
     <form method="dialog">
       <span class="eyebrow">Encrypted server snapshot</span>
       <h2 id="share-project-title">Share project</h2>
-      <p>A recipient can import a complete editable copy. Nothing is uploaded until you create the link.</p>
+      <p>A recipient can import a complete editable copy. No separate share snapshot is created until you create the link.</p>
 
       <ul class="share-contents" aria-label="Included project artefacts">
         <li><strong>Editable project</strong><span>Settings, candidates, edits, supports, and repairs</span></li>
-        <li><strong id="share-source-summary">Original source</strong><span>Included when it remains on this device</span></li>
+        <li><strong id="share-source-summary">Original source</strong><span>Included when stored with the project</span></li>
         <li><strong id="share-checkpoint-summary">Recovery points</strong><span>Up to ten saved versions</span></li>
-        <li><strong id="share-artifact-summary">Export artefacts</strong><span>Exports retained by this browser</span></li>
+        <li><strong id="share-artifact-summary">Export artefacts</strong><span>Included when retained with the project</span></li>
       </ul>
 
       <label class="dialog-field" for="share-expiry">Link expires after</label>

@@ -54,6 +54,29 @@ test('the creative workflow exposes every preview and a candidate workspace', ()
   assert.match(editor, /name === 'tone' && state\.view === 'tone'\) revealToneControls\(\)/);
 });
 
+test('readiness, storage, sharing, and input-format copy matches actual behavior', () => {
+  assert.match(html, /id="save-state"[^>]*data-state="draft"[^>]*title="Loading workspace"/);
+  assert.match(html, /id="save-state-label"[^>]*>Loading workspace…</);
+  assert.match(html, /Candidates are saved with the project and sync across linked devices/);
+  assert.match(html, /Photographs use private server analysis; saved Projects include the source in the encrypted workspace/);
+  assert.match(html, /No separate share snapshot is created until you create the link/);
+  assert.match(html, /Included when stored with the project/);
+  assert.match(html, /accept="image\/png,image\/jpeg,image\/webp,application\/json,\.stencil\.json"/);
+  assert.match(html, /convert HEIC\/HEIF first/);
+  assert.match(editor, /HEIC\/HEIF import is not supported in this browser build/);
+
+  assert.match(html, /Configured minimum \+ 0\.4 mm target margin/);
+  assert.match(html, /not a strength or cut-process certification/);
+  assert.match(editor, /Ready for CAM review/);
+  assert.match(editor, /advisory .*before CAM review/);
+  assert.doesNotMatch(editor, /The panel holds together|Ready to cut|manufacturing-safe gap|Safe preview|Unsafe preview|safe fallback/i);
+
+  assert.match(editor, /const syncResult = await syncStoredProject\(saved\)/);
+  assert.match(editor, /const syncedProjectId = syncResult\.projectId \|\| saved\.id/);
+  assert.doesNotMatch(editor, /await loadProjectState\(saved\);[\s\S]{0,180}setSaveState\('saved'/);
+  assert.match(editor, /Portable project downloaded without the source photograph/);
+});
+
 test('the desktop editor stays within the viewport while side panels scroll internally', () => {
   const app = fs.readFileSync(path.join(projectRoot, 'web/app.js'), 'utf8');
   assert.match(app, /document\.body\.classList\.add\('editor-open'\)/);
@@ -331,7 +354,7 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(editor, /minimumWebMm,\s*kerfMm,/);
   assert.match(html, /id="bridge-selection-meta"/);
   assert.match(editor, /bridge\.fallback === true/);
-  assert.match(editor, /Safe shortest-path fallback/);
+  assert.match(editor, /Shortest-path fallback/);
   assert.match(editor, /Planning smart supports/);
   assert.match(editor, /suggestKerfAwareBridges\(base\.mask/);
   assert.match(editor, /Feature-following support scoring failed; retrying without it/);

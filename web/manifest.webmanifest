@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Kerfloom",
   "short_name": "Kerfloom",
-  "description": "Art that holds together: connected, CNC-ready stencil geometry from line art and photographs.",
+  "description": "Art that holds together: editable CNC stencil geometry with configurable manufacturing checks.",
   "lang": "en",
   "dir": "ltr",
   "start_url": "/",

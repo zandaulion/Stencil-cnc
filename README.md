@@ -17,7 +17,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Models a configurable panel frame and preserves unused letterbox areas as metal.
 - Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face.
 - Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
-- Simulates kerf and checks disconnected material, minimum openings, close cuts, and minimum-web strength.
+- Simulates kerf and checks disconnected material, minimum openings, close cuts, and configured minimum-web geometry.
 - Builds reversible manufacturing-repair previews before changing the artwork.
 - Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
@@ -66,7 +66,7 @@ connecting the portrait to the selected frame or anchor edges.
 Flow engraving generates against the selected minimum opening and finished-web
 limits rather than relying on automatic repair afterwards. Each ribbon starts
 at a cuttable width, adjacent ribbons reserve the required metal between them,
-and a locally over-curved area remains solid when it cannot safely hold both.
+and a locally over-curved area remains solid when it cannot meet the configured widths for both.
 This preserves the visual rhythm without creating a knowingly destructive
 repair step.
 
