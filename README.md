@@ -16,7 +16,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 - Radial cuts use a directly controlled solid-hub diameter and split rays progressively toward the panel edge.
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
 - Models a configurable panel frame and preserves unused letterbox areas as metal.
-- Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face.
+- Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face. Smart supports remain a dashed, reviewable proposal until accepted.
 - Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and configured minimum-web geometry.
 - Stores a versioned cutting-profile snapshot with each project and retained export: process, stock, machine/consumable, geometry limits, support assumptions, revision, and evidence status travel together.
@@ -32,7 +32,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 1. **Prepare** — import an image, inspect Original → Tone → Artwork, choose a visually identified cut style, optionally apply its panel/profile-guided starting dimensions, and tune its creative parameters. The canvas distinguishes a quick provisional preview from the current processed style geometry; processing completion is not manufacturing validation.
 2. **Panel** — set stock dimensions, orientation, frame edges, artwork fitting, and plasma constraints.
-3. **Support** — inspect connectivity, generate smart bridges, or draw and refine supports manually.
+3. **Support** — inspect connectivity, preview and accept smart bridges, or create supports by dragging or tapping start/end points. A keyboard-accessible list can select, locate, move numerically, rotate, resize, or delete each support; Pan never edits geometry.
 4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.
 5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Kerfloom project.
 
@@ -83,7 +83,7 @@ The default panel is 1250 × 2500 mm. The reusable General plasma profile starts
 
 Select **Projects** in the desktop header or the permanent mobile Tools bar to browse the encrypted server workspace. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is included. Projects can be opened, renamed, duplicated, downloaded, shared, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
 
-Autosave reports `Saving…`, `Saved to server`, an offline queued state, or a retry action if synchronization fails. Every change is written to IndexedDB first and placed in a durable upload queue; the UI reports a server save only after the server acknowledges the revision. Synchronization isolates failures per project, repairs a damaged queued package from its complete local copy when possible, and gives retries of the same edit one stable conflict-copy identity. A problem in an older project therefore cannot block a healthy current project or multiply conflict copies. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
+Autosave reports `Saving…`, `Saved to server`, an offline queued state, or a retry action if synchronization fails. Every change is written to IndexedDB first and placed in a durable upload queue; the UI reports a server save only after the server acknowledges the revision. Synchronization isolates failures per project, repairs a damaged queued package from its complete local copy when possible, and gives retries of the same edit one stable conflict-copy identity. A problem in an older project therefore cannot block a healthy current project or multiply conflict copies. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, accepted smart-support changes, and export.
 
 Accepted manufacturing repairs remain active while the user completes manual material and support corrections. A hand-painted cell overrides only an opposite generated edit at that cell; unaffected generated repairs remain reversible and active. The combined geometry is checked automatically after each committed manual gesture. Changing the underlying artwork, panel geometry, or cutting limits still marks dependent repair work stale and requires regeneration.
 

@@ -999,11 +999,43 @@
               </button>
             </div>
 
+            <p class="support-mode-help"><strong>Pan</strong> moves only the view. Choose <strong>Support</strong> to create or edit ties. On touch, tap the start and end points; dragging still works.</p>
+
+            <section class="support-proposal" id="support-proposal" aria-labelledby="support-proposal-title" hidden>
+              <div class="support-proposal-heading">
+                <span>Smart-support proposal</span>
+                <strong id="support-proposal-title">Review before applying</strong>
+              </div>
+              <p id="support-proposal-summary"></p>
+              <dl class="support-proposal-metrics">
+                <div><dt>Connectivity</dt><dd id="support-proposal-connectivity">—</dd></div>
+                <div><dt>Supports</dt><dd id="support-proposal-count">—</dd></div>
+                <div><dt>Fallbacks</dt><dd id="support-proposal-fallbacks">—</dd></div>
+              </dl>
+              <p class="support-proposal-reason" id="support-proposal-reason"></p>
+              <div class="support-proposal-actions">
+                <button class="button button-primary" id="btn-accept-support-proposal" type="button">Accept proposal</button>
+                <button class="button button-secondary" id="btn-discard-support-proposal" type="button">Discard</button>
+              </div>
+            </section>
+
             <div class="control-section">
-              <h2>Bridge selection</h2>
+              <div class="section-title-row">
+                <h2>Supports <span class="section-count" id="support-list-count">0</span></h2>
+                <div class="support-navigation" role="group" aria-label="Navigate supports">
+                  <button class="icon-button compact-button" id="btn-previous-support" type="button" aria-label="Previous support" aria-keyshortcuts="P" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 7-5 5 5 5"></path></svg>
+                  </button>
+                  <button class="icon-button compact-button" id="btn-next-support" type="button" aria-label="Next support" aria-keyshortcuts="N" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 7 5 5-5 5"></path></svg>
+                  </button>
+                </div>
+              </div>
+              <ol class="support-list" id="support-list" aria-label="Panel supports"></ol>
+              <p class="section-help support-list-help" id="support-list-empty">No supports yet. Draw one or preview smart supports.</p>
               <div class="selection-empty" id="bridge-selection-empty">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 14 8-6 2-2 6L5 4Z"></path></svg>
-                <p>Select a bridge on the canvas to move, resize, or remove it.</p>
+                <p>Select a support from the list or canvas to move, resize, rotate, or remove it.</p>
               </div>
               <div id="bridge-selection" hidden>
                 <p class="section-help" id="bridge-selection-meta"></p>
@@ -1020,7 +1052,15 @@
                   <span>Orientation</span>
                   <span class="number-field compact"><input id="selected-bridge-angle" type="number" min="-180" max="180" step="1"><span>°</span></span>
                 </label>
-                <p class="bridge-keyboard-hint">Arrow keys move 1 mm · Shift moves 10 mm · Delete removes</p>
+                <label class="field-row" for="selected-bridge-center-x">
+                  <span>Centre X</span>
+                  <span class="number-field compact"><input id="selected-bridge-center-x" type="number" min="0" step="1"><span data-unit-label>mm</span></span>
+                </label>
+                <label class="field-row" for="selected-bridge-center-y">
+                  <span>Centre Y</span>
+                  <span class="number-field compact"><input id="selected-bridge-center-y" type="number" min="0" step="1"><span data-unit-label>mm</span></span>
+                </label>
+                <p class="bridge-keyboard-hint">Arrow keys move 1 mm · Shift moves 10 mm · P/N selects previous/next · Delete removes</p>
                 <button class="button button-danger button-full" id="btn-delete-bridge" type="button" aria-keyshortcuts="Delete Backspace">Delete selected support</button>
               </div>
             </div>

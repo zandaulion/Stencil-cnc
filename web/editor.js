@@ -255,6 +255,8 @@ const state = {
   bridges: [],
   drawingBridge: false,
   bridgePreview: null,
+  supportTapStart: null,
+  supportProposal: null,
   automaticSupportsStale: false,
   selectedBridge: null,
   hoveredBridge: null,
@@ -2960,6 +2962,24 @@ function drawOverlay(overlay, mask) {
     context.setLineDash([]);
   }
 
+  if (state.supportProposal) {
+    for (const bridge of state.supportProposal.bridges) {
+      const startX = bridge.start.x * pxPerMm;
+      const startY = bridge.start.y * (mask.height / heightMm);
+      const endX = bridge.end.x * pxPerMm;
+      const endY = bridge.end.y * (mask.height / heightMm);
+      context.strokeStyle = bridge.fallback ? '#d6941a' : '#008f9c';
+      context.lineWidth = Math.max(2, bridge.width * pxPerMm);
+      context.lineCap = 'round';
+      context.setLineDash([Math.max(5, 9 / state.zoom), Math.max(3, 5 / state.zoom)]);
+      context.beginPath();
+      context.moveTo(startX, startY);
+      context.lineTo(endX, endY);
+      context.stroke();
+      context.setLineDash([]);
+    }
+  }
+
   if (state.bridgePreview) {
     context.strokeStyle = 'rgba(31, 122, 90, .82)';
     context.lineWidth = Math.max(2, state.bridgePreview.width * pxPerMm);
@@ -2970,6 +2990,18 @@ function drawOverlay(overlay, mask) {
     context.lineTo(state.bridgePreview.end.x * pxPerMm, state.bridgePreview.end.y * (mask.height / heightMm));
     context.stroke();
     context.setLineDash([]);
+    if (state.bridgePreview.pendingTap) {
+      const x = state.bridgePreview.start.x * pxPerMm;
+      const y = state.bridgePreview.start.y * (mask.height / heightMm);
+      const radius = Math.max(5, 8 / Math.max(state.zoom, 0.1));
+      context.fillStyle = '#f5f4f0';
+      context.strokeStyle = '#1f7a5a';
+      context.lineWidth = Math.max(2, 2 / Math.max(state.zoom, 0.1));
+      context.beginPath();
+      context.arc(x, y, radius, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+    }
   }
 
   if (state.selectedBridge) {
@@ -3510,6 +3542,9 @@ function restore(serialised) {
   applyControls(data.controls);
   syncCuttingProfileControls(data.cuttingProfile ?? createCuttingProfile());
   state.bridges = cloneBridges(data.bridges);
+  state.supportProposal = null;
+  state.supportTapStart = null;
+  state.bridgePreview = null;
   state.painted = { keep: new Set(data.painted.keep), remove: new Set(data.painted.remove) };
   state.manufacturingRepairs = {
     keep: new Set(data.manufacturingRepairs?.keep ?? []),
@@ -5173,6 +5208,9 @@ async function loadProjectState(project, { imported = false } = {}) {
   // Legacy projects contain only the already-placed mask. Keep it exact; new
   // projects also carry baseMask and can be re-placed when panel dimensions change.
   state.bridges = cloneBridges(project.bridges ?? []);
+  state.supportProposal = null;
+  state.supportTapStart = null;
+  state.bridgePreview = null;
   state.automaticSupportsStale = project.editor?.automaticSupportsStale === true;
   state.candidates = project.editor?.candidates ?? [];
   state.selectedCandidateId = project.editor?.selectedCandidateId ?? null;
@@ -5292,6 +5330,9 @@ async function importFile(file) {
     state.paintedFor = null;
     resetManufacturingRepairs();
     state.bridges = [];
+    state.supportProposal = null;
+    state.supportTapStart = null;
+    state.bridgePreview = null;
     state.automaticSupportsStale = false;
     state.candidates = [];
     state.selectedCandidateId = null;
@@ -5592,6 +5633,9 @@ function restoreCandidate(id) {
     resetManufacturingRepairs();
   }
   state.bridges = cloneBridges(candidate.bridges ?? []);
+  state.supportProposal = null;
+  state.supportTapStart = null;
+  state.bridgePreview = null;
   state.selectedBridge = null;
   state.automaticSupportsStale = candidate.automaticSupportsStale === true;
   refresh({ immediate: true, preserveManufacturingRepairs: completePayload });
@@ -5765,7 +5809,172 @@ function clearManufacturingRepairLayer() {
   toast('Manufacturing repair layer removed. Manual edits were preserved.');
 }
 
+function supportLabel(bridge) {
+  const styleName = CUT_STYLE_NAMES[bridge.strategy] || 'Artwork';
+  if (bridge.source !== 'automatic') {
+    return { title: 'Manual support', reason: 'Placed or edited by you.' };
+  }
+  if (bridge.stabilizer) {
+    return {
+      title: bridge.followsFeatures ? 'Feature-following stabilizer' : 'Slat stabilizer',
+      reason: bridge.followsFeatures
+        ? 'Moved into a darker feature band while preserving the span target.'
+        : 'Limits the unsupported span between neighbouring slats.',
+    };
+  }
+  if (bridge.fallback) {
+    return {
+      title: 'Shortest-path fallback',
+      reason: 'The aesthetic search could not keep this required connection, so the shortest structural route was used.',
+    };
+  }
+  if (bridge.redundant) {
+    return {
+      title: 'Secure backup support',
+      reason: `Adds separated ${styleName.toLowerCase()}-aware redundancy.`,
+    };
+  }
+  return {
+    title: bridge.followsFeatures ? 'Feature-following smart support' : `${styleName}-aware smart support`,
+    reason: bridge.followsFeatures
+      ? 'Prefers dark, locally aligned artwork where the required connection still works.'
+      : 'Uses the active style direction while preserving the required connection.',
+  };
+}
+
+function renderSupportList() {
+  const list = el('support-list');
+  if (!list) return;
+  const fragment = document.createDocumentFragment();
+  state.bridges.forEach((bridge, index) => {
+    const metrics = bridgeMetrics(bridge);
+    const label = supportLabel(bridge);
+    const item = document.createElement('li');
+    item.className = 'support-list-item';
+    item.classList.toggle('is-selected', bridge === state.selectedBridge);
+    item.dataset.supportIndex = String(index);
+
+    const select = document.createElement('button');
+    select.className = 'support-list-select';
+    select.type = 'button';
+    select.dataset.supportAction = 'select';
+    select.dataset.supportIndex = String(index);
+    select.setAttribute('aria-pressed', String(bridge === state.selectedBridge));
+    const title = document.createElement('strong');
+    title.textContent = `${index + 1}. ${label.title}`;
+    const detail = document.createElement('small');
+    detail.textContent = `${roundUnit(fromMm(metrics.lengthMm))} ${state.unit} · ${Math.round(metrics.angleDeg)}°`;
+    const reason = document.createElement('small');
+    reason.className = 'support-list-reason';
+    reason.textContent = label.reason;
+    select.append(title, detail, reason);
+
+    const locate = document.createElement('button');
+    locate.className = 'support-list-action';
+    locate.type = 'button';
+    locate.dataset.supportAction = 'locate';
+    locate.dataset.supportIndex = String(index);
+    locate.textContent = 'Locate';
+    locate.setAttribute('aria-label', `Locate support ${index + 1}`);
+
+    const remove = document.createElement('button');
+    remove.className = 'support-list-action is-danger';
+    remove.type = 'button';
+    remove.dataset.supportAction = 'delete';
+    remove.dataset.supportIndex = String(index);
+    remove.textContent = 'Delete';
+    remove.setAttribute('aria-label', `Delete support ${index + 1}`);
+    item.append(select, locate, remove);
+    fragment.append(item);
+  });
+  list.replaceChildren(fragment);
+  if (el('support-list-count')) el('support-list-count').textContent = String(state.bridges.length);
+  el('support-list-empty')?.toggleAttribute('hidden', state.bridges.length > 0);
+  for (const id of ['btn-previous-support', 'btn-next-support']) {
+    el(id)?.toggleAttribute('disabled', state.bridges.length === 0);
+  }
+}
+
+function locateBridge(bridge, { focusCanvas = true } = {}) {
+  if (!bridge || !state.designMask) return false;
+  setStage('support');
+  setTool('support');
+  selectBridge(bridge);
+  const viewport = el('canvas-viewport');
+  const canvas = el('editor-canvas');
+  if (!viewport || !canvas) return false;
+  const currentSheet = sheet();
+  const midpoint = {
+    x: (bridge.start.x + bridge.end.x) / 2 / currentSheet.widthMm * canvas.width,
+    y: (bridge.start.y + bridge.end.y) / 2 / currentSheet.heightMm * canvas.height,
+  };
+  state.pan = {
+    x: viewport.clientWidth / 2 - midpoint.x * state.zoom,
+    y: viewport.clientHeight / 2 - midpoint.y * state.zoom,
+  };
+  applyTransform();
+  if (focusCanvas) viewport.focus({ preventScroll: true });
+  return true;
+}
+
+function selectAdjacentBridge(direction) {
+  if (!state.bridges.length) return false;
+  const current = state.bridges.indexOf(state.selectedBridge);
+  const base = current < 0 ? (direction > 0 ? -1 : 0) : current;
+  const index = (base + direction + state.bridges.length) % state.bridges.length;
+  return locateBridge(state.bridges[index]);
+}
+
+function supportPlanSignature() {
+  const manual = state.bridges
+    .filter((bridge) => bridge.source !== 'automatic')
+    .map((bridge) => ({
+      start: bridge.start,
+      end: bridge.end,
+      width: bridge.width,
+      enabled: bridge.enabled !== false,
+    }));
+  return JSON.stringify({
+    source: state.sourceMask ? maskFingerprint(state.sourceMask) : null,
+    sheet: sheet(),
+    frame: frameConfig(),
+    manual,
+    geometryInterpretation: state.geometryInterpretation,
+    kerfMm: toMm(numberField('kerf', 1.2)),
+    minimumWebMm: toMm(numberField('min-web', 3)),
+    bridgeWidthMm: toMm(numberField('bridge-width', 6)),
+    strategy: numberField('bridge-count', 2),
+    protectFaces: el('protect-faces')?.checked !== false,
+    followFeatures: el('support-follow-features')?.checked === true,
+    stabilizeSlats: el('stabilize-slats')?.checked === true,
+    maximumUnsupportedSpanMm: toMm(numberField('max-cantilever', 250)),
+    organic: numberField('stabilizer-organic', 75),
+  });
+}
+
+function renderSupportProposal() {
+  const proposal = state.supportProposal;
+  const panel = el('support-proposal');
+  panel?.toggleAttribute('hidden', !proposal);
+  if (!proposal) return;
+  el('support-proposal-summary').textContent = proposal.summary;
+  el('support-proposal-connectivity').textContent = `${proposal.initialComponentCount} → ${proposal.finalComponentCount}`;
+  el('support-proposal-count').textContent = String(proposal.bridges.length);
+  el('support-proposal-fallbacks').textContent = String(proposal.fallbackCount);
+  el('support-proposal-reason').textContent = proposal.reason;
+  el('btn-accept-support-proposal')?.toggleAttribute('disabled', proposal.bridges.length === 0);
+}
+
+function clearSupportProposal({ redraw = true } = {}) {
+  if (!state.supportProposal) return false;
+  state.supportProposal = null;
+  updateAutomaticSupportState();
+  if (redraw) draw();
+  return true;
+}
+
 function markAutomaticSupportsStale() {
+  clearSupportProposal({ redraw: false });
   if (!automaticSupportCount() || state.automaticSupportsStale) return;
   state.automaticSupportsStale = true;
   updateAutomaticSupportState();
@@ -5777,12 +5986,16 @@ function updateAutomaticSupportState() {
   const stale = count > 0 && state.automaticSupportsStale;
   el('automatic-support-stale')?.toggleAttribute('hidden', !stale);
   const action = el('automatic-support-action');
-  if (action) action.textContent = stale
-    ? 'Update smart supports'
-    : count ? 'Recalculate smart supports' : 'Suggest smart bridges';
+  if (action) action.textContent = state.supportProposal
+    ? 'Refresh smart-support proposal'
+    : stale
+      ? 'Update smart supports'
+      : count ? 'Recalculate smart supports' : 'Suggest smart bridges';
   el('btn-clear-auto-bridges')?.toggleAttribute('disabled', count === 0);
   const counter = el('automatic-support-count');
   if (counter) counter.textContent = count ? String(count) : '';
+  renderSupportList();
+  renderSupportProposal();
 }
 
 function sourcePointOnSheet(normalizedX, normalizedY) {
@@ -6066,13 +6279,10 @@ async function autoBridge() {
       usedImageFallback = true;
     }
     const suggested = plan.bridges;
-    state.bridges = [...manual, ...suggested];
-    state.automaticSupportsStale = false;
-    selectBridge(null);
-    updateAutomaticSupportState();
-    refresh({ immediate: true, rebuildSourceMask: false });
-    pushHistory();
-    const supportSimulation = validateDesign(state.designMask, {
+    const proposedDesign = buildDesignMask(state.sourceMask, {
+      sheet: sheet(), frame: frameConfig(), bridges: [...manual, ...suggested],
+    });
+    const supportSimulation = validateDesign(proposedDesign.mask, {
       sheet: sheet(),
       kerfMm,
       minimumWebMm: 0,
@@ -6098,12 +6308,36 @@ async function autoBridge() {
       ? ' Image guidance was unavailable, so structural placement was used.'
       : '';
     const resultMessage = suggested.length
-      ? `Added ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} shortest-path fallback` : ''}.${repairSummary}${finishedConnected ? ' The connectivity check finds one finished piece.' : ' Some finished geometry is still separate; run validation to locate it.'}`
+      ? `Would add ${additions}${redundantCount ? ` (${redundantCount} redundant)` : ''}${fallbackCount ? ` · ${fallbackCount} shortest-path fallback` : ''}.${repairSummary}${finishedConnected ? ' The connectivity check finds one finished piece.' : ' Some finished geometry would still be separate.'}`
       : finishedConnected
         ? 'Everything is already one connected finished piece.'
         : 'No automatic support plan passed the connectivity check; reduce detail or add a manual support.';
-    toast(`${resultMessage}${fallbackNotice}`);
-    if (suggested.length) await createRecoveryPoint('Smart supports generated');
+    if (!suggested.length) {
+      clearSupportProposal();
+      toast(`${resultMessage}${fallbackNotice}`);
+      return;
+    }
+    const reasons = [];
+    if (fallbackCount) reasons.push(`${fallbackCount} required shortest-path ${fallbackCount === 1 ? 'fallback is' : 'fallbacks are'} shown in orange`);
+    if (usedImageFallback) reasons.push('image guidance was unavailable, so structural placement was used');
+    if (!finishedConnected) reasons.push('the proposal does not yet connect every finished piece');
+    if (!reasons.length) reasons.push('all proposed supports passed the requested feature and connectivity planning pass');
+    state.supportProposal = {
+      bridges: suggested,
+      signature: supportPlanSignature(),
+      initialComponentCount: plan.initialComponentCount,
+      finalComponentCount: plan.finalComponentCount,
+      fallbackCount,
+      redundantCount,
+      stabilizerCount,
+      finishedConnected,
+      summary: `${resultMessage}${fallbackNotice}`,
+      reason: `${reasons.join('; ')}. Existing supports remain unchanged until you accept.`,
+    };
+    selectBridge(null);
+    updateAutomaticSupportState();
+    draw();
+    toast(`Smart-support proposal ready: ${suggested.length} ${suggested.length === 1 ? 'support' : 'supports'} to review.`);
   } catch (error) {
     console.error(error);
     const reason = error instanceof Error && error.message
@@ -6117,7 +6351,39 @@ async function autoBridge() {
   }
 }
 
+async function acceptSupportProposal() {
+  const proposal = state.supportProposal;
+  if (!proposal) return false;
+  if (proposal.signature !== supportPlanSignature()) {
+    clearSupportProposal();
+    updateAutomaticSupportState();
+    toast('The artwork or support settings changed. Generate a fresh proposal before applying it.');
+    return false;
+  }
+  const manual = state.bridges.filter((bridge) => bridge.source !== 'automatic');
+  const count = proposal.bridges.length;
+  const finishedConnected = proposal.finishedConnected;
+  state.bridges = [...manual, ...proposal.bridges];
+  state.supportProposal = null;
+  state.automaticSupportsStale = false;
+  selectBridge(null);
+  refresh({ immediate: true, rebuildSourceMask: false });
+  pushHistory();
+  toast(`Applied ${count} smart ${count === 1 ? 'support' : 'supports'} as one undoable action.${finishedConnected ? ' The finished geometry is connected.' : ' Validate to review the remaining separation.'}`);
+  await createRecoveryPoint('Smart supports accepted');
+  return true;
+}
+
+function discardSupportProposal() {
+  if (!clearSupportProposal()) return false;
+  updateAutomaticSupportState();
+  toast('Smart-support proposal discarded. Existing supports were not changed.');
+  return true;
+}
+
 function selectBridge(bridge) {
+  state.supportTapStart = null;
+  state.bridgePreview = null;
   state.selectedBridge = bridge;
   el('bridge-selection').hidden = !bridge;
   el('bridge-selection-empty').hidden = Boolean(bridge);
@@ -6137,10 +6403,14 @@ function bridgeMetrics(bridge) {
   return { lengthMm: Math.hypot(dx, dy), angleDeg };
 }
 
-function syncSelectedBridgeControls() {
+function syncSelectedBridgeControls({ renderList = true } = {}) {
   const bridge = state.selectedBridge;
   if (!bridge) return;
   const metrics = bridgeMetrics(bridge);
+  const center = {
+    x: (bridge.start.x + bridge.end.x) / 2,
+    y: (bridge.start.y + bridge.end.y) / 2,
+  };
   bridge.lengthMm = metrics.lengthMm;
   if (el('selected-bridge-width')) el('selected-bridge-width').value = roundUnit(fromMm(bridge.width));
   if (el('selected-bridge-length')) {
@@ -6148,6 +6418,14 @@ function syncSelectedBridgeControls() {
     el('selected-bridge-length').value = roundUnit(fromMm(metrics.lengthMm));
   }
   if (el('selected-bridge-angle')) el('selected-bridge-angle').value = Math.round(metrics.angleDeg * 10) / 10;
+  if (el('selected-bridge-center-x')) {
+    el('selected-bridge-center-x').max = roundUnit(fromMm(sheet().widthMm));
+    el('selected-bridge-center-x').value = roundUnit(fromMm(center.x));
+  }
+  if (el('selected-bridge-center-y')) {
+    el('selected-bridge-center-y').max = roundUnit(fromMm(sheet().heightMm));
+    el('selected-bridge-center-y').value = roundUnit(fromMm(center.y));
+  }
   const metadata = el('bridge-selection-meta');
   if (metadata) {
     const length = ` · ${roundUnit(fromMm(metrics.lengthMm))} ${state.unit} long`;
@@ -6158,6 +6436,7 @@ function syncSelectedBridgeControls() {
     else if (bridge.redundant) metadata.textContent = `${styleName}-aware secure redundancy${length}`;
     else metadata.textContent = `${bridge.followsFeatures ? 'Feature-following' : `${styleName}-aware`} smart support${length}`;
   }
+  if (renderList) renderSupportList();
 }
 
 function setBridgeGeometry(bridge, { lengthMm, angleDeg }) {
@@ -6206,9 +6485,23 @@ function translateBridge(bridge, requestedDx, requestedDy) {
   bridge.end = { x: bridge.end.x + dx, y: bridge.end.y + dy };
 }
 
+function setBridgeCenter(bridge, { xMm, yMm }) {
+  if (!bridge) return;
+  const center = {
+    x: (bridge.start.x + bridge.end.x) / 2,
+    y: (bridge.start.y + bridge.end.y) / 2,
+  };
+  translateBridge(
+    bridge,
+    Number.isFinite(xMm) ? xMm - center.x : 0,
+    Number.isFinite(yMm) ? yMm - center.y : 0,
+  );
+}
+
 function deleteSelectedBridge() {
   const bridge = state.selectedBridge;
   if (!bridge) return false;
+  clearSupportProposal();
   const reviewAnchor = captureManualValidationReview();
   state.bridges = state.bridges.filter((candidate) => candidate !== bridge);
   if (state.hoveredBridge === bridge) state.hoveredBridge = null;
@@ -6321,6 +6614,7 @@ function manualSupportPoint(point, start = null, { followDirection = true } = {}
 
 function promoteBridgeToManual(bridge) {
   if (!bridge || bridge.source !== 'automatic') return;
+  clearSupportProposal();
   bridge.source = 'manual';
   bridge.fallback = false;
   bridge.redundant = false;
@@ -6590,6 +6884,8 @@ function setSidePanel(panel) {
 
 function setTool(tool) {
   if (!['pan', 'artwork', 'keep', 'remove', 'support'].includes(tool)) return;
+  state.supportTapStart = null;
+  if (tool !== 'support' && state.selectedBridge) selectBridge(null);
   state.tool = tool;
   state.touchupPreview = null;
   state.drawingBridge = tool === 'support';
@@ -6618,7 +6914,7 @@ function activateSupportTool() {
   setStage('support');
   setTool('support');
   openToolOptions('support');
-  toast('Support tool active. Drag between two pieces; endpoints snap to metal.');
+  toast('Support tool active. Drag between two pieces, or tap a start and end point.');
 }
 
 function activateIconStencil() {
@@ -6971,6 +7267,7 @@ function wire() {
     state.painted = { keep: new Set(), remove: new Set() };
     resetManufacturingRepairs();
     state.paintedFor = null; state.bridges = []; state.automaticSupportsStale = false;
+    state.supportProposal = null; state.supportTapStart = null; state.bridgePreview = null;
     state.candidates = []; state.selectedCandidateId = null; state.validation = null;
     state.lastValidatedAt = null; state.lastExportedAt = null;
     state.geometryInterpretation = FINISHED_BOUNDARY_CAM;
@@ -7261,6 +7558,7 @@ function wire() {
       'artwork-offset-x', 'artwork-offset-y',
       'cutting-profile-thickness',
       'bridge-width', 'selected-bridge-width', 'selected-bridge-length',
+      'selected-bridge-center-x', 'selected-bridge-center-y',
       'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
@@ -7275,6 +7573,7 @@ function wire() {
     }
     enforcePlasmaLimits();
     syncSelectedBridgeControls();
+    renderSupportList();
     updateTouchupControls();
     updateSlatStabilizerControls();
     updateReadouts(); restyle(); refresh({ immediate: true });
@@ -7358,7 +7657,11 @@ function wire() {
 
   // --- bridges
   el('bridge-count')?.addEventListener('input', updateRangeOutputs);
-  const supportPlanChanged = () => { markAutomaticSupportsStale(); pushHistory(); };
+  const supportPlanChanged = () => {
+    clearSupportProposal();
+    markAutomaticSupportsStale();
+    pushHistory();
+  };
   el('bridge-count')?.addEventListener('change', supportPlanChanged);
   el('protect-faces')?.addEventListener('change', supportPlanChanged);
   el('support-follow-features')?.addEventListener('change', supportPlanChanged);
@@ -7381,6 +7684,7 @@ function wire() {
   el('stabilizer-organic')?.addEventListener('input', updateRangeOutputs);
   el('stabilizer-organic')?.addEventListener('change', supportPlanChanged);
   el('bridge-width')?.addEventListener('input', () => {
+    clearSupportProposal();
     const adjusted = enforcePlasmaLimits();
     presentConstraintAdjustments(adjusted);
     markCuttingProfileSourceAsCustom();
@@ -7392,8 +7696,11 @@ function wire() {
     commitCuttingProfileRevision();
   });
   el('btn-auto-bridge')?.addEventListener('click', autoBridge);
+  el('btn-accept-support-proposal')?.addEventListener('click', () => void acceptSupportProposal());
+  el('btn-discard-support-proposal')?.addEventListener('click', discardSupportProposal);
   el('btn-add-bridge')?.addEventListener('click', activateSupportTool);
   el('btn-clear-auto-bridges')?.addEventListener('click', () => {
+    clearSupportProposal();
     const before = state.bridges.length;
     state.bridges = state.bridges.filter((bridge) => bridge.source !== 'automatic');
     state.automaticSupportsStale = false;
@@ -7407,6 +7714,7 @@ function wire() {
   el('btn-delete-bridge')?.addEventListener('click', deleteSelectedBridge);
   el('selected-bridge-width')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
+    clearSupportProposal();
     const reviewAnchor = captureManualValidationReview();
     promoteBridgeToManual(state.selectedBridge);
     state.selectedBridge.width = safeBridgeWidthMm(toMm(Number(event.target.value)));
@@ -7417,6 +7725,7 @@ function wire() {
   });
   el('selected-bridge-length')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
+    clearSupportProposal();
     const reviewAnchor = captureManualValidationReview();
     promoteBridgeToManual(state.selectedBridge);
     setBridgeGeometry(state.selectedBridge, { lengthMm: toMm(Number(event.target.value)) });
@@ -7427,6 +7736,7 @@ function wire() {
   });
   el('selected-bridge-angle')?.addEventListener('change', (event) => {
     if (!state.selectedBridge) return;
+    clearSupportProposal();
     const reviewAnchor = captureManualValidationReview();
     promoteBridgeToManual(state.selectedBridge);
     setBridgeGeometry(state.selectedBridge, { angleDeg: Number(event.target.value) });
@@ -7434,6 +7744,41 @@ function wire() {
     refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
     pushHistory();
     scheduleManualValidationReview(reviewAnchor);
+  });
+  for (const [id, axis] of [['selected-bridge-center-x', 'x'], ['selected-bridge-center-y', 'y']]) {
+    el(id)?.addEventListener('change', (event) => {
+      if (!state.selectedBridge) return;
+      clearSupportProposal();
+      const reviewAnchor = captureManualValidationReview();
+      promoteBridgeToManual(state.selectedBridge);
+      setBridgeCenter(state.selectedBridge, { [`${axis}Mm`]: toMm(Number(event.target.value)) });
+      syncSelectedBridgeControls();
+      refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
+      pushHistory();
+      scheduleManualValidationReview(reviewAnchor);
+    });
+  }
+  el('btn-previous-support')?.addEventListener('click', () => selectAdjacentBridge(-1));
+  el('btn-next-support')?.addEventListener('click', () => selectAdjacentBridge(1));
+  el('support-list')?.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-support-action]');
+    if (!button) return;
+    const bridge = state.bridges[Number(button.dataset.supportIndex)];
+    if (!bridge) return;
+    const action = button.dataset.supportAction;
+    if (action === 'select') {
+      setStage('support');
+      setTool('support');
+      selectBridge(bridge);
+      el('canvas-viewport')?.focus({ preventScroll: true });
+    } else if (action === 'locate') {
+      locateBridge(bridge);
+    } else if (action === 'delete') {
+      setStage('support');
+      setTool('support');
+      selectBridge(bridge);
+      deleteSelectedBridge();
+    }
   });
 
   // --- validation and export
@@ -7712,6 +8057,7 @@ function wire() {
   let draggingArtwork = null;
   let drawingFrom = null;
   let drawingReviewAnchor = null;
+  let drawingSupportGesture = null;
   let draggingBridge = null;
   let touchupStroke = null;
   let touchupDrawFrame = null;
@@ -7732,6 +8078,7 @@ function wire() {
 
   const beginBridgeDrag = (event, bridge, mode) => {
     const point = pointerToMm(event);
+    clearSupportProposal();
     selectBridge(bridge);
     state.hoveredBridge = bridge;
     draggingBridge = {
@@ -7769,9 +8116,19 @@ function wire() {
         return;
       }
       const point = pointerToMm(event);
-      drawingFrom = manualSupportPoint({ x: point.mmX, y: point.mmY });
+      const pendingStart = state.supportTapStart;
+      drawingFrom = pendingStart || manualSupportPoint({ x: point.mmX, y: point.mmY });
       drawingReviewAnchor = captureManualValidationReview();
-      state.bridgePreview = { start: drawingFrom, end: drawingFrom, width: safeBridgeWidthMm() };
+      const end = pendingStart
+        ? manualSupportPoint({ x: point.mmX, y: point.mmY }, drawingFrom)
+        : drawingFrom;
+      drawingSupportGesture = {
+        fromPending: Boolean(pendingStart),
+        moved: false,
+        pointer: { x: event.clientX, y: event.clientY },
+      };
+      state.supportTapStart = null;
+      state.bridgePreview = { start: drawingFrom, end, width: safeBridgeWidthMm() };
       viewport.setPointerCapture(event.pointerId);
       draw();
       return;
@@ -7808,18 +8165,8 @@ function wire() {
       else draw();
       return;
     }
-    const handle = bridgeHandleAtPointer(event);
-    if (handle && state.selectedBridge) {
-      beginBridgeDrag(event, state.selectedBridge, handle);
-      return;
-    }
-    const hit = bridgeAtPointer(event);
-    if (hit) {
-      beginBridgeDrag(event, hit, 'move');
-      return;
-    }
     state.hoveredBridge = null;
-    selectBridge(null);
+    if (state.selectedBridge) selectBridge(null);
     panning = { x: event.clientX - state.pan.x, y: event.clientY - state.pan.y };
     viewport.setPointerCapture(event.pointerId);
     viewport.style.cursor = 'grabbing';
@@ -7840,6 +8187,10 @@ function wire() {
       scheduleArtworkTransformPreview();
     } else if (drawingFrom) {
       if (!inside) return;
+      if (drawingSupportGesture && Math.hypot(
+        event.clientX - drawingSupportGesture.pointer.x,
+        event.clientY - drawingSupportGesture.pointer.y,
+      ) >= 5) drawingSupportGesture.moved = true;
       const end = manualSupportPoint({ x: mmX, y: mmY }, drawingFrom);
       state.bridgePreview = { start: drawingFrom, end, width: safeBridgeWidthMm() };
       draw();
@@ -7882,7 +8233,7 @@ function wire() {
         draggingBridge.bridge.end.x - draggingBridge.bridge.start.x,
         draggingBridge.bridge.end.y - draggingBridge.bridge.start.y,
       );
-      syncSelectedBridgeControls();
+      syncSelectedBridgeControls({ renderList: false });
       refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false, manualGeometryEdit: true });
     } else if (panning) {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
@@ -7894,8 +8245,10 @@ function wire() {
       state.touchupPreview = { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
       draw();
     } else {
-      const handle = bridgeHandleAtPointer(event);
-      const hovered = handle && state.selectedBridge ? state.selectedBridge : bridgeAtPointer(event);
+      const handle = state.tool === 'support' ? bridgeHandleAtPointer(event) : null;
+      const hovered = state.tool === 'support'
+        ? handle && state.selectedBridge ? state.selectedBridge : bridgeAtPointer(event)
+        : null;
       const changed = hovered !== state.hoveredBridge;
       state.hoveredBridge = hovered;
       viewport.style.cursor = handle ? (handle === 'move' ? 'move' : 'crosshair')
@@ -7926,12 +8279,16 @@ function wire() {
     }
     if (drawingFrom) {
       const end = state.bridgePreview?.end;
-      if (inside && end && Math.hypot(end.x - drawingFrom.x, end.y - drawingFrom.y) > Number.EPSILON) {
+      const lengthMm = end ? Math.hypot(end.x - drawingFrom.x, end.y - drawingFrom.y) : 0;
+      const completesSupport = inside && end && lengthMm > Number.EPSILON &&
+        (drawingSupportGesture?.fromPending || drawingSupportGesture?.moved);
+      if (completesSupport) {
+        clearSupportProposal();
         const bridge = {
           id: `manual-${Date.now()}`, type: 'capsule', enabled: true, units: 'mm',
           start: drawingFrom, end,
           width: safeBridgeWidthMm(),
-          lengthMm: Math.hypot(end.x - drawingFrom.x, end.y - drawingFrom.y),
+          lengthMm,
           source: 'manual',
         };
         state.bridges.push(bridge);
@@ -7940,11 +8297,30 @@ function wire() {
         pushHistory();
         scheduleManualValidationReview(drawingReviewAnchor);
         toast('Support added. Drag either endpoint handle to refine it.');
+      } else if (!drawingSupportGesture?.fromPending && inside && !drawingSupportGesture?.moved) {
+        state.supportTapStart = { ...drawingFrom };
+        state.bridgePreview = {
+          start: state.supportTapStart,
+          end: state.supportTapStart,
+          width: safeBridgeWidthMm(),
+          pendingTap: true,
+        };
+        toast('Support start set. Tap the end point, or press Escape to cancel.');
+      } else if (drawingSupportGesture?.fromPending) {
+        state.supportTapStart = { ...drawingFrom };
+        state.bridgePreview = {
+          start: state.supportTapStart,
+          end: state.supportTapStart,
+          width: safeBridgeWidthMm(),
+          pendingTap: true,
+        };
       }
       drawingFrom = null;
       drawingReviewAnchor = null;
+      drawingSupportGesture = null;
       state.drawingBridge = state.tool === 'support';
-      state.bridgePreview = null;
+      if (!state.supportTapStart) state.bridgePreview = null;
+      draw();
     }
     if (touchupStroke) {
       const reviewAnchor = touchupStroke.reviewAnchor;
@@ -7993,10 +8369,12 @@ function wire() {
     cancelLiveTouchupDraw();
     drawingFrom = null;
     drawingReviewAnchor = null;
+    drawingSupportGesture = null;
     draggingBridge = null;
     draggingArtwork = null;
     panning = null;
     state.drawingBridge = state.tool === 'support';
+    state.supportTapStart = null;
     state.bridgePreview = null;
     state.touchupPreview = null;
     state.hoveredBridge = null;
@@ -8060,8 +8438,13 @@ function wire() {
     if (event.key === 'Escape') {
       event.preventDefault();
       if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
-      else if (toolOptionsKind) closeToolOptions({ returnFocus: true });
+      else if (state.supportTapStart) {
+        state.supportTapStart = null;
+        state.bridgePreview = null;
+        draw();
+      }
       else if (state.selectedBridge) selectBridge(null);
+      else if (toolOptionsKind) closeToolOptions({ returnFocus: true });
       else setTool('pan');
       return;
     }
@@ -8081,6 +8464,7 @@ function wire() {
         ArrowUp: [0, -distanceMm],
         ArrowDown: [0, distanceMm],
       }[event.key];
+      clearSupportProposal();
       promoteBridgeToManual(state.selectedBridge);
       translateBridge(state.selectedBridge, movement[0], movement[1]);
       syncSelectedBridgeControls();
@@ -8113,6 +8497,14 @@ function wire() {
     if (event.key === 'i' || event.key === 'I') { event.preventDefault(); activateIconStencil(); }
     if (event.key === 'k' || event.key === 'K') { event.preventDefault(); activateTouchupTool('keep'); }
     if (event.key === 'r' || event.key === 'R') { event.preventDefault(); activateTouchupTool('remove'); }
+    if ((event.key === 'p' || event.key === 'P') && state.bridges.length) {
+      event.preventDefault();
+      selectAdjacentBridge(-1);
+    }
+    if ((event.key === 'n' || event.key === 'N') && state.bridges.length) {
+      event.preventDefault();
+      selectAdjacentBridge(1);
+    }
     if ((event.key === 'b' || event.key === 'B') && state.designMask) {
       event.preventDefault();
       setStage('support');

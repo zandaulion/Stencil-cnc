@@ -220,7 +220,8 @@ test('PNG previews remain available before validation and are visibly marked as 
 test('automatic supports stay separate and advertise when artwork made them stale', () => {
   assert.match(html, /id="automatic-support-stale"/);
   assert.match(html, /id="automatic-support-action"/);
-  assert.match(editor, /state\.bridges = \[\.\.\.manual, \.\.\.suggested\]/);
+  assert.match(editor, /state\.supportProposal = \{[\s\S]*?bridges: suggested/);
+  assert.match(editor, /state\.bridges = \[\.\.\.manual, \.\.\.proposal\.bridges\]/);
   assert.match(editor, /markAutomaticSupportsStale\(\)/);
   assert.match(editor, /bridge\.source === 'automatic'/);
 });
@@ -303,19 +304,43 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
 test('supports are easy to select, move, resize, rotate, and delete', () => {
   for (const id of [
     'bridge-selection', 'selected-bridge-width', 'selected-bridge-length',
-    'selected-bridge-angle', 'btn-delete-bridge',
+    'selected-bridge-angle', 'selected-bridge-center-x', 'selected-bridge-center-y',
+    'support-list', 'btn-previous-support', 'btn-next-support', 'btn-delete-bridge',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(html, /Pan<\/strong> moves only the view/);
   assert.match(html, /Drag the support[\s\S]*round endpoint/);
-  assert.match(html, /Arrow keys move 1 mm[\s\S]*Delete removes/);
+  assert.match(html, /Arrow keys move 1 mm[\s\S]*P\/N selects previous\/next[\s\S]*Delete removes/);
   assert.match(editor, /hoveredBridge: null/);
+  assert.match(editor, /supportTapStart: null/);
   assert.match(editor, /manualSupportPoint\([\s\S]*\{ followDirection: false \}/);
   assert.match(editor, /event\.pointerType === 'touch' \? 24 : 14/);
   assert.match(editor, /function setBridgeGeometry\(/);
+  assert.match(editor, /function setBridgeCenter\(/);
   assert.match(editor, /function translateBridge\(/);
+  assert.match(editor, /function renderSupportList\(/);
+  assert.match(editor, /function selectAdjacentBridge\(/);
   assert.match(editor, /return 'move'/);
   assert.match(editor, /\(event\.key === 'Delete' \|\| event\.key === 'Backspace'\)/);
   assert.match(editor, /\['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'\]/);
   assert.match(editor, /beginBridgeDrag\(event, hit, handle \|\| 'move'\)/);
+  assert.match(editor, /pendingTap: true/);
+  assert.match(editor, /Tap the end point, or press Escape to cancel/);
+  assert.match(editor, /event\.key === 'Escape'[\s\S]*?state\.supportTapStart[\s\S]*?state\.selectedBridge[\s\S]*?toolOptionsKind/);
+  assert.match(editor, /state\.tool === 'support'[\s\S]*?bridgeAtPointer\(event\)[\s\S]*?: null/);
+});
+
+test('smart-support proposals are reviewable and apply as one undoable change', () => {
+  for (const id of [
+    'support-proposal', 'support-proposal-connectivity', 'support-proposal-count',
+    'support-proposal-fallbacks', 'btn-accept-support-proposal',
+    'btn-discard-support-proposal',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(editor, /function supportPlanSignature\(/);
+  assert.match(editor, /Existing supports remain unchanged until you accept/);
+  assert.match(editor, /if \(proposal\.signature !== supportPlanSignature\(\)\)/);
+  assert.match(editor, /state\.bridges = \[\.\.\.manual, \.\.\.proposal\.bridges\];[\s\S]*?pushHistory\(\)/);
+  assert.match(editor, /Smart-support proposal discarded\. Existing supports were not changed/);
+  assert.match(editor, /if \(state\.supportProposal\)[\s\S]*?context\.setLineDash/);
 });
 
 test('freehand material tools paint continuously but commit as one gesture', () => {
