@@ -398,9 +398,16 @@ test('the plasma profile defaults to 3 mm webs while permitting a verified 2 mm 
   assert.match(editor, /const PLASMA_MIN_WEB_MM = 2/);
   assert.match(editor, /function enforcePlasmaLimits\(\)/);
   const prepareStart = html.indexOf('id="panel-prepare"');
-  const validateStart = html.indexOf('id="panel-validate"');
+  const panelStart = html.indexOf('id="panel-panel"');
+  const supportStart = html.indexOf('id="panel-support"');
   const profile = html.indexOf('id="manufacturing-profile"');
-  assert.ok(profile > prepareStart && profile < validateStart, 'plasma controls belong in Prepare');
+  const polarity = html.indexOf('id="polarity"');
+  assert.ok(polarity > prepareStart && polarity < panelStart, 'material polarity belongs in Prepare');
+  assert.ok(profile > panelStart && profile < supportStart, 'plasma controls belong in Panel');
+  assert.equal((html.match(/data-edit-manufacturing/g) ?? []).length, 2);
+  assert.equal((html.match(/data-manufacturing-summary/g) ?? []).length, 2);
+  assert.match(editor, /setStage\('panel'\)/);
+  assert.match(editor, /manufacturing-settings/);
   assert.match(html, /id="bridge-width"[^>]*min="2"/);
   assert.match(html, /id="selected-bridge-width"[^>]*min="2"/);
   assert.match(editor, /form\.set\('punte_min_mm', String\(toMm\(numberField\('min-web', 3\)\)\)\)/);

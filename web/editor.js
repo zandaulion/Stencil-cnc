@@ -2621,6 +2621,8 @@ function updateReadouts() {
   el('export-size').textContent = exportSize;
   if (el('export-unit-scale')) el('export-unit-scale').textContent = `1 drawing unit = 1 ${exportUnit}`;
   for (const node of all('[data-unit-label]')) node.textContent = state.unit;
+  const manufacturingSummary = `Plasma · ${roundUnit(numberField('kerf', 1.2))} ${state.unit} kerf · ${roundUnit(numberField('min-web', 3))} ${state.unit} gaps · ${roundUnit(numberField('min-opening', 2))} ${state.unit} openings`;
+  for (const node of all('[data-manufacturing-summary]')) node.textContent = manufacturingSummary;
   const webNote = el('prekerf-web-note');
   if (webNote) {
     const finished = toMm(numberField('min-web', 3));
@@ -6082,10 +6084,19 @@ function wire() {
   for (const button of all('.stage-next')) {
     button.addEventListener('click', () => setStage(button.dataset.nextStage));
   }
+  for (const button of all('[data-edit-manufacturing]')) {
+    button.addEventListener('click', () => {
+      setStage('panel');
+      requestAnimationFrame(() => {
+        el('manufacturing-settings')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        el('kerf')?.focus({ preventScroll: true });
+      });
+    });
+  }
   el('btn-stage-help')?.addEventListener('click', () => {
     const help = {
       prepare: 'Choose line art or a photograph, then tune which areas remain metal.',
-      panel: 'Set the real sheet size, then position, rotate, and zoom the artwork inside its structural frame.',
+      panel: 'Set the real sheet size, manufacturing limits, and artwork placement inside its structural frame.',
       support: 'Automatic supports are suggestions. Select, move, resize, or remove them at any time.',
       validate: 'Checks use the exact geometry and units that will be exported.',
       export: 'SVG and DXF are true-scale. Kerf compensation remains the CAM tool’s responsibility.',

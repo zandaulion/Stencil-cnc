@@ -1497,6 +1497,13 @@ svg {
   margin-top: 0;
 }
 
+.subsection-title {
+  margin: 2px 0 11px;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 760;
+}
+
 .section-help {
   margin: -5px 0 11px;
   color: var(--muted);
@@ -2520,6 +2527,59 @@ select:focus {
 
 .profile-card select {
   width: 100%;
+}
+
+.manufacturing-summary {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  margin: 0 0 20px;
+  padding: 11px 36px 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--line));
+  border-radius: 10px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--teal) 5%, white);
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+.manufacturing-summary::after {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  color: var(--teal);
+  content: "›";
+  font-size: 1.2rem;
+  transform: translateY(-50%);
+}
+
+.manufacturing-summary:hover {
+  border-color: color-mix(in srgb, var(--teal) 58%, var(--line));
+  background: color-mix(in srgb, var(--teal) 9%, white);
+}
+
+.manufacturing-summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--teal) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.manufacturing-summary > span {
+  color: var(--teal);
+  font-size: 0.55rem;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manufacturing-summary strong {
+  font-size: 0.67rem;
+  line-height: 1.35;
+}
+
+.manufacturing-summary small {
+  color: var(--muted);
+  font-size: 0.56rem;
 }
 
 .validation-note {

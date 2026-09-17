@@ -202,38 +202,11 @@
               </div>
             </div>
 
-            <div class="profile-card">
-              <span class="profile-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4"></path></svg>
-              </span>
-              <label for="manufacturing-profile"><span>Manufacturing profile</span>
-                <select id="manufacturing-profile" name="manufacturingProfile" disabled title="Custom profiles are planned for a later version">
-                  <option value="plasma" selected>Plasma · 2 mm holes · 3 mm gap default</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="control-section">
-              <h2>Plasma constraints</h2>
-              <label class="field-row" for="kerf">
-                <span>Kerf / tool diameter <small>Used for CAM offset feasibility and legacy simulation</small></span>
-                <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
-              </label>
-              <label class="field-row" for="min-web">
-                <span>Minimum gap between cuts <small>Finished metal; 3 mm default, 2 mm machine-verified minimum</small></span>
-                <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="2" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
-              </label>
-              <label class="field-row" for="min-opening">
-                <span>Minimum opening <small>Smallest removable feature</small></span>
-                <span class="number-field compact"><input id="min-opening" name="minOpening" type="number" min="2" max="500" step="0.1" value="2"><span data-unit-label>mm</span></span>
-              </label>
-              <p class="section-help" id="prekerf-web-note">Filters draw the requested 3 mm finished web. Apply the 1.2 mm kerf once, as inside/outside compensation in CAM.</p>
-              <div class="geometry-contract" id="geometry-contract" data-mode="finished">
-                <strong id="geometry-contract-title">Finished-edge CAM workflow</strong>
-                <span id="geometry-contract-copy">Artwork and exports describe final part edges. Apply inside/outside kerf compensation once in CAM.</span>
-                <button class="text-button" id="btn-upgrade-geometry-contract" type="button" hidden>Use finished-edge workflow</button>
-              </div>
-            </div>
+            <button class="manufacturing-summary" type="button" data-edit-manufacturing aria-label="Edit manufacturing settings in Panel">
+              <span>Manufacturing</span>
+              <strong data-manufacturing-summary>Plasma · 1.2 mm kerf · 3 mm gaps · 2 mm openings</strong>
+              <small>Edit in Panel</small>
+            </button>
 
             <fieldset class="control-group segmented-fieldset" id="polarity">
               <legend>Material polarity</legend>
@@ -735,6 +708,39 @@
               </div>
             </div>
 
+            <div class="control-section" id="manufacturing-settings">
+              <h2>Manufacturing &amp; cutting</h2>
+              <div class="profile-card">
+                <span class="profile-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4"></path></svg>
+                </span>
+                <label for="manufacturing-profile"><span>Manufacturing profile</span>
+                  <select id="manufacturing-profile" name="manufacturingProfile" disabled title="Custom profiles are planned for a later version">
+                    <option value="plasma" selected>Plasma · 2 mm holes · 3 mm gap default</option>
+                  </select>
+                </label>
+              </div>
+              <h3 class="subsection-title">Plasma constraints</h3>
+              <label class="field-row" for="kerf">
+                <span>Kerf / tool diameter <small>Used for CAM offset feasibility and legacy simulation</small></span>
+                <span class="number-field compact"><input id="kerf" name="kerf" type="number" min="0" max="100" step="0.1" value="1.2"><span data-unit-label>mm</span></span>
+              </label>
+              <label class="field-row" for="min-web">
+                <span>Minimum gap between cuts <small>Finished metal; 3 mm default, 2 mm machine-verified minimum</small></span>
+                <span class="number-field compact"><input id="min-web" name="minWeb" type="number" min="2" max="500" step="0.1" value="3"><span data-unit-label>mm</span></span>
+              </label>
+              <label class="field-row" for="min-opening">
+                <span>Minimum opening <small>Smallest removable feature</small></span>
+                <span class="number-field compact"><input id="min-opening" name="minOpening" type="number" min="2" max="500" step="0.1" value="2"><span data-unit-label>mm</span></span>
+              </label>
+              <p class="section-help" id="prekerf-web-note">Filters draw the requested 3 mm finished web. Apply the 1.2 mm kerf once, as inside/outside compensation in CAM.</p>
+              <div class="geometry-contract" id="geometry-contract" data-mode="finished">
+                <strong id="geometry-contract-title">Finished-edge CAM workflow</strong>
+                <span id="geometry-contract-copy">Artwork and exports describe final part edges. Apply inside/outside kerf compensation once in CAM.</span>
+                <button class="text-button" id="btn-upgrade-geometry-contract" type="button" hidden>Use finished-edge workflow</button>
+              </div>
+            </div>
+
             <fieldset class="control-section checkbox-section" id="anchor-edges">
               <legend>Anchor edges</legend>
               <p class="section-help">Retained material may connect to these structural edges.</p>
@@ -876,6 +882,12 @@
           </section>
 
           <section class="stage-panel" id="panel-validate" role="tabpanel" aria-labelledby="stage-validate" data-panel="validate" hidden>
+            <button class="manufacturing-summary" type="button" data-edit-manufacturing aria-label="Edit manufacturing settings in Panel">
+              <span>Checking against</span>
+              <strong data-manufacturing-summary>Plasma · 1.2 mm kerf · 3 mm gaps · 2 mm openings</strong>
+              <small>Edit in Panel</small>
+            </button>
+
             <fieldset class="control-group segmented-fieldset kerf-preview" id="kerf-preview">
               <legend>Geometry preview</legend>
               <div class="segmented-control">
