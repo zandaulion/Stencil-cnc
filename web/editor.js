@@ -67,6 +67,7 @@ import {
   isLegacyGeometryInterpretation,
   kerfErosionMm,
   rasterWebWidthMm,
+  retireConflictingRepairEdit,
   formatRulerValue,
   rulerTicks,
   REMOVED,
@@ -1541,6 +1542,7 @@ function refresh({
   reanalyse = true,
   rebuildSourceMask = true,
   preserveManufacturingRepairs = false,
+  manualGeometryEdit = false,
 } = {}) {
   clearTimeout(rebuildTimer);
   const run = () => {
@@ -1552,9 +1554,10 @@ function refresh({
     if (rebuildSourceMask) markAutomaticSupportsStale();
     const repairLayerWasActive = manufacturingRepairCount() > 0 &&
       state.manufacturingRepairs.enabled && !state.manufacturingRepairs.stale;
-    if (!preserveManufacturingRepairs) markManufacturingRepairsStale();
+    if (!preserveManufacturingRepairs && !manualGeometryEdit) markManufacturingRepairsStale();
     if (rebuildSourceMask || repairLayerWasActive) rebuildSource();
     rebuildDesign();
+    if (manualGeometryEdit) updateManufacturingRepairState();
     updateCandidateAvailability();
     // Any rebuild changes the exact geometry. Expensive support analysis may
     // be deferred during a brush stroke, but its old validation can never be
@@ -5604,9 +5607,14 @@ function updateManufacturingRepairState() {
   el('repair-layer-title').textContent = stale
     ? 'Repair layer needs regeneration'
     : enabled ? 'Manufacturing repair layer active' : 'Manufacturing repair layer hidden';
+  const manualOverrideCount = Number(state.manufacturingRepairs.summary?.manualOverrideCount) || 0;
   el('repair-layer-detail').textContent = stale
     ? 'Artwork or machine settings changed. The old repairs are hidden so they cannot alter the new geometry.'
-    : `${count.toLocaleString()} generated raster edits · separate from manual painting.`;
+    : `${count.toLocaleString()} generated raster edits ${enabled ? 'remain active' : 'are currently hidden'} · separate from manual painting.${
+      manualOverrideCount > 0
+        ? ` ${manualOverrideCount.toLocaleString()} conflicting ${manualOverrideCount === 1 ? 'edit has' : 'edits have'} yielded to manual work.`
+        : ''
+    }`;
   const toggle = el('btn-toggle-repair-layer');
   if (toggle) {
     toggle.hidden = stale;
@@ -6078,7 +6086,7 @@ function deleteSelectedBridge() {
   state.bridges = state.bridges.filter((candidate) => candidate !== bridge);
   if (state.hoveredBridge === bridge) state.hoveredBridge = null;
   selectBridge(null);
-  refresh({ immediate: true, rebuildSourceMask: false });
+  refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
   pushHistory();
   scheduleManualValidationReview(reviewAnchor);
   toast('Support deleted.');
@@ -6670,18 +6678,26 @@ function pointerToMask(event) {
 
 function paintIndex(index, { liveStructureMask = null } = {}) {
   if (!state.sourceMask || index < 0 || index >= state.sourceMask.data.length) return false;
+  const desired = state.tool === 'keep' ? RETAINED : REMOVED;
+  const repairConflictRetired = retireConflictingRepairEdit(
+    state.manufacturingRepairs,
+    index,
+    desired,
+  );
   const target = state.tool === 'keep' ? state.painted.keep : state.painted.remove;
   const other = state.tool === 'keep' ? state.painted.remove : state.painted.keep;
-  if (target.has(index) && !other.has(index)) return false;
-  target.add(index);
-  other.delete(index);
+  const intentChanged = !target.has(index) || other.has(index);
+  if (intentChanged) {
+    target.add(index);
+    other.delete(index);
+  }
+  if (!intentChanged && !repairConflictRetired) return false;
   if (liveStructureMask) {
-    const value = state.tool === 'keep' ? RETAINED : REMOVED;
-    state.sourceMask.data[index] = value;
+    state.sourceMask.data[index] = desired;
     if (state.designMask) {
       // Frames and supports remain retained even when the artwork beneath them
       // is removed, matching the full design rebuild performed on release.
-      state.designMask.data[index] = value === RETAINED || liveStructureMask.data[index] === RETAINED
+      state.designMask.data[index] = desired === RETAINED || liveStructureMask.data[index] === RETAINED
         ? RETAINED
         : REMOVED;
     }
@@ -7261,7 +7277,7 @@ function wire() {
     promoteBridgeToManual(state.selectedBridge);
     state.selectedBridge.width = safeBridgeWidthMm(toMm(Number(event.target.value)));
     event.target.value = roundUnit(fromMm(state.selectedBridge.width));
-    refresh({ immediate: true, rebuildSourceMask: false });
+    refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
     pushHistory();
     scheduleManualValidationReview(reviewAnchor);
   });
@@ -7271,7 +7287,7 @@ function wire() {
     promoteBridgeToManual(state.selectedBridge);
     setBridgeGeometry(state.selectedBridge, { lengthMm: toMm(Number(event.target.value)) });
     syncSelectedBridgeControls();
-    refresh({ immediate: true, rebuildSourceMask: false });
+    refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
     pushHistory();
     scheduleManualValidationReview(reviewAnchor);
   });
@@ -7281,7 +7297,7 @@ function wire() {
     promoteBridgeToManual(state.selectedBridge);
     setBridgeGeometry(state.selectedBridge, { angleDeg: Number(event.target.value) });
     syncSelectedBridgeControls();
-    refresh({ immediate: true, rebuildSourceMask: false });
+    refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
     pushHistory();
     scheduleManualValidationReview(reviewAnchor);
   });
@@ -7654,7 +7670,7 @@ function wire() {
         : { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
       viewport.setPointerCapture(event.pointerId);
       if (touchupStroke.changed && mode === 'freehand') scheduleLiveTouchupDraw();
-      else if (touchupStroke.changed) refresh({ reanalyse: false });
+      else if (touchupStroke.changed) refresh({ reanalyse: false, manualGeometryEdit: true });
       else draw();
       return;
     }
@@ -7733,7 +7749,7 @@ function wire() {
         draggingBridge.bridge.end.y - draggingBridge.bridge.start.y,
       );
       syncSelectedBridgeControls();
-      refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false });
+      refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false, manualGeometryEdit: true });
     } else if (panning) {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
       applyTransform();
@@ -7770,7 +7786,7 @@ function wire() {
       );
       selectBridge(draggingBridge.bridge);
       draggingBridge = null;
-      refresh({ immediate: true, rebuildSourceMask: false });
+      refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
       pushHistory();
       scheduleManualValidationReview(reviewAnchor);
     }
@@ -7785,7 +7801,7 @@ function wire() {
           source: 'manual',
         };
         state.bridges.push(bridge);
-        refresh({ immediate: true, rebuildSourceMask: false });
+        refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
         selectBridge(bridge);
         pushHistory();
         scheduleManualValidationReview(drawingReviewAnchor);
@@ -7813,7 +7829,7 @@ function wire() {
         mode: 'cursor', point: releasePoint, diameterMm: touchupSizeMm(),
       };
       if (changed) {
-        refresh({ immediate: true });
+        refresh({ immediate: true, manualGeometryEdit: true });
         pushHistory();
         scheduleManualValidationReview(reviewAnchor);
         reportTouchupResult();
@@ -7852,12 +7868,12 @@ function wire() {
     state.hoveredBridge = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
     if (painted) {
-      refresh({ immediate: true });
+      refresh({ immediate: true, manualGeometryEdit: true });
       pushHistory();
       scheduleManualValidationReview(reviewAnchor);
       reportTouchupResult();
     } else if (movedBridge) {
-      refresh({ immediate: true, rebuildSourceMask: false });
+      refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
       pushHistory();
       scheduleManualValidationReview(reviewAnchor);
     } else if (movedArtwork) {
@@ -7933,7 +7949,7 @@ function wire() {
       promoteBridgeToManual(state.selectedBridge);
       translateBridge(state.selectedBridge, movement[0], movement[1]);
       syncSelectedBridgeControls();
-      refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false });
+      refresh({ immediate: true, reanalyse: false, rebuildSourceMask: false, manualGeometryEdit: true });
       pushHistory();
       scheduleManualValidationReview(reviewAnchor);
       return;

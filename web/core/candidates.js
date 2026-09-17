@@ -8,6 +8,30 @@ function validIndices(values) {
 }
 
 /**
+ * Gives an explicit hand-painted value precedence over the opposite generated
+ * repair at the same raster cell. Matching repairs are not conflicts and stay
+ * in the reversible layer. The layer is mutated deliberately because editor
+ * strokes may touch thousands of cells and cloning both repair sets per cell
+ * would make freehand work noticeably laggy.
+ */
+export function retireConflictingRepairEdit(manufacturingRepairs, index, manualValue) {
+  if (!manufacturingRepairs || manufacturingRepairs.stale === true ||
+      !Number.isInteger(index) || index < 0) return false;
+  const conflicting = manualValue === RETAINED
+    ? manufacturingRepairs.remove
+    : manualValue === REMOVED
+      ? manufacturingRepairs.keep
+      : null;
+  if (!(conflicting instanceof Set) || !conflicting.delete(index)) return false;
+  const previous = Number(manufacturingRepairs.summary?.manualOverrideCount) || 0;
+  manufacturingRepairs.summary = {
+    ...(manufacturingRepairs.summary ?? {}),
+    manualOverrideCount: previous + 1,
+  };
+  return true;
+}
+
+/**
  * Applies the two reversible raster-edit layers in their canonical order.
  * A clone is returned by default so candidate comparisons never mutate their
  * recipe. The editor may opt into in-place application while rebuilding its

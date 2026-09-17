@@ -84,6 +84,8 @@ Select **Projects** in the desktop header or the permanent mobile Tools bar to b
 
 Autosave reports `Saving…`, `Saved to server`, an offline queued state, or a retry action if synchronization fails. Every change is written to IndexedDB first and placed in a durable upload queue; the UI reports a server save only after the server acknowledges the revision. Synchronization isolates failures per project, repairs a damaged queued package from its complete local copy when possible, and gives retries of the same edit one stable conflict-copy identity. A problem in an older project therefore cannot block a healthy current project or multiply conflict copies. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, smart-support generation, and export.
 
+Accepted manufacturing repairs remain active while the user completes manual material and support corrections. A hand-painted cell overrides only an opposite generated edit at that cell; unaffected generated repairs remain reversible and active. The combined geometry is checked automatically after each committed manual gesture. Changing the underlying artwork, panel geometry, or cutting limits still marks dependent repair work stale and requires regeneration.
+
 The canonical encrypted package contains the editable geometry, original photograph, candidates, supports, repairs, recovery points, and retained SVG, DXF, and PNG exports. Each project and newly retained export records its full cutting-profile snapshot rather than only a mutable preset name. Portable `.stencil.json` downloads intentionally omit the source photograph.
 
 ### Private project sharing

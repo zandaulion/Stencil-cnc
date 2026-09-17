@@ -276,6 +276,12 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /function scheduleManualValidationReview\(reviewAnchor\)/);
   assert.match(editor, /nextIssueReviewTarget\(state\.validation\.issues/);
   assert.match(editor, /Updating the issue queue/);
+  assert.match(editor, /manualGeometryEdit = false/);
+  assert.match(editor, /!preserveManufacturingRepairs && !manualGeometryEdit/);
+  assert.match(editor, /retireConflictingRepairEdit\(\s*state\.manufacturingRepairs/);
+  assert.match(editor, /conflicting .* yielded to manual work/);
+  assert.match(editor, /refresh\(\{ immediate: true, manualGeometryEdit: true \}\)/);
+  assert.match(editor, /refresh\(\{ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true \}\)/);
   assert.match(editor, /scheduleManualValidationReview\(reviewAnchor\);/);
   assert.match(editor, /promoteBridgeToManual\(draggingBridge\.bridge\)/);
 });
@@ -307,7 +313,7 @@ test('freehand material tools paint continuously but commit as one gesture', () 
   assert.doesNotMatch(editor, /else if \(touchupStroke\) \{\s*if \(!inside\) return/);
   assert.match(editor, /touchupStroke\.mode === 'freehand'\) \{\s*touchupStroke\.changed = paintSegment\(touchupStroke\.last, releasePoint/);
   assert.match(editor, /const kerf = !state\.touchupLive/);
-  assert.match(editor, /state\.touchupLive = false;[\s\S]*?refresh\(\{ immediate: true \}\);[\s\S]*?pushHistory\(\)/);
+  assert.match(editor, /state\.touchupLive = false;[\s\S]*?refresh\(\{ immediate: true, manualGeometryEdit: true \}\);[\s\S]*?pushHistory\(\)/);
 });
 
 test('Tools remains available beside the canvas and becomes a mobile bottom bar', () => {
