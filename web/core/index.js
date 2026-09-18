@@ -32,6 +32,15 @@ export { analyzeConnectivity, findUnsupportedComponents } from "./connectivity.j
 export { applyCapsuleBridge, applyCapsuleBridges, validateBridge } from "./bridges.js";
 export { connectedRegionIndices, physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
 export {
+  MANUAL_EDIT_OPERATIONS,
+  MANUAL_EDIT_SHAPES,
+  manualEditIndices,
+  normalizeManualEdit,
+  normalizeManualEdits,
+  rasterizeManualEdits,
+  translateManualEdit,
+} from "./manual-edits.js";
+export {
   applySmallOpeningRepairPlan,
   mergeRepairLayerEdits,
   planCutGapRepairs,

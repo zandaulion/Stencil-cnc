@@ -40,6 +40,9 @@ import {
   maskFingerprint,
   maskToRgba,
   mergeRepairLayerEdits,
+  manualEditIndices,
+  normalizeManualEdit,
+  normalizeManualEdits,
   orientSheet,
   physicalDiscIndices,
   physicalStrokeIndices,
@@ -68,10 +71,12 @@ import {
   isLegacyGeometryInterpretation,
   kerfErosionMm,
   rasterWebWidthMm,
+  rasterizeManualEdits,
   recommendStyleSettings,
   retireConflictingRepairEdit,
   formatRulerValue,
   rulerTicks,
+  translateManualEdit,
   REMOVED,
   RETAINED,
 } from '/core/index.js';
@@ -235,9 +240,13 @@ const state = {
   frameMask: null,
   kerfPreviewMask: null, // live simulation; available before validation
 
-  // Touch-ups are kept as intent, not as a modified bitmap, so they survive a
-  // change of threshold instead of being silently overwritten by it.
+  // Old projects keep their raster paint as a compatibility base. New work is
+  // an ordered physical-unit operation layer, so individual edits can be
+  // restored, hidden, moved, resized, or removed without baking a bitmap.
   painted: { keep: new Set(), remove: new Set() },
+  paintedFor: null,
+  manualEdits: [],
+  selectedManualEditId: null,
   touchupPreview: null,
   touchupLive: false,
 
@@ -879,7 +888,8 @@ function exactVectorDotHoles() {
   const repairEditsActive = state.manufacturingRepairs.enabled !== false &&
     state.manufacturingRepairs.stale !== true &&
     (state.manufacturingRepairs.keep.size > 0 || state.manufacturingRepairs.remove.size > 0);
-  if (!circles.length || state.painted.keep.size || state.painted.remove.size ||
+  const activeManualEdits = state.manualEdits.some((edit) => edit.enabled !== false);
+  if (!circles.length || state.painted.keep.size || state.painted.remove.size || activeManualEdits ||
       repairEditsActive || state.bridges.some((bridge) => bridge.enabled !== false)) return [];
   return circles;
 }
@@ -966,8 +976,8 @@ function rebuildSource() {
     : [];
 
   // Touch-ups last, so a deliberate correction is never undone by a slider.
-  // Their coordinates are remapped when the manufacturing raster changes;
-  // this is common when a 900 px preview is replaced by a refined server mask.
+  // Legacy raster paint is remapped when resolution changes; ordered stroke
+  // edits are rasterized afresh from their physical millimetre coordinates.
   const rasterKey = `${mask.width}x${mask.height}`;
   if (state.paintedFor && state.paintedFor !== rasterKey &&
       (state.painted.keep.size || state.painted.remove.size)) {
@@ -977,8 +987,12 @@ function rebuildSource() {
     };
   }
   state.paintedFor = rasterKey;
+  const painted = rasterizeManualEdits(mask, currentSheet, {
+    legacy: state.paintedFor === rasterKey ? state.painted : null,
+    edits: state.manualEdits,
+  });
   mask = applyRasterLayers(mask, {
-    painted: state.paintedFor === rasterKey ? state.painted : null,
+    painted,
     manufacturingRepairs: state.manufacturingRepairs,
   }, { clone: false });
   state.sourceMask = mask;
@@ -2740,6 +2754,7 @@ function draw() {
   const overlay = el('overlay-canvas');
   const vectorLayer = el('vector-dot-layer');
   if (!canvas || !overlay) return;
+  updateTouchupHud();
   const mask = state.designMask;
   const stage = el('canvas-stage');
   if (stage) stage.dataset.view = state.view;
@@ -3057,13 +3072,55 @@ function drawOverlay(overlay, mask) {
     context.stroke();
   }
 
-  if (state.touchupPreview && (state.tool === 'keep' || state.tool === 'remove')) {
+  const selectedEdit = selectedManualEdit();
+  if (selectedEdit) {
+    context.save();
+    context.strokeStyle = '#e85f35';
+    context.lineWidth = Math.max(2, 3 / Math.max(state.zoom, 0.1));
+    context.setLineDash([Math.max(4, 7 / state.zoom), Math.max(3, 4 / state.zoom)]);
+    if (selectedEdit.shape === 'stroke') {
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      context.beginPath();
+      selectedEdit.pointsMm.forEach((point, index) => {
+        const x = point.x * pxPerMm;
+        const y = point.y * (mask.height / heightMm);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      if (selectedEdit.pointsMm.length === 1) {
+        const point = selectedEdit.pointsMm[0];
+        context.arc(point.x * pxPerMm, point.y * (mask.height / heightMm),
+          Math.max(3, selectedEdit.widthMm * pxPerMm / 2), 0, Math.PI * 2);
+      }
+      context.stroke();
+    } else {
+      const indices = manualEditIndices(mask, sheet(), selectedEdit);
+      if (indices.length) {
+        let minX = mask.width; let minY = mask.height; let maxX = 0; let maxY = 0;
+        for (const index of indices) {
+          const x = index % mask.width;
+          const y = Math.floor(index / mask.width);
+          minX = Math.min(minX, x); minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        }
+        context.strokeRect(minX, minY, Math.max(1, maxX - minX + 1), Math.max(1, maxY - minY + 1));
+      }
+    }
+    context.restore();
+  }
+
+  if (state.touchupPreview && ['keep', 'remove', 'restore'].includes(state.tool)) {
     const preview = state.touchupPreview;
     const yPerMm = mask.height / heightMm;
     const radiusMm = preview.diameterMm / 2;
-    const color = state.tool === 'keep' ? 'rgba(31, 122, 90, .88)' : 'rgba(220, 93, 48, .88)';
+    const color = state.tool === 'keep'
+      ? 'rgba(31, 122, 90, .88)'
+      : state.tool === 'remove' ? 'rgba(220, 93, 48, .88)' : 'rgba(66, 88, 101, .88)';
     context.strokeStyle = color;
-    context.fillStyle = state.tool === 'keep' ? 'rgba(31, 122, 90, .16)' : 'rgba(220, 93, 48, .16)';
+    context.fillStyle = state.tool === 'keep'
+      ? 'rgba(31, 122, 90, .16)'
+      : state.tool === 'remove' ? 'rgba(220, 93, 48, .16)' : 'rgba(66, 88, 101, .12)';
     context.lineWidth = Math.max(1.5, 2 / Math.max(state.zoom, 0.1));
     if (preview.mode === 'straight' && preview.start && preview.end) {
       context.lineWidth = Math.max(2, preview.diameterMm * pxPerMm);
@@ -3409,6 +3466,7 @@ function snapshot() {
     styleSettings: cloneStyleSettings(state.styleSettings),
     bridges: state.bridges,
     painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
+    manualEdits: state.manualEdits,
     manufacturingRepairs: {
       keep: [...state.manufacturingRepairs.keep],
       remove: [...state.manufacturingRepairs.remove],
@@ -3435,7 +3493,8 @@ function readControls() {
   for (const node of nodes) {
     if (node.closest('#candidate-side-panel')) continue;
     if (node.closest('#cutting-profile-details')) continue;
-    if (node.id === 'project-name' || node.id.startsWith('selected-bridge-')) continue;
+    if (node.id === 'project-name' || node.id.startsWith('selected-bridge-') ||
+        node.id.startsWith('manual-edit-')) continue;
     if (node.type === 'file' || node.type === 'button' || node.type === 'submit') continue;
     if (!node.id && !node.name) continue;
     if (node.type === 'radio') {
@@ -3547,6 +3606,8 @@ function restore(serialised) {
   state.supportTapStart = null;
   state.bridgePreview = null;
   state.painted = { keep: new Set(data.painted.keep), remove: new Set(data.painted.remove) };
+  state.manualEdits = normalizeManualEdits(data.manualEdits);
+  state.selectedManualEditId = null;
   state.manufacturingRepairs = {
     keep: new Set(data.manufacturingRepairs?.keep ?? []),
     remove: new Set(data.manufacturingRepairs?.remove ?? []),
@@ -3853,6 +3914,7 @@ function projectFromState() {
       styleSettings: cloneStyleSettings(state.styleSettings),
       vectorDots: state.vectorDots,
       painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
+      manualEdits: state.manualEdits,
       manufacturingRepairs: {
         keep: [...state.manufacturingRepairs.keep],
         remove: [...state.manufacturingRepairs.remove],
@@ -5459,6 +5521,8 @@ async function loadProjectState(project, { imported = false } = {}) {
     keep: new Set(project.editor?.painted?.keep ?? []),
     remove: new Set(project.editor?.painted?.remove ?? []),
   };
+  state.manualEdits = normalizeManualEdits(project.editor?.manualEdits);
+  state.selectedManualEditId = null;
   state.manufacturingRepairs = {
     keep: new Set(project.editor?.manufacturingRepairs?.keep ?? []),
     remove: new Set(project.editor?.manufacturingRepairs?.remove ?? []),
@@ -5496,6 +5560,7 @@ async function loadProjectState(project, { imported = false } = {}) {
   updateAutomaticSupportState();
   updateManufacturingRepairState();
   renderCandidates();
+  renderManualEditManager();
   selectBridge(null);
   resetHistory();
   updateProjectPersistenceUi();
@@ -5568,6 +5633,8 @@ async function importFile(file) {
     state.contentBounds = null;
     state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
+    state.manualEdits = [];
+    state.selectedManualEditId = null;
     state.paintedFor = null;
     resetManufacturingRepairs();
     state.bridges = [];
@@ -5578,6 +5645,7 @@ async function importFile(file) {
     state.candidates = [];
     state.selectedCandidateId = null;
     state.selectedBridge = null;
+    renderManualEditManager();
     resetArtworkTransformControls();
     state.validation = null;
     resetManualStyleForNewImage();
@@ -5798,6 +5866,7 @@ async function saveCurrentCandidate() {
     vectorDots: state.vectorDots,
     baseMask: encodeMask(state.baseMask),
     painted: { keep: [...state.painted.keep], remove: [...state.painted.remove] },
+    manualEdits: state.manualEdits,
     paintedFor: state.paintedFor,
     manufacturingRepairs: {
       keep: [...state.manufacturingRepairs.keep],
@@ -5861,6 +5930,8 @@ function restoreCandidate(id) {
     keep: new Set(candidate.painted?.keep ?? []),
     remove: new Set(candidate.painted?.remove ?? []),
   };
+  state.manualEdits = normalizeManualEdits(candidate.manualEdits);
+  state.selectedManualEditId = null;
   state.paintedFor = candidate.paintedFor ?? candidate.geometry?.sourceRasterKey ?? null;
   if (completePayload) {
     state.manufacturingRepairs = {
@@ -5890,6 +5961,7 @@ function restoreCandidate(id) {
   updateAutomaticSupportState();
   updateManufacturingRepairState();
   renderCandidates();
+  renderManualEditManager();
   setStyleStatus(exact
     ? `${candidate.name} restored exactly. Revalidate before export.`
     : completePayload
@@ -7218,19 +7290,22 @@ function setSidePanel(panel) {
 }
 
 function setTool(tool) {
-  if (!['pan', 'artwork', 'keep', 'remove', 'support'].includes(tool)) return;
+  if (!['pan', 'artwork', 'keep', 'remove', 'restore', 'touchup-select', 'support'].includes(tool)) return;
   state.supportTapStart = null;
   if (tool !== 'support' && state.selectedBridge) selectBridge(null);
+  if (tool !== 'touchup-select') state.selectedManualEditId = null;
   state.tool = tool;
   state.touchupPreview = null;
   state.drawingBridge = tool === 'support';
   state.bridgePreview = null;
   state.hoveredBridge = null;
   syncToolRailState();
-  const editing = tool === 'keep' || tool === 'remove';
-  el('touchup-options')?.toggleAttribute('hidden', !editing);
-  el('touchup-empty')?.toggleAttribute('hidden', editing);
-  if (editing) updateTouchupControls();
+  const painting = ['keep', 'remove', 'restore'].includes(tool);
+  const manualEditing = painting || tool === 'touchup-select';
+  el('touchup-options')?.toggleAttribute('hidden', !painting);
+  el('touchup-empty')?.toggleAttribute('hidden', manualEditing);
+  if (painting) updateTouchupControls();
+  renderManualEditManager();
   el('btn-position-artwork')?.setAttribute('aria-pressed', String(tool === 'artwork'));
   const viewport = el('canvas-viewport');
   if (viewport) {
@@ -7264,7 +7339,7 @@ function activateIconStencil() {
 }
 
 function activateTouchupTool(tool) {
-  if (tool !== 'keep' && tool !== 'remove') return;
+  if (!['keep', 'remove', 'restore', 'touchup-select'].includes(tool)) return;
   setStage('prepare');
   setTool(tool);
   openToolOptions(tool);
@@ -7289,6 +7364,18 @@ const TOOL_OPTION_CONFIG = Object.freeze({
     nodes: Object.freeze(['touchup-tool-settings']),
     actions: Object.freeze([]),
   }),
+  restore: Object.freeze({
+    title: 'Restore artwork',
+    kind: 'Tool settings',
+    nodes: Object.freeze(['touchup-tool-settings']),
+    actions: Object.freeze([]),
+  }),
+  'touchup-select': Object.freeze({
+    title: 'Edit manual strokes',
+    kind: 'Manual edit layer',
+    nodes: Object.freeze(['touchup-tool-settings']),
+    actions: Object.freeze([]),
+  }),
   support: Object.freeze({
     title: 'Add support',
     kind: 'Tool settings',
@@ -7303,7 +7390,7 @@ function toolButtonId(kind) {
 
 function syncToolRailState() {
   const active = toolOptionsKind === 'icon' ? 'icon' : state.tool;
-  for (const kind of ['pan', 'icon', 'keep', 'remove', 'support']) {
+  for (const kind of ['pan', 'icon', 'keep', 'remove', 'restore', 'touchup-select', 'support']) {
     const button = el(toolButtonId(kind));
     const selected = kind === active;
     button?.setAttribute('aria-pressed', String(selected));
@@ -7369,6 +7456,7 @@ function touchupMode() {
 }
 
 function touchupMinimumMm() {
+  if (state.tool === 'restore') return state.unit === 'in' ? 0.254 : 0.1;
   return state.tool === 'remove'
     ? Math.max(PLASMA_MIN_OPENING_MM, toMm(numberField('min-opening', 2)))
     : Math.max(
@@ -7383,6 +7471,7 @@ function touchupSizeMm() {
 
 function updateTouchupControls() {
   const remove = state.tool === 'remove';
+  const restore = state.tool === 'restore';
   const mode = touchupMode();
   const size = el('touchup-size');
   const minimum = roundUnit(fromMm(touchupMinimumMm()));
@@ -7394,12 +7483,107 @@ function updateTouchupControls() {
     if (toMm(numberField('touchup-size', minimum)) < touchupMinimumMm()) size.value = String(minimum);
   }
   const label = el('touchup-size-label');
-  if (label) label.innerHTML = `${remove ? 'Cut width' : 'Material width'} <small>${mode === 'region' ? 'Not used for a whole region' : 'Physical size on the panel'}</small>`;
+  if (label) label.innerHTML = `${restore ? 'Restore width' : remove ? 'Cut width' : 'Material width'} <small>${mode === 'region' ? 'Not used for a whole region' : 'Physical size on the panel'}</small>`;
   const hint = el('touchup-hint');
   if (!hint) return;
-  if (mode === 'straight') hint.textContent = `Drag between two points for a precise ${remove ? 'cut' : 'material strip'}.`;
-  else if (mode === 'region') hint.textContent = `Click a connected ${remove ? 'metal piece to remove it' : 'opening to fill it'}.`;
+  if (mode === 'straight') hint.textContent = `Drag between two points for a precise ${restore ? 'restored strip' : remove ? 'cut' : 'material strip'}.`;
+  else if (mode === 'region') hint.textContent = `Click a connected ${restore ? 'area to reveal the generated artwork' : remove ? 'metal piece to remove it' : 'opening to fill it'}.`;
   else hint.textContent = `Drag a continuous ${roundUnit(fromMm(touchupSizeMm()))} ${state.unit} physical-width stroke.`;
+  updateTouchupHud();
+}
+
+function touchupOperation(tool = state.tool) {
+  if (tool === 'keep' || tool === 'remove' || tool === 'restore') return tool;
+  return null;
+}
+
+function manualEditLabel(edit) {
+  if (edit.operation === 'keep') return 'Add material';
+  if (edit.operation === 'remove') return 'Remove material';
+  return 'Restore artwork';
+}
+
+function selectedManualEdit() {
+  return state.manualEdits.find((edit) => edit.id === state.selectedManualEditId) ?? null;
+}
+
+function updateTouchupHud(message = null) {
+  const hud = el('touchup-hud');
+  const operation = touchupOperation();
+  if (!hud) return;
+  hud.hidden = !operation || !state.designMask;
+  if (!operation) return;
+  hud.dataset.operation = operation;
+  el('touchup-hud-operation').textContent = manualEditLabel({ operation });
+  el('touchup-hud-size').textContent = touchupMode() === 'region'
+    ? 'Whole region'
+    : `${roundUnit(fromMm(touchupSizeMm()))} ${state.unit}`;
+  el('touchup-hud-hint').textContent = message || 'Physical width · checked after release';
+}
+
+function renderManualEditManager() {
+  const list = el('manual-edit-list');
+  if (!list) return;
+  el('manual-edit-count').textContent = String(state.manualEdits.length);
+  el('manual-edit-empty')?.toggleAttribute('hidden', state.manualEdits.length > 0);
+  list.innerHTML = state.manualEdits.slice().reverse().map((edit, reverseIndex) => {
+    const index = state.manualEdits.length - reverseIndex;
+    const detail = edit.shape === 'stroke'
+      ? `${roundUnit(fromMm(edit.widthMm))} ${state.unit}`
+      : 'Region';
+    return `<button class="manual-edit-row" type="button" role="option" data-manual-edit-id="${escapeHtml(edit.id)}" data-operation="${edit.operation}" data-enabled="${edit.enabled !== false}" aria-selected="${edit.id === state.selectedManualEditId}"><i aria-hidden="true"></i><strong>${index}. ${manualEditLabel(edit)}</strong><small>${detail}</small></button>`;
+  }).join('');
+  const selected = selectedManualEdit();
+  const inspector = el('manual-edit-inspector');
+  inspector?.toggleAttribute('hidden', !selected);
+  if (!selected) return;
+  el('manual-edit-operation').value = selected.operation;
+  el('manual-edit-enabled').checked = selected.enabled !== false;
+  const width = el('manual-edit-width');
+  width.disabled = selected.shape !== 'stroke';
+  width.value = selected.shape === 'stroke' ? String(roundUnit(fromMm(selected.widthMm))) : '';
+  width.min = state.unit === 'in' ? '0.01' : '0.1';
+  width.max = String(roundUnit(fromMm(250)));
+  width.step = state.unit === 'in' ? '0.01' : '0.5';
+}
+
+function selectManualEdit(edit) {
+  state.selectedManualEditId = edit?.id ?? null;
+  renderManualEditManager();
+  draw();
+}
+
+function retireManualEditRepairConflicts(edit) {
+  if (!state.sourceMask || !edit || edit.enabled === false || edit.operation === 'restore') return;
+  const desired = edit.operation === 'keep' ? RETAINED : REMOVED;
+  for (const index of manualEditIndices(state.sourceMask, sheet(), edit)) {
+    retireConflictingRepairEdit(state.manufacturingRepairs, index, desired);
+  }
+}
+
+function updateSelectedManualEdit(patch) {
+  const index = state.manualEdits.findIndex((edit) => edit.id === state.selectedManualEditId);
+  if (index < 0) return false;
+  const next = normalizeManualEdit({ ...state.manualEdits[index], ...patch }, index);
+  if (JSON.stringify(next) === JSON.stringify(state.manualEdits[index])) return false;
+  state.manualEdits[index] = next;
+  retireManualEditRepairConflicts(state.manualEdits[index]);
+  refresh({ immediate: true, manualGeometryEdit: true });
+  renderManualEditManager();
+  pushHistory();
+  return true;
+}
+
+function deleteSelectedManualEdit() {
+  const index = state.manualEdits.findIndex((edit) => edit.id === state.selectedManualEditId);
+  if (index < 0) return false;
+  state.manualEdits.splice(index, 1);
+  state.selectedManualEditId = null;
+  refresh({ immediate: true, manualGeometryEdit: true });
+  renderManualEditManager();
+  pushHistory();
+  toast('Manual edit deleted. Later edits were preserved.');
+  return true;
 }
 
 function announce(message, { urgent = false } = {}) {
@@ -7445,6 +7629,111 @@ function pointerToMask(event) {
   return { x, y, inside: x >= 0 && y >= 0 && x < canvas.width && y < canvas.height };
 }
 
+function maskPointToMm(point) {
+  if (!state.sourceMask) return { x: 0, y: 0 };
+  const currentSheet = sheet();
+  return {
+    x: point.x / state.sourceMask.width * currentSheet.widthMm,
+    y: point.y / state.sourceMask.height * currentSheet.heightMm,
+  };
+}
+
+function mmPointToMask(point) {
+  if (!state.sourceMask) return { x: 0, y: 0 };
+  const currentSheet = sheet();
+  return {
+    x: point.x / currentSheet.widthMm * state.sourceMask.width,
+    y: point.y / currentSheet.heightMm * state.sourceMask.height,
+  };
+}
+
+function smoothTouchupPoint(previousMm, rawMm) {
+  const smoothing = Math.max(0, Math.min(0.85, numberField('touchup-smoothing', 35) / 100));
+  if (!previousMm || smoothing <= 0) return rawMm;
+  return {
+    x: previousMm.x * smoothing + rawMm.x * (1 - smoothing),
+    y: previousMm.y * smoothing + rawMm.y * (1 - smoothing),
+  };
+}
+
+function constrainTouchupPoint(startMm, pointMm, enabled) {
+  if (!enabled || !startMm) return pointMm;
+  const dx = pointMm.x - startMm.x;
+  const dy = pointMm.y - startMm.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance <= Number.EPSILON) return pointMm;
+  const increment = Math.PI / 12;
+  const angle = Math.round(Math.atan2(dy, dx) / increment) * increment;
+  return { x: startMm.x + Math.cos(angle) * distance, y: startMm.y + Math.sin(angle) * distance };
+}
+
+function currentManualPainted() {
+  if (!state.sourceMask) return { keep: new Set(), remove: new Set() };
+  return rasterizeManualEdits(state.sourceMask, sheet(), {
+    legacy: state.painted,
+    edits: state.manualEdits,
+  });
+}
+
+function touchupRegion(point) {
+  if (!state.sourceMask) return { indices: [], truncated: false };
+  const maximum = Math.min(50000, Math.floor(state.sourceMask.data.length * 0.15));
+  return connectedRegionIndices(state.sourceMask, point, { maximumPixels: Math.max(1, maximum) });
+}
+
+function makeManualStroke(operation, widthMm, pointsMm) {
+  return normalizeManualEdit({
+    id: crypto.randomUUID(),
+    operation,
+    shape: 'stroke',
+    enabled: true,
+    widthMm,
+    pointsMm,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function makeManualRegion(operation, indices) {
+  return normalizeManualEdit({
+    id: crypto.randomUUID(),
+    operation,
+    shape: 'region',
+    enabled: true,
+    rasterKey: state.sourceMask ? `${state.sourceMask.width}x${state.sourceMask.height}` : '1x1',
+    indices,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function manualEditAtPointer(event) {
+  if (!state.sourceMask) return null;
+  const point = pointerToMm(event);
+  if (!point.inside) return null;
+  const canvasWidth = Math.max(1, el('editor-canvas').getBoundingClientRect().width);
+  const toleranceMm = sheet().widthMm / canvasWidth * (event.pointerType === 'touch' ? 24 : 12);
+  const cursor = { x: point.mmX, y: point.mmY };
+  for (let index = state.manualEdits.length - 1; index >= 0; index -= 1) {
+    const edit = state.manualEdits[index];
+    if (edit.enabled === false) continue;
+    if (edit.shape === 'stroke') {
+      if (edit.pointsMm.length === 1) {
+        if (Math.hypot(cursor.x - edit.pointsMm[0].x, cursor.y - edit.pointsMm[0].y) <=
+            Math.max(edit.widthMm / 2, toleranceMm)) return edit;
+      } else {
+        for (let pointIndex = 1; pointIndex < edit.pointsMm.length; pointIndex += 1) {
+          if (distanceToSegment(cursor, edit.pointsMm[pointIndex - 1], edit.pointsMm[pointIndex]) <=
+              Math.max(edit.widthMm / 2, toleranceMm)) return edit;
+        }
+      }
+    } else {
+      const rasterPoint = pointerToMask(event);
+      const rasterIndex = Math.floor(rasterPoint.y) * state.sourceMask.width + Math.floor(rasterPoint.x);
+      if (manualEditIndices(state.sourceMask, sheet(), edit).includes(rasterIndex)) return edit;
+    }
+  }
+  return null;
+}
+
 function paintIndex(index, { liveStructureMask = null } = {}) {
   if (!state.sourceMask || index < 0 || index >= state.sourceMask.data.length) return false;
   const desired = state.tool === 'keep' ? RETAINED : REMOVED;
@@ -7488,10 +7777,10 @@ function touchupFootprintIntersectsMask(point, diameterMm = touchupSizeMm()) {
   return physicalDiscIndices(state.sourceMask, point, diameterMm, sheet()).length > 0;
 }
 
-function paintSegment(start, end, { liveStructureMask = null } = {}) {
+function paintSegment(start, end, { liveStructureMask = null, diameterMm = touchupSizeMm() } = {}) {
   if (!state.sourceMask) return false;
   let changed = false;
-  for (const index of physicalStrokeIndices(state.sourceMask, start, end, touchupSizeMm(), sheet())) {
+  for (const index of physicalStrokeIndices(state.sourceMask, start, end, diameterMm, sheet())) {
     changed = paintIndex(index, { liveStructureMask }) || changed;
   }
   return changed;
@@ -7509,26 +7798,6 @@ function touchupStructureMask() {
     frame: frameConfig(),
     bridges: state.bridges.filter((bridge) => bridge.enabled !== false),
   }).mask;
-}
-
-function paintConnectedRegion(point) {
-  if (!state.sourceMask) return false;
-  const x = Math.round(point.x);
-  const y = Math.round(point.y);
-  if (x < 0 || y < 0 || x >= state.sourceMask.width || y >= state.sourceMask.height) return false;
-  const start = y * state.sourceMask.width + x;
-  const desired = state.tool === 'keep' ? RETAINED : REMOVED;
-  const original = state.sourceMask.data[start];
-  if (original === desired) return false;
-  const maximum = Math.min(50000, Math.floor(state.sourceMask.data.length * 0.15));
-  const region = connectedRegionIndices(state.sourceMask, point, { maximumPixels: Math.max(1, maximum) });
-  if (region.truncated) {
-    toast('That region is too large for a touch-up. Adjust the filter instead.');
-    return false;
-  }
-  let changed = false;
-  for (const index of region.indices) changed = paintIndex(index) || changed;
-  return changed;
 }
 
 function reportTouchupResult() {
@@ -7711,10 +7980,13 @@ function wire() {
     state.sourceMask = null; state.designMask = null; state.frameMask = null; state.kerfPreviewMask = null;
     state.placement = null; state.contentBounds = null; state.contentSourceSize = null;
     state.painted = { keep: new Set(), remove: new Set() };
+    state.manualEdits = [];
+    state.selectedManualEditId = null;
     resetManufacturingRepairs();
     state.paintedFor = null; state.bridges = []; state.automaticSupportsStale = false;
     state.supportProposal = null; state.supportTapStart = null; state.bridgePreview = null;
     state.candidates = []; state.selectedCandidateId = null; state.validation = null;
+    renderManualEditManager();
     state.lastValidatedAt = null; state.lastExportedAt = null;
     state.geometryInterpretation = FINISHED_BOUNDARY_CAM;
     state.projectId = null; state.createdAt = null; state.dirty = false;
@@ -8005,7 +8277,7 @@ function wire() {
       'cutting-profile-thickness',
       'bridge-width', 'selected-bridge-width', 'selected-bridge-length',
       'selected-bridge-center-x', 'selected-bridge-center-y',
-      'touchup-size', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
+      'touchup-size', 'manual-edit-width', 'kerf', 'min-web', 'min-opening', 'max-cantilever', 'curve-tolerance',
       'style-pitch', 'style-row-pitch', 'style-cell', 'style-line-width',
       'style-graphic-simplify', 'style-icon-line-width', 'style-icon-simplify',
       'style-wood-spacing', 'style-wood-length', 'style-silhouette-smooth',
@@ -8021,6 +8293,7 @@ function wire() {
     syncSelectedBridgeControls();
     renderSupportList();
     updateTouchupControls();
+    renderManualEditManager();
     updateSlatStabilizerControls();
     updateReadouts(); restyle(); refresh({ immediate: true });
     pushHistory();
@@ -8045,7 +8318,7 @@ function wire() {
     closeToolOptions();
     setTool('pan');
   });
-  for (const name of ['keep', 'remove']) {
+  for (const name of ['keep', 'remove', 'restore', 'touchup-select']) {
     el(`tool-${name}`)?.addEventListener('click', () => activateTouchupTool(name));
   }
   el('tool-support')?.addEventListener('click', activateSupportTool);
@@ -8065,6 +8338,29 @@ function wire() {
   el('touchup-size')?.addEventListener('input', () => { updateTouchupControls(); draw(); });
   el('touchup-size')?.addEventListener('change', pushHistory);
   el('touchup-safety')?.addEventListener('change', pushHistory);
+  el('touchup-smoothing')?.addEventListener('input', () => {
+    el('touchup-smoothing-value').textContent = `${Math.round(numberField('touchup-smoothing', 35))}%`;
+  });
+  el('touchup-smoothing')?.addEventListener('change', pushHistory);
+  el('manual-edit-list')?.addEventListener('click', (event) => {
+    const row = event.target.closest('[data-manual-edit-id]');
+    if (!row) return;
+    setTool('touchup-select');
+    openToolOptions('touchup-select');
+    selectManualEdit(state.manualEdits.find((edit) => edit.id === row.dataset.manualEditId));
+  });
+  el('manual-edit-operation')?.addEventListener('change', (event) => {
+    updateSelectedManualEdit({ operation: event.target.value });
+  });
+  el('manual-edit-enabled')?.addEventListener('change', (event) => {
+    updateSelectedManualEdit({ enabled: event.target.checked });
+  });
+  el('manual-edit-width')?.addEventListener('change', (event) => {
+    const widthMm = toMm(Number(event.target.value));
+    if (Number.isFinite(widthMm) && widthMm > 0) updateSelectedManualEdit({ widthMm });
+    else renderManualEditManager();
+  });
+  el('btn-delete-manual-edit')?.addEventListener('click', deleteSelectedManualEdit);
   for (const name of ['original', 'tone', 'source', 'material', 'backlit', 'issues']) {
     el(`view-${name}`)?.addEventListener('click', () => {
       setView(name);
@@ -8546,9 +8842,11 @@ function wire() {
   let drawingReviewAnchor = null;
   let drawingSupportGesture = null;
   let draggingBridge = null;
+  let draggingManualEdit = null;
   let touchupStroke = null;
   let touchupDrawFrame = null;
   let activeCanvasPointerId = null;
+  let temporaryPan = null;
 
   const scheduleLiveTouchupDraw = () => {
     if (touchupDrawFrame !== null) return;
@@ -8600,6 +8898,24 @@ function wire() {
       viewport.style.cursor = 'grabbing';
       return;
     }
+    if (state.tool === 'touchup-select') {
+      const hit = manualEditAtPointer(event);
+      selectManualEdit(hit);
+      if (hit?.shape === 'stroke') {
+        const point = pointerToMm(event);
+        draggingManualEdit = {
+          id: hit.id,
+          origin: { x: point.mmX, y: point.mmY },
+          original: normalizeManualEdit(hit),
+          moved: false,
+          reviewAnchor: captureManualValidationReview(),
+        };
+        activeCanvasPointerId = event.pointerId;
+        viewport.setPointerCapture(event.pointerId);
+        viewport.style.cursor = 'move';
+      }
+      return;
+    }
     if (state.drawingBridge && inside) {
       const handle = bridgeHandleAtPointer(event);
       const hit = handle && state.selectedBridge ? state.selectedBridge : bridgeAtPointer(event);
@@ -8626,7 +8942,7 @@ function wire() {
       draw();
       return;
     }
-    if (state.tool === 'keep' || state.tool === 'remove') {
+    if (['keep', 'remove', 'restore'].includes(state.tool)) {
       const mode = touchupMode();
       // Region selection needs a cell under the pointer. Brush gestures only
       // need their physical footprint to overlap the sheet, so edge work still
@@ -8635,27 +8951,53 @@ function wire() {
         ? inside
         : touchupFootprintIntersectsMask({ x, y });
       if (!canStart) return;
-      const liveStructureMask = mode === 'freehand' ? touchupStructureMask() : null;
+      const operation = touchupOperation();
+      const liveStructureMask = mode === 'freehand' && operation !== 'restore'
+        ? touchupStructureMask() : null;
+      const region = mode === 'region' ? touchupRegion({ x, y }) : null;
+      if (region?.truncated) {
+        toast('That region is too large for a touch-up. Adjust the filter instead.');
+        return;
+      }
+      const legacyPainted = {
+        keep: new Set(state.painted.keep),
+        remove: new Set(state.painted.remove),
+      };
+      const pointMm = maskPointToMm({ x, y });
+      let changed = false;
+      if (mode === 'region') {
+        if (operation === 'restore') {
+          const painted = currentManualPainted();
+          changed = region.indices.some((index) => painted.keep.has(index) || painted.remove.has(index));
+        } else {
+          for (const index of region.indices) changed = paintIndex(index) || changed;
+        }
+      } else if (mode === 'freehand' && operation !== 'restore') {
+        changed = paintDisc({ x, y }, touchupSizeMm(), { liveStructureMask });
+      }
       touchupStroke = {
+        operation,
         mode,
         start: { x, y },
         last: { x, y },
+        startMm: pointMm,
+        lastMm: pointMm,
+        pointsMm: [pointMm],
+        widthMm: touchupSizeMm(),
+        regionIndices: region?.indices ?? null,
+        legacyPainted,
         liveStructureMask,
         reviewAnchor: captureManualValidationReview(),
-        changed: mode === 'region'
-          ? paintConnectedRegion({ x, y })
-          : mode === 'freehand'
-            ? paintDisc({ x, y }, touchupSizeMm(), { liveStructureMask })
-            : false,
+        changed,
       };
-      state.touchupLive = mode === 'freehand';
+      state.touchupLive = mode === 'freehand' && operation !== 'restore';
       state.touchupPreview = mode === 'straight'
         ? { mode: 'straight', start: { x, y }, end: { x, y }, diameterMm: touchupSizeMm() }
         : { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
       activeCanvasPointerId = event.pointerId;
       viewport.setPointerCapture(event.pointerId);
       if (touchupStroke.changed && mode === 'freehand') scheduleLiveTouchupDraw();
-      else if (touchupStroke.changed) refresh({ reanalyse: false, manualGeometryEdit: true });
+      else if (touchupStroke.changed && operation !== 'restore') refresh({ reanalyse: false, manualGeometryEdit: true });
       else draw();
       return;
     }
@@ -8682,6 +9024,19 @@ function wire() {
         draggingArtwork.offsetYMm + mmY - draggingArtwork.origin.y,
       );
       scheduleArtworkTransformPreview();
+    } else if (draggingManualEdit) {
+      const index = state.manualEdits.findIndex((edit) => edit.id === draggingManualEdit.id);
+      const deltaX = mmX - draggingManualEdit.origin.x;
+      const deltaY = mmY - draggingManualEdit.origin.y;
+      if (index >= 0 && (draggingManualEdit.moved || Math.hypot(deltaX, deltaY) > 0.05)) {
+        draggingManualEdit.moved = true;
+        state.manualEdits[index] = translateManualEdit(
+          draggingManualEdit.original,
+          deltaX,
+          deltaY,
+        );
+        draw();
+      }
     } else if (drawingFrom) {
       if (!inside) return;
       if (drawingSupportGesture && Math.hypot(
@@ -8693,16 +9048,30 @@ function wire() {
       draw();
     } else if (touchupStroke) {
       if (touchupStroke.mode === 'freehand') {
-        touchupStroke.changed = paintSegment(touchupStroke.last, { x, y }, {
-          liveStructureMask: touchupStroke.liveStructureMask,
-        }) || touchupStroke.changed;
-        touchupStroke.last = { x, y };
-        state.touchupPreview = { mode: 'cursor', point: { x, y }, diameterMm: touchupSizeMm() };
+        let pointMm = smoothTouchupPoint(touchupStroke.lastMm, { x: mmX, y: mmY });
+        pointMm = constrainTouchupPoint(touchupStroke.startMm, pointMm, event.shiftKey);
+        const rasterPoint = mmPointToMask(pointMm);
+        if (touchupStroke.operation !== 'restore') {
+          touchupStroke.changed = paintSegment(touchupStroke.last, rasterPoint, {
+            liveStructureMask: touchupStroke.liveStructureMask,
+            diameterMm: touchupStroke.widthMm,
+          }) || touchupStroke.changed;
+        }
+        if (touchupStroke.pointsMm.length < 20000 &&
+            Math.hypot(pointMm.x - touchupStroke.lastMm.x, pointMm.y - touchupStroke.lastMm.y) > 0.05) {
+          touchupStroke.pointsMm.push(pointMm);
+        }
+        touchupStroke.last = rasterPoint;
+        touchupStroke.lastMm = pointMm;
+        state.touchupPreview = { mode: 'cursor', point: rasterPoint, diameterMm: touchupStroke.widthMm };
         scheduleLiveTouchupDraw();
       } else if (touchupStroke.mode === 'straight') {
-        touchupStroke.last = { x, y };
+        const pointMm = constrainTouchupPoint(touchupStroke.startMm, { x: mmX, y: mmY }, event.shiftKey);
+        const rasterPoint = mmPointToMask(pointMm);
+        touchupStroke.last = rasterPoint;
+        touchupStroke.lastMm = pointMm;
         state.touchupPreview = {
-          mode: 'straight', start: touchupStroke.start, end: { x, y }, diameterMm: touchupSizeMm(),
+          mode: 'straight', start: touchupStroke.start, end: rasterPoint, diameterMm: touchupStroke.widthMm,
         };
         draw();
       }
@@ -8735,7 +9104,7 @@ function wire() {
     } else if (panning) {
       state.pan = { x: event.clientX - panning.x, y: event.clientY - panning.y };
       applyTransform();
-    } else if (state.tool === 'keep' || state.tool === 'remove') {
+    } else if (['keep', 'remove', 'restore'].includes(state.tool)) {
       // The stencil centre may sit outside the sheet while its physical disc
       // still overlaps the edge. Keeping the raw point makes edge work precise
       // instead of freezing the cursor at the drawing boundary.
@@ -8762,6 +9131,20 @@ function wire() {
     if (draggingArtwork) {
       draggingArtwork = null;
       finishArtworkTransform();
+    }
+    if (draggingManualEdit) {
+      const reviewAnchor = draggingManualEdit.reviewAnchor;
+      const moved = draggingManualEdit.moved;
+      if (moved) retireManualEditRepairConflicts(selectedManualEdit());
+      draggingManualEdit = null;
+      renderManualEditManager();
+      if (moved) {
+        refresh({ immediate: true, manualGeometryEdit: true });
+        pushHistory();
+        scheduleManualValidationReview(reviewAnchor);
+      } else {
+        draw();
+      }
     }
     if (draggingBridge) {
       const reviewAnchor = draggingBridge.reviewAnchor;
@@ -8822,14 +9205,51 @@ function wire() {
     }
     if (touchupStroke) {
       const reviewAnchor = touchupStroke.reviewAnchor;
+      let edit = null;
       if (touchupStroke.mode === 'straight') {
-        touchupStroke.changed = paintSegment(touchupStroke.start, releasePoint) || touchupStroke.changed;
+        const rawMm = maskPointToMm(releasePoint);
+        const pointMm = constrainTouchupPoint(touchupStroke.startMm, rawMm, event.shiftKey);
+        const rasterPoint = mmPointToMask(pointMm);
+        touchupStroke.last = rasterPoint;
+        touchupStroke.lastMm = pointMm;
+        if (touchupStroke.operation !== 'restore') {
+          touchupStroke.changed = paintSegment(touchupStroke.start, rasterPoint, {
+            diameterMm: touchupStroke.widthMm,
+          }) || touchupStroke.changed;
+        }
+        edit = makeManualStroke(touchupStroke.operation, touchupStroke.widthMm, [touchupStroke.startMm, pointMm]);
       } else if (touchupStroke.mode === 'freehand') {
-        touchupStroke.changed = paintSegment(touchupStroke.last, releasePoint, {
-          liveStructureMask: touchupStroke.liveStructureMask,
-        }) || touchupStroke.changed;
+        const pointMm = constrainTouchupPoint(
+          touchupStroke.startMm,
+          maskPointToMm(releasePoint),
+          event.shiftKey,
+        );
+        const rasterPoint = mmPointToMask(pointMm);
+        if (touchupStroke.operation !== 'restore') {
+          touchupStroke.changed = paintSegment(touchupStroke.last, rasterPoint, {
+            liveStructureMask: touchupStroke.liveStructureMask,
+            diameterMm: touchupStroke.widthMm,
+          }) || touchupStroke.changed;
+        }
+        if (touchupStroke.pointsMm.length < 20000 &&
+            Math.hypot(pointMm.x - touchupStroke.lastMm.x, pointMm.y - touchupStroke.lastMm.y) > 0.05) {
+          touchupStroke.pointsMm.push(pointMm);
+        }
+        edit = makeManualStroke(touchupStroke.operation, touchupStroke.widthMm, touchupStroke.pointsMm);
+      } else {
+        edit = makeManualRegion(touchupStroke.operation, touchupStroke.regionIndices ?? []);
       }
-      const changed = touchupStroke.changed;
+      state.painted = touchupStroke.legacyPainted;
+      if (touchupStroke.operation === 'restore' && edit) {
+        const painted = currentManualPainted();
+        touchupStroke.changed = manualEditIndices(state.sourceMask, sheet(), edit)
+          .some((index) => painted.keep.has(index) || painted.remove.has(index));
+      }
+      const changed = touchupStroke.changed && Boolean(edit);
+      if (changed) {
+        state.manualEdits.push(edit);
+        retireManualEditRepairConflicts(edit);
+      }
       touchupStroke = null;
       state.touchupLive = false;
       cancelLiveTouchupDraw();
@@ -8838,11 +9258,14 @@ function wire() {
       };
       if (changed) {
         refresh({ immediate: true, manualGeometryEdit: true });
+        renderManualEditManager();
         pushHistory();
         scheduleManualValidationReview(reviewAnchor);
+        updateTouchupHud('Saved as an editable operation');
         reportTouchupResult();
       } else {
         draw();
+        updateTouchupHud('Nothing under this gesture changed');
       }
     }
     panning = null;
@@ -8852,7 +9275,7 @@ function wire() {
   });
 
   viewport?.addEventListener('pointerleave', () => {
-    if (touchupStroke || drawingFrom || draggingBridge || draggingArtwork) return;
+    if (touchupStroke || drawingFrom || draggingBridge || draggingArtwork || draggingManualEdit) return;
     state.touchupPreview = null;
     state.hoveredBridge = null;
     draw();
@@ -8863,7 +9286,13 @@ function wire() {
     const painted = touchupStroke?.changed === true;
     const movedBridge = Boolean(draggingBridge);
     const movedArtwork = Boolean(draggingArtwork);
-    const reviewAnchor = touchupStroke?.reviewAnchor ?? draggingBridge?.reviewAnchor ?? drawingReviewAnchor;
+    const reviewAnchor = touchupStroke?.reviewAnchor ?? draggingBridge?.reviewAnchor ??
+      draggingManualEdit?.reviewAnchor ?? drawingReviewAnchor;
+    if (touchupStroke?.legacyPainted) state.painted = touchupStroke.legacyPainted;
+    if (draggingManualEdit) {
+      const index = state.manualEdits.findIndex((edit) => edit.id === draggingManualEdit.id);
+      if (index >= 0) state.manualEdits[index] = draggingManualEdit.original;
+    }
     touchupStroke = null;
     state.touchupLive = false;
     cancelLiveTouchupDraw();
@@ -8871,6 +9300,7 @@ function wire() {
     drawingReviewAnchor = null;
     drawingSupportGesture = null;
     draggingBridge = null;
+    draggingManualEdit = null;
     draggingArtwork = null;
     panning = null;
     state.drawingBridge = state.tool === 'support';
@@ -8882,9 +9312,7 @@ function wire() {
     activeCanvasPointerId = null;
     if (painted) {
       refresh({ immediate: true, manualGeometryEdit: true });
-      pushHistory();
-      scheduleManualValidationReview(reviewAnchor);
-      reportTouchupResult();
+      renderManualEditManager();
     } else if (movedBridge) {
       refresh({ immediate: true, rebuildSourceMask: false, manualGeometryEdit: true });
       pushHistory();
@@ -8936,6 +9364,17 @@ function wire() {
       return;
     }
     if (event.altKey || editableTarget) return;
+    if (event.code === 'Space' && canvasContext && !temporaryPan && activeCanvasPointerId === null) {
+      event.preventDefault();
+      temporaryPan = { tool: state.tool, selectedManualEditId: state.selectedManualEditId };
+      state.tool = 'pan';
+      state.touchupPreview = null;
+      syncToolRailState();
+      viewport.dataset.activeTool = 'pan';
+      viewport.style.cursor = 'grab';
+      updateTouchupHud();
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
@@ -8945,12 +9384,18 @@ function wire() {
         draw();
       }
       else if (state.selectedBridge) selectBridge(null);
+      else if (state.selectedManualEditId) selectManualEdit(null);
       else if (toolOptionsKind) closeToolOptions({ returnFocus: true });
       else if (mobileSheet) closeMobileSheet({ returnFocus: true });
       else setTool('pan');
       return;
     }
     if (!canvasContext) return;
+    if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedManualEditId) {
+      event.preventDefault();
+      deleteSelectedManualEdit();
+      return;
+    }
     if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedBridge) {
       event.preventDefault();
       deleteSelectedBridge();
@@ -8974,6 +9419,22 @@ function wire() {
       pushHistory();
       scheduleManualValidationReview(reviewAnchor);
       return;
+    }
+    if (state.selectedManualEditId && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      const edit = selectedManualEdit();
+      if (edit?.shape === 'stroke') {
+        event.preventDefault();
+        const distanceMm = event.shiftKey ? 10 : 1;
+        const movement = {
+          ArrowLeft: [-distanceMm, 0],
+          ArrowRight: [distanceMm, 0],
+          ArrowUp: [0, -distanceMm],
+          ArrowDown: [0, distanceMm],
+        }[event.key];
+        const moved = translateManualEdit(edit, movement[0], movement[1]);
+        updateSelectedManualEdit({ pointsMm: moved.pointsMm });
+        return;
+      }
     }
     if (state.tool === 'artwork' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
@@ -8999,6 +9460,22 @@ function wire() {
     if (event.key === 'i' || event.key === 'I') { event.preventDefault(); activateIconStencil(); }
     if (event.key === 'k' || event.key === 'K') { event.preventDefault(); activateTouchupTool('keep'); }
     if (event.key === 'r' || event.key === 'R') { event.preventDefault(); activateTouchupTool('remove'); }
+    if (event.key === 'e' || event.key === 'E') { event.preventDefault(); activateTouchupTool('restore'); }
+    if (event.key === 'v' || event.key === 'V') { event.preventDefault(); activateTouchupTool('touchup-select'); }
+    if ((event.key === 'x' || event.key === 'X') && ['keep', 'remove'].includes(state.tool)) {
+      event.preventDefault();
+      activateTouchupTool(state.tool === 'keep' ? 'remove' : 'keep');
+    }
+    if ((event.key === '[' || event.key === ']') && touchupOperation()) {
+      event.preventDefault();
+      const size = el('touchup-size');
+      const stepMm = event.shiftKey ? 5 : 1;
+      const nextMm = Math.max(touchupMinimumMm(), Math.min(250,
+        touchupSizeMm() + (event.key === ']' ? stepMm : -stepMm)));
+      size.value = String(roundUnit(fromMm(nextMm)));
+      updateTouchupControls();
+      draw();
+    }
     if ((event.key === 'p' || event.key === 'P') && state.bridges.length) {
       event.preventDefault();
       selectAdjacentBridge(-1);
@@ -9012,6 +9489,19 @@ function wire() {
       setStage('support');
       el('btn-add-bridge')?.click();
     }
+  });
+
+  document.addEventListener('keyup', (event) => {
+    if (event.code !== 'Space' || !temporaryPan) return;
+    state.tool = temporaryPan.tool;
+    state.selectedManualEditId = temporaryPan.selectedManualEditId;
+    temporaryPan = null;
+    syncToolRailState();
+    viewport.dataset.activeTool = state.tool;
+    viewport.style.cursor = state.tool === 'pan' ? 'grab' : state.tool === 'artwork' ? 'move' : 'crosshair';
+    renderManualEditManager();
+    updateTouchupHud();
+    draw();
   });
 
   window.addEventListener('beforeunload', (event) => {
@@ -9042,6 +9532,7 @@ function updateRangeOutputs() {
   set('contrast-value', String(numberField('contrast', 0)));
   set('blur-value', `${numberField('blur', 0)} px`);
   set('despeckle-value', `${numberField('despeckle', 0)} px²`);
+  set('touchup-smoothing-value', `${Math.round(numberField('touchup-smoothing', 35))}%`);
   set('artwork-scale-value', `${Math.round(numberField('artwork-scale', 100))}%`);
   set('artwork-rotation-value', `${Math.round(numberField('artwork-rotation', 0))}°`);
   const secure = Number(el('bridge-count')?.value || 2);

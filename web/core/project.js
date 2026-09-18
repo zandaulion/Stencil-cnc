@@ -2,6 +2,7 @@ import { assertMask, createMask } from "./mask.js";
 import { validateBridge } from "./bridges.js";
 import { CANDIDATE_PAYLOAD_VERSION } from "./candidates.js";
 import { normalizeVectorDots } from "./vector-dots.js";
+import { normalizeManualEdits } from "./manual-edits.js";
 import { createCuttingProfile, legacyCuttingProfile, normalizeCuttingProfile } from "./cutting-profile.js";
 import {
   FINISHED_BOUNDARY_CAM,
@@ -10,12 +11,12 @@ import {
 } from "./geometry-contract.js";
 
 export const PROJECT_SCHEMA = "stencil-cnc.project";
-export const PROJECT_VERSION = 5;
+export const PROJECT_VERSION = 6;
 
 /**
  * @typedef {object} StencilProject
  * @property {'stencil-cnc.project'} schema
- * @property {5} version
+ * @property {6} version
  * @property {string | null} id
  * @property {string} name
  * @property {'mm'} units
@@ -27,7 +28,7 @@ export const PROJECT_VERSION = 5;
  * @property {{kind:'none'|'image',name:string|null,mimeType:string|null,widthPx:number|null,heightPx:number|null,imageDataUrl:string|null}} source
  * @property {{sourceMask:EncodedMask|null,baseMask:EncodedMask|null}} raster
  * @property {Array<object>} bridges
- * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,vectorDots:object|null,painted:{keep:number[],remove:number[]},manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean,projectSummary:{thumbnail:string|null,cutStyle:string,status:'draft'|'needs-validation'|'ready',lastValidatedAt:string|null,lastExportedAt:string|null}}|null} editor
+ * @property {{controls:Record<string,unknown>,styleSettings:Record<string,Record<string,unknown>>,vectorDots:object|null,painted:{keep:number[],remove:number[]},manualEdits:Array<object>,manufacturingRepairs:{keep:number[],remove:number[],enabled:boolean,stale:boolean,summary:object|null},candidates:Array<object>,selectedCandidateId:string|null,automaticSupportsStale:boolean,projectSummary:{thumbnail:string|null,cutStyle:string,status:'draft'|'needs-validation'|'ready',lastValidatedAt:string|null,lastExportedAt:string|null}}|null} editor
  * @property {string|null} createdAt
  * @property {string|null} updatedAt
  */
@@ -277,6 +278,22 @@ export function migrateProject(input) {
       };
     }
   }
+  if (version < 6) {
+    // Version 6 stores manual Add/Remove/Restore gestures as ordered physical
+    // edit objects. The old pixel sets remain as a compatibility base layer,
+    // so no existing artwork is changed during migration.
+    if (project.editor) {
+      project.editor.manualEdits ??= [];
+      if (Array.isArray(project.editor.candidates)) {
+        project.editor.candidates = project.editor.candidates.map((candidate) => (
+          candidate?.payloadVersion === 3
+            ? { ...candidate, payloadVersion: CANDIDATE_PAYLOAD_VERSION, manualEdits: [] }
+            : candidate
+        ));
+      }
+    }
+    project.version = PROJECT_VERSION;
+  }
   return project;
 }
 
@@ -458,6 +475,7 @@ function normalizeEditor(editor) {
         keep: normalizePaint(candidate.painted?.keep),
         remove: normalizePaint(candidate.painted?.remove),
       },
+      manualEdits: normalizeManualEdits(candidate.manualEdits),
       paintedFor: nullableString(candidate.paintedFor ?? null, `editor.candidates[${index}].paintedFor`),
       manufacturingRepairs: normalizeRepairLayer(candidate.manufacturingRepairs, { nullable: true }),
       bridges: (candidate.bridges ?? []).map((bridge, bridgeIndex) => (
@@ -490,6 +508,7 @@ function normalizeEditor(editor) {
       keep: normalizePaint(editor.painted?.keep),
       remove: normalizePaint(editor.painted?.remove),
     },
+    manualEdits: normalizeManualEdits(editor.manualEdits),
     manufacturingRepairs: normalizeRepairLayer(editor.manufacturingRepairs),
     candidates,
     selectedCandidateId: nullableString(editor.selectedCandidateId ?? null, "editor.selectedCandidateId"),

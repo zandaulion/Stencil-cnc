@@ -1850,6 +1850,127 @@ input[type="range"] {
   margin: 8px 0 0;
 }
 
+.keyboard-hint {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 0.57rem;
+  line-height: 1.55;
+}
+
+.keyboard-hint kbd {
+  min-width: 18px;
+  padding: 1px 4px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 750;
+  text-align: center;
+}
+
+.manual-edit-manager {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.manual-edit-manager h3 {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.count-badge {
+  display: grid;
+  min-width: 23px;
+  height: 23px;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 99px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 0.59rem;
+  font-weight: 750;
+}
+
+.manual-edit-list {
+  display: grid;
+  max-height: 170px;
+  gap: 5px;
+  margin-top: 9px;
+  overflow-y: auto;
+}
+
+.manual-edit-row {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  text-align: left;
+}
+
+.manual-edit-row:hover,
+.manual-edit-row[aria-selected="true"] {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.manual-edit-row > i,
+.touchup-hud > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--teal);
+}
+
+.manual-edit-row[data-operation="remove"] > i,
+.touchup-hud[data-operation="remove"] > i {
+  background: #dc5d30;
+}
+
+.manual-edit-row[data-operation="restore"] > i,
+.touchup-hud[data-operation="restore"] > i {
+  border: 2px solid #6c7880;
+  background: transparent;
+}
+
+.manual-edit-row strong {
+  overflow: hidden;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-edit-row small {
+  color: var(--muted);
+  font-size: 0.55rem;
+}
+
+.manual-edit-row[data-enabled="false"] {
+  opacity: 0.5;
+}
+
+.manual-edit-inspector {
+  margin: 12px 0 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.manual-edit-inspector legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 0.59rem;
+  font-weight: 750;
+}
+
 .stage-next {
   margin-top: 4px;
   justify-content: space-between;
@@ -3408,6 +3529,8 @@ select:focus {
 .canvas-viewport[data-active-tool="artwork"],
 .canvas-viewport[data-active-tool="keep"],
 .canvas-viewport[data-active-tool="remove"],
+.canvas-viewport[data-active-tool="restore"],
+.canvas-viewport[data-active-tool="touchup-select"],
 .canvas-viewport[data-active-tool="support"] {
   touch-action: none;
 }
@@ -3703,6 +3826,39 @@ select:focus {
   border: 8px solid #26343b;
   opacity: 0.12;
   pointer-events: none;
+}
+
+.touchup-hud {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  left: 12px;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  gap: 3px 7px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 8px;
+  color: #fff;
+  background: rgb(20 33 41 / 90%);
+  box-shadow: 0 7px 18px rgb(20 33 41 / 18%);
+  pointer-events: none;
+}
+
+.touchup-hud strong,
+.touchup-hud span {
+  font-size: 0.61rem;
+}
+
+.touchup-hud span {
+  color: #c9d6d7;
+}
+
+.touchup-hud small {
+  grid-column: 2 / -1;
+  color: #b8c5c7;
+  font-size: 0.53rem;
 }
 
 #editor-canvas,

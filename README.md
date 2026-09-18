@@ -23,7 +23,7 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 - Fits artwork proportionally to portrait or landscape stock without stretching it.
 - Models a configurable panel frame and preserves unused letterbox areas as metal.
 - Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face. Smart supports remain a dashed, reviewable proposal until accepted.
-- Supports live freehand Add material and Remove material brushes, straight strokes, connected-region edits, and single-gesture undo.
+- Keeps manual Add, Remove, and Restore work as ordered, non-destructive operations in physical panel units. Freehand strokes can be smoothed, straight strokes can be angle-constrained, connected regions remain reversible, and an Edit tool can select, move, resize, hide, change, or delete one operation without rewinding later work.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and configured minimum-web geometry.
 - Stores a versioned cutting-profile snapshot with each project and retained export: process, stock, machine/consumable, geometry limits, support assumptions, revision, and evidence status travel together.
 - Builds reversible manufacturing-repair previews before changing the artwork.
@@ -46,7 +46,7 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 
 On screens up to 720 px wide, the canvas remains fixed in the available app viewport. Tap any numbered stage, or **Adjust _stage_**, to open that stage's controls in a compact bottom sheet; close it to inspect the result without scrolling past the controls. **Candidates/Problems** opens the review sheet. Projects, synchronization state, Undo/Redo, and editing tools remain in the bottom rail, while **Fit** remains visible in the two-row canvas toolbar. The tool rail scrolls horizontally when the screen cannot hold every editing tool.
 
-Workflow, review, and project-library tabs use Left/Right Arrow, Home, and End. Visible focus is retained throughout the editor, and transient visual notices are mirrored into persistent polite or urgent live regions. In **Pan**, one finger moves the canvas and browser pinch zoom remains available. Add/Remove/Artwork/Support modes reserve one primary pointer for the active edit and release it safely on browser cancellation; switch back to Pan for page-level pinch zoom. Support creation and editing also have tap-start/tap-end, numeric, list, and keyboard alternatives.
+Workflow, review, and project-library tabs use Left/Right Arrow, Home, and End. Visible focus is retained throughout the editor, and transient visual notices are mirrored into persistent polite or urgent live regions. In **Pan**, one finger moves the canvas and browser pinch zoom remains available. Add/Remove/Restore/Artwork/Support modes reserve one primary pointer for the active edit and cancel safely on browser interruption; switch back to Pan for page-level pinch zoom. Hold Space for temporary Pan while the canvas has focus. Support creation and editing also have tap-start/tap-end, numeric, list, and keyboard alternatives.
 
 This is an accessibility-oriented interaction pass, not a blanket WCAG conformance claim. The current physical-device and assistive-technology acceptance matrix is recorded in [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md).
 

@@ -271,6 +271,63 @@ test("cached version 4 records migrate before opening without losing browser met
   assert.deepEqual([...decodeMask(opened.raster.sourceMask).data], [1]);
 });
 
+test('version 5 projects become non-destructive edit projects without changing painted pixels', () => {
+  const legacy = JSON.parse(JSON.stringify(createProject({
+    editor: {
+      controls: {},
+      painted: { keep: [2, 4], remove: [3] },
+      candidates: [{
+        payloadVersion: 3,
+        id: 'candidate-v3',
+        name: 'Legacy painted candidate',
+        controls: {},
+        painted: { keep: [1], remove: [0] },
+      }],
+    },
+  })));
+  legacy.version = 5;
+  legacy.editor.candidates[0].payloadVersion = 3;
+  delete legacy.editor.manualEdits;
+  delete legacy.editor.candidates[0].manualEdits;
+
+  const migrated = deserializeProject(JSON.stringify(legacy));
+
+  assert.equal(migrated.version, PROJECT_VERSION);
+  assert.deepEqual(migrated.editor.painted, { keep: [2, 4], remove: [3] });
+  assert.deepEqual(migrated.editor.manualEdits, []);
+  assert.equal(migrated.editor.candidates[0].payloadVersion, CANDIDATE_PAYLOAD_VERSION);
+  assert.deepEqual(migrated.editor.candidates[0].manualEdits, []);
+});
+
+test('ordered physical manual edits survive project and candidate round-trips', () => {
+  const manualEdits = [{
+    id: 'stroke-1',
+    operation: 'restore',
+    shape: 'stroke',
+    enabled: false,
+    widthMm: 7.5,
+    pointsMm: [{ x: 10, y: 12 }, { x: 18, y: 30 }],
+    createdAt: '2026-09-18T10:00:00.000Z',
+  }];
+  const project = createProject({
+    editor: {
+      controls: {},
+      manualEdits,
+      candidates: [{
+        payloadVersion: CANDIDATE_PAYLOAD_VERSION,
+        id: 'candidate-manual',
+        name: 'Editable touch-ups',
+        controls: {},
+        manualEdits,
+      }],
+    },
+  });
+
+  const restored = deserializeProject(serializeProject(project));
+  assert.deepEqual(restored.editor.manualEdits, manualEdits);
+  assert.deepEqual(restored.editor.candidates[0].manualEdits, manualEdits);
+});
+
 test("portable project files never include the browser-local source photograph", () => {
   const project = {
     ...createProject(),

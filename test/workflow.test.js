@@ -422,29 +422,44 @@ test('smart-support proposals are reviewable and apply as one undoable change', 
 });
 
 test('freehand material tools paint continuously but commit as one gesture', () => {
-  assert.match(editor, /state\.touchupLive = mode === 'freehand'/);
+  assert.match(editor, /state\.touchupLive = mode === 'freehand' && operation !== 'restore'/);
   assert.match(editor, /scheduleLiveTouchupDraw\(\)/);
   assert.match(editor, /requestAnimationFrame\(\(\) => \{/);
-  assert.match(editor, /paintSegment\(touchupStroke\.last, \{ x, y \}, \{/);
+  assert.match(editor, /paintSegment\(touchupStroke\.last, rasterPoint, \{/);
   assert.match(editor, /liveStructureMask: touchupStroke\.liveStructureMask/);
   assert.doesNotMatch(editor, /else if \(touchupStroke\) \{\s*if \(!inside\) return/);
-  assert.match(editor, /touchupStroke\.mode === 'freehand'\) \{\s*touchupStroke\.changed = paintSegment\(touchupStroke\.last, releasePoint/);
+  assert.match(editor, /touchupStroke\.mode === 'freehand'\)[\s\S]*?paintSegment\(touchupStroke\.last, rasterPoint/);
   assert.match(editor, /const kerf = !state\.touchupLive/);
   assert.match(editor, /state\.touchupLive = false;[\s\S]*?refresh\(\{ immediate: true, manualGeometryEdit: true \}\);[\s\S]*?pushHistory\(\)/);
+});
+
+test('manual material work is an editable physical operation layer', () => {
+  for (const id of ['tool-restore', 'tool-touchup-select', 'touchup-hud', 'touchup-smoothing',
+    'manual-edit-list', 'manual-edit-operation', 'manual-edit-width', 'manual-edit-enabled',
+    'btn-delete-manual-edit']) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(editor, /rasterizeManualEdits\(mask, currentSheet/);
+  assert.match(editor, /state\.manualEdits\.push\(edit\)/);
+  assert.match(editor, /function manualEditAtPointer\(event\)/);
+  assert.match(editor, /translateManualEdit\(/);
+  assert.match(editor, /event\.code === 'Space'/);
+  assert.match(editor, /event\.key === '\[' \|\| event\.key === '\]'/);
+  assert.match(editor, /activateTouchupTool\('restore'\)/);
+  assert.match(editor, /activateTouchupTool\('touchup-select'\)/);
+  assert.match(editor, /else if \(state\.selectedManualEditId\) selectManualEdit\(null\)/);
 });
 
 test('Tools remains available beside the canvas and becomes a mobile bottom bar', () => {
   const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
   assert.match(html, /id="tools-rail"[^>]*aria-labelledby="tools-title"/);
   assert.match(html, /id="tools-title">Tools</);
-  for (const id of ['btn-projects-mobile', 'tool-pan', 'tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support', 'tool-problems', 'btn-fit']) {
+  for (const id of ['btn-projects-mobile', 'tool-pan', 'tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-restore', 'tool-touchup-select', 'tool-support', 'tool-problems', 'btn-fit']) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /id="btn-fit-toolbar"[^>]*>Fit<\/button>/);
   assert.match(html, /id="tool-icon-stencil"[^>]*aria-keyshortcuts="I"/);
   assert.match(html, /id="tool-icon-stencil"[^>]*aria-label="Apply Icon stencil style and open its settings"/);
   assert.match(html, /<span>Icon style<\/span>/);
-  for (const id of ['tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-support']) {
+  for (const id of ['tool-icon-stencil', 'tool-keep', 'tool-remove', 'tool-restore', 'tool-touchup-select', 'tool-support']) {
     assert.match(html, new RegExp(`id="${id}"[^>]*aria-controls="tool-options-panel"`));
   }
   assert.match(html, /id="tool-options-panel"[^>]*hidden/);

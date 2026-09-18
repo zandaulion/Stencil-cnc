@@ -82,6 +82,20 @@ The recommendation panel converts the current panel size and manufacturing limit
 
 The displayed dark/midtone/light percentages describe the interpreted image, not material percentages in the final panel. Re-render after a deliberate change and compare a saved Candidate before discarding a promising direction.
 
+### Non-destructive material editing
+
+Use **Add** to retain metal, **Remove** to create an opening, and **Restore** to reveal the generated artwork beneath earlier manual work. Each gesture is saved as an ordered operation in physical panel units instead of being baked into one bitmap. That means a later panel/raster refinement preserves stroke width and lets you correct one edit without undoing work that came after it.
+
+- Freehand supports adjustable smoothing. It steadies the path, but does not change its physical width.
+- Straight creates an exact capsule between two points. Hold Shift to constrain the direction to 15° increments.
+- Region changes one connected area. Region edits can be hidden, changed, or deleted, but cannot be moved or resized like a stroke.
+- Choose **Edit**, then select a stroke on the canvas or from **Manual edits**. Drag it, nudge it with Arrow/Shift+Arrow, change its action or width, temporarily hide it, or delete it.
+- `[` and `]` change the active physical brush size; `X` swaps Add and Remove; holding Space temporarily pans.
+
+The canvas HUD reports the active action and physical width. “Check after each edit” runs geometry review after release; it does not certify the result while the pointer is still moving. Restore affects the manual layer only—it does not delete generated artwork or silently remove accepted manufacturing repairs.
+
+Projects created before this operation layer keep their existing painted pixels exactly as a compatible base. New edits are fully selectable; the older merged paint cannot be split into its historical individual strokes, but Restore can reveal generated artwork through it.
+
 ### Candidates
 
 Candidates are creative checkpoints within the project. They preserve the style controls and enough derived state to restore the variation. Use them for alternatives such as “wide slats,” “soft face,” or “high contrast,” then Restore or Duplicate one. Candidates sync with the project; they are different from project Recovery points, which protect the broader editing workflow.
@@ -251,11 +265,14 @@ After a Kerfloom update, open the installed app while online and allow it to ref
 | F | Fit panel to view |
 | + / − / 0 | Zoom in / out / reset |
 | I | Apply/open Icon stencil |
-| K / R / B | Add material / Remove material / Support |
+| K / R / E / V / B | Add / Remove / Restore / Edit manual operations / Support |
+| [ / ] | Decrease / increase physical brush size |
+| X | Swap Add and Remove |
+| Hold Space | Temporarily Pan while the canvas owns focus |
 | P / N | Previous / next support |
-| Delete / Backspace | Delete selected support |
-| Arrow keys | Move selected support or artwork 1 mm |
-| Shift+Arrow | Move selected support or artwork 10 mm |
+| Delete / Backspace | Delete selected support or manual edit |
+| Arrow keys | Move selected support, manual stroke, or artwork 1 mm |
+| Shift+Arrow | Move selected support, manual stroke, or artwork 10 mm |
 | Escape | Clear highlight/selection, cancel support, close tool settings, or return to Pan |
 
 Native text-field undo always wins while a field is focused. Workflow, review, and project tabs support Left/Right Arrow, Home, and End. In Pan, browser pinch zoom remains available; editing tools reserve one primary pointer for a deliberate gesture.

@@ -9,7 +9,7 @@ K14 changes the narrow-screen editor from a long controls → canvas → review 
 - Toast results are visual only; the same text is retained in stable polite or urgent live regions so removing a toast does not remove the accessible result.
 - At 720 px and below, controls and review are inert while closed. Opening a sheet moves focus to its close button; closing it from the button, backdrop, or Escape returns focus to the trigger when appropriate.
 - Projects, sync state, Undo/Redo, and editing tools remain in the fixed bottom rail. Fit remains in the canvas toolbar. The rail and preview-mode row scroll horizontally rather than shrinking labels and targets indefinitely.
-- Pan permits browser pinch zoom. Artwork positioning, Add material, Remove material, and Support reserve `touch-action: none` only while that editing mode owns the canvas. One primary pointer owns each gesture; secondary pointers are ignored, pointer capture preserves edge drags, and `pointercancel` releases ownership and commits the already-visible edit safely.
+- Pan permits browser pinch zoom. Artwork positioning, Add material, Remove material, Restore, manual-edit selection, and Support reserve `touch-action: none` only while that editing mode owns the canvas. One primary pointer owns each gesture; secondary pointers are ignored, pointer capture preserves edge drags, and `pointercancel` releases ownership and restores the pre-gesture manual state safely.
 - Support work is not drag-only: tap-start/tap-end, the support list, numeric centre/length/angle/width controls, arrow movement, Select/Locate/Delete, Undo, and previous/next navigation remain available.
 - The viewport metadata does not disable user scaling.
 

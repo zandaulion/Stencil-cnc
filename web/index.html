@@ -684,7 +684,7 @@
             <span id="touchup-tool-settings-home" hidden></span>
             <div class="control-section" id="touchup-tool-settings">
               <h2>Tool settings</h2>
-              <p class="tool-context-empty" id="touchup-empty">Choose Add material or Remove material from the permanent Tools bar.</p>
+              <p class="tool-context-empty" id="touchup-empty">Choose Add, Remove, Restore, or Edit from the permanent Tools bar.</p>
               <div class="touchup-options" id="touchup-options" hidden>
                 <label class="field-row" for="touchup-size">
                   <span id="touchup-size-label">Brush diameter <small>Physical size on the panel</small></span>
@@ -702,8 +702,34 @@
                   <span>Check after each edit<small>Warn about loose pieces immediately</small></span>
                   <input class="switch" id="touchup-safety" name="touchupSafety" type="checkbox" checked>
                 </label>
+                <div class="range-control" id="touchup-smoothing-control">
+                  <label for="touchup-smoothing"><span>Stroke smoothing <small>Steadies freehand paths without changing physical width</small></span><output id="touchup-smoothing-value" for="touchup-smoothing">35%</output></label>
+                  <input id="touchup-smoothing" name="touchupSmoothing" type="range" min="0" max="85" step="5" value="35">
+                </div>
                 <p class="section-help touchup-hint" id="touchup-hint">Drag a continuous physical-width stroke.</p>
+                <p class="keyboard-hint"><kbd>[</kbd>/<kbd>]</kbd> size · <kbd>X</kbd> swap Add/Remove · hold <kbd>Space</kbd> to pan · hold <kbd>Shift</kbd> to constrain</p>
               </div>
+              <section class="manual-edit-manager" id="manual-edit-manager">
+                <div class="section-title-row">
+                  <h3>Manual edits</h3>
+                  <span class="count-badge" id="manual-edit-count">0</span>
+                </div>
+                <p class="section-help" id="manual-edit-empty">New strokes stay editable. Select one on the canvas or here.</p>
+                <div class="manual-edit-list" id="manual-edit-list" role="listbox" aria-label="Manual material edits"></div>
+                <fieldset class="manual-edit-inspector" id="manual-edit-inspector" hidden>
+                  <legend>Selected edit</legend>
+                  <label class="field-row" for="manual-edit-operation"><span>Action</span>
+                    <select id="manual-edit-operation">
+                      <option value="keep">Add material</option>
+                      <option value="remove">Remove material</option>
+                      <option value="restore">Restore generated artwork</option>
+                    </select>
+                  </label>
+                  <label class="field-row" for="manual-edit-width"><span>Width</span><span class="number-field compact"><input id="manual-edit-width" type="number" min="0.1" max="250" step="0.5"><span data-unit-label>mm</span></span></label>
+                  <label class="toggle-row" for="manual-edit-enabled"><span>Show this edit<small>Hide it without deleting it</small></span><input class="switch" id="manual-edit-enabled" type="checkbox"></label>
+                  <button class="button button-danger button-full" id="btn-delete-manual-edit" type="button">Delete selected edit</button>
+                </fieldset>
+              </section>
             </div>
 
             <button class="button button-primary button-full stage-next" type="button" data-next-stage="panel">
@@ -1214,6 +1240,14 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 15 8-8 5 5-7 7H7l-2-2a1.4 1.4 0 0 1 0-2Z"></path><path d="M14 18h7"></path></svg>
             <span>Remove</span>
           </button>
+          <button class="rail-tool" id="tool-restore" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="E" title="Restore generated artwork (E)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"></path><path d="M4 4v4.6h4.6"></path><path d="M9 12h6"></path></svg>
+            <span>Restore</span>
+          </button>
+          <button class="rail-tool" id="tool-touchup-select" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="V" title="Select and edit manual strokes (V)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 12 9-6 1.5L8 19Z"></path><path d="m13 14 4 5"></path></svg>
+            <span>Edit</span>
+          </button>
           <button class="rail-tool" id="tool-support" type="button" aria-pressed="false" aria-expanded="false" aria-controls="tool-options-panel" aria-keyshortcuts="B" title="Add support (B)">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15c4-6 10-6 14 0M7 18h10M12 7v5M9.5 9.5 12 12l2.5-2.5"></path></svg>
             <span>Support</span>
@@ -1284,6 +1318,10 @@
             <canvas id="editor-canvas" width="1400" height="900">Your browser does not support the stencil preview canvas.</canvas>
             <svg id="vector-dot-layer" aria-hidden="true" hidden></svg>
             <canvas id="overlay-canvas" width="1400" height="900" aria-hidden="true"></canvas>
+            <div class="touchup-hud" id="touchup-hud" hidden aria-hidden="true">
+              <i></i><strong id="touchup-hud-operation">Add material</strong><span id="touchup-hud-size">8 mm</span>
+              <small id="touchup-hud-hint">Checked after release</small>
+            </div>
             <div class="empty-state" id="empty-state">
               <span class="empty-illustration" aria-hidden="true">
                 <svg viewBox="0 0 180 132">
@@ -1847,8 +1885,9 @@
             <li>Arrow/Shift+Arrow moves 1/10 mm; P/N selects adjacent supports.</li>
             <li>Delete/Backspace removes; Escape clears selection or an unfinished support.</li>
           </ul>
-          <h4>Add and Remove</h4>
-          <p>Add paints retained metal; Remove paints cut-out. Choose freehand, line, or connected-region behavior in Tool settings. A stroke can begin outside the sheet when the physical brush overlaps it. One committed gesture creates one undo step. Pan never edits geometry.</p>
+          <h4>Add, Remove, Restore, and Edit</h4>
+          <p>Add retains metal; Remove creates a cut-out; Restore reveals the generated artwork beneath earlier manual work. Every new gesture remains an ordered, physical-unit operation instead of being baked into one bitmap. Choose freehand, straight, or connected-region behavior in Tool settings. Freehand smoothing steadies the path, Shift constrains a stroke to 15° increments, and a stroke can begin outside the sheet when its physical brush overlaps it.</p>
+          <p>Choose Edit and select an operation on the canvas or in the Manual edits list. Strokes can be moved, resized, hidden, changed between Add/Remove/Restore, or deleted without rewinding later work. Region edits can be hidden, changed, or deleted. One committed gesture or edit creates one Undo step; Pan never changes geometry.</p>
           <div class="help-tip"><strong>Attachment rule:</strong> make endpoints overlap retained material enough to survive the selected kerf and process, then validate the combined result.</div>
         </article>
 
