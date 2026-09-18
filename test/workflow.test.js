@@ -13,6 +13,7 @@ const manifest = fs.readFileSync(path.join(projectRoot, 'web/manifest.webmanifes
 const projectSync = fs.readFileSync(path.join(projectRoot, 'web/project-sync.js'), 'utf8');
 const png = fs.readFileSync(path.join(projectRoot, 'web/core/png.js'), 'utf8');
 const accessibility = fs.readFileSync(path.join(projectRoot, 'web/core/accessibility.js'), 'utf8');
+const userGuide = fs.readFileSync(path.join(projectRoot, 'docs/KERFLOOM_USER_GUIDE.md'), 'utf8');
 
 test('Kerfloom is the public brand while project compatibility remains stable', () => {
   assert.match(html, /<title>Kerfloom — Art that holds together<\/title>/);
@@ -144,6 +145,36 @@ test('mobile controls, keyboard tabs, announcements, and gestures have accessibl
   assert.match(css, /--action: #a83d20;/);
   assert.match(css, /--action-hover: #8f3119;/);
   assert.match(accessibility, /export function tabIndexForKey/);
+});
+
+test('the complete workflow has searchable in-app and repository documentation', () => {
+  for (const id of [
+    'btn-help', 'btn-stage-help', 'help-dialog', 'help-title', 'btn-close-help',
+    'help-search', 'help-search-status', 'help-nav', 'help-content', 'help-no-results',
+    'btn-help-back',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const topic of [
+    'start', 'prepare', 'panel', 'support', 'validate', 'export',
+    'projects', 'devices', 'controls', 'safety', 'troubleshooting',
+  ]) {
+    assert.match(html, new RegExp(`data-help-target="${topic}"`), `${topic} navigation`);
+    assert.match(html, new RegExp(`data-help-section="${topic}"`), `${topic} content`);
+  }
+  assert.match(editor, /const HELP_STAGE_SECTIONS = Object\.freeze/);
+  assert.match(editor, /btn-stage-help[^\n]*openHelp\(HELP_STAGE_SECTIONS\[state\.stage\]/);
+  assert.match(editor, /function renderHelp\(\)[\s\S]*terms\.every[\s\S]*help-search-status/);
+  assert.match(editor, /help-dialog[^\n]*addEventListener\('keydown'[\s\S]*event\.key !== 'Escape'/);
+  assert.match(css, /\.help-dialog \{[\s\S]*height: min\(820px, calc\(100dvh - 40px\)\)/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.help-dialog \{[\s\S]*height: 100dvh/);
+  for (const heading of [
+    'The working model', 'Prepare: source, tone, and styles', 'Panel: physical intent',
+    'Support: make the image hold together', 'Validate and repair', 'Export and CAM hand-off',
+    'Projects, autosave, and recovery', 'Linked devices and project sharing',
+    'Mobile and keyboard use', 'Privacy and security', 'Troubleshooting', 'Final release checklist',
+  ]) assert.match(userGuide, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), heading);
+  assert.match(userGuide, /Ready for CAM review/);
+  assert.match(userGuide, /apply inside\/outside kerf compensation exactly once in CAM/i);
+  assert.match(userGuide, /PNG includes a visible validation watermark/);
 });
 
 test('server-backed project management is searchable, recoverable, and offline safe', () => {

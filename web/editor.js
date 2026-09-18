@@ -7548,6 +7548,78 @@ function reportTouchupResult() {
 
 let styleTimer = null;
 
+const HELP_STAGE_SECTIONS = Object.freeze({
+  prepare: 'prepare',
+  panel: 'panel',
+  support: 'support',
+  validate: 'validate',
+  export: 'export',
+});
+let activeHelpSection = 'start';
+let helpReturnFocus = null;
+
+function helpSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function renderHelp() {
+  const query = helpSearchText(el('help-search')?.value);
+  const terms = query.split(/\s+/).filter(Boolean);
+  const sections = all('[data-help-section]');
+  const matches = [];
+
+  for (const section of sections) {
+    const text = section.dataset.helpSearchText || helpSearchText(section.textContent);
+    section.dataset.helpSearchText = text;
+    const match = terms.every((term) => text.includes(term));
+    const visible = terms.length ? match : section.dataset.helpSection === activeHelpSection;
+    section.hidden = !visible;
+    if (match) matches.push(section.dataset.helpSection);
+  }
+
+  for (const button of all('[data-help-target]')) {
+    const selected = button.dataset.helpTarget === activeHelpSection && !terms.length;
+    button.setAttribute('aria-current', selected ? 'page' : 'false');
+    button.hidden = Boolean(terms.length && !matches.includes(button.dataset.helpTarget));
+  }
+
+  const status = el('help-search-status');
+  if (status) {
+    status.textContent = terms.length
+      ? `${matches.length} matching ${matches.length === 1 ? 'topic' : 'topics'}`
+      : `Browse ${sections.length} topics`;
+  }
+  const empty = el('help-no-results');
+  if (empty) empty.hidden = matches.length > 0;
+  if (el('help-content')) el('help-content').scrollTop = 0;
+}
+
+function selectHelpSection(sectionName, { focusHeading = false } = {}) {
+  const target = el(`help-section-${sectionName}`) ? sectionName : 'start';
+  activeHelpSection = target;
+  if (el('help-search')) el('help-search').value = '';
+  renderHelp();
+  if (focusHeading) el(`help-section-${target}`)?.querySelector('h3')?.focus({ preventScroll: true });
+}
+
+function closeHelp() {
+  const dialog = el('help-dialog');
+  if (dialog?.open) dialog.close();
+}
+
+function openHelp(sectionName = 'start') {
+  const dialog = el('help-dialog');
+  if (!dialog) return;
+  helpReturnFocus = document.activeElement;
+  selectHelpSection(sectionName);
+  if (!dialog.open) dialog.showModal();
+  requestAnimationFrame(() => el('help-search')?.focus({ preventScroll: true }));
+}
+
 function wire() {
   // --- stages
   wireTabKeyboard(document.querySelector('.workflow-nav [role="tablist"]'));
@@ -7572,15 +7644,28 @@ function wire() {
       });
     });
   }
-  el('btn-stage-help')?.addEventListener('click', () => {
-    const help = {
-      prepare: 'Choose line art or a photograph, then tune which areas remain metal.',
-      panel: 'Set the real sheet size, manufacturing limits, and artwork placement inside its structural frame.',
-      support: 'Automatic supports are suggestions. Select, move, resize, or remove them at any time.',
-      validate: 'Checks use the exact geometry and units that will be exported.',
-      export: 'SVG and DXF are true-scale. Kerf compensation remains the CAM tool’s responsibility.',
-    };
-    toast(help[state.stage] || 'Work through the five stages to produce cut-ready geometry.');
+  el('btn-stage-help')?.addEventListener('click', () => openHelp(HELP_STAGE_SECTIONS[state.stage] || 'start'));
+  el('btn-help')?.addEventListener('click', () => openHelp('start'));
+  el('btn-close-help')?.addEventListener('click', closeHelp);
+  el('btn-help-back')?.addEventListener('click', closeHelp);
+  el('help-search')?.addEventListener('input', renderHelp);
+  el('help-nav')?.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-help-target]');
+    if (button) selectHelpSection(button.dataset.helpTarget, { focusHeading: true });
+  });
+  el('help-dialog')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeHelp();
+  });
+  el('help-dialog')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeHelp();
+  });
+  el('help-dialog')?.addEventListener('close', () => {
+    const returnTarget = helpReturnFocus;
+    helpReturnFocus = null;
+    if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
   });
   el('btn-mobile-controls')?.addEventListener('click', () => openMobileSheet('controls'));
   el('btn-mobile-review')?.addEventListener('click', () => openMobileSheet('review'));

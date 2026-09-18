@@ -120,6 +120,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"></path><path d="M3 7V5h7l2 2"></path></svg>
           <span>Projects</span>
         </button>
+        <button class="button button-quiet help-label" id="btn-help" type="button" aria-label="Open Kerfloom handbook" aria-haspopup="dialog" aria-controls="help-dialog" title="Help">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.8 9a2.3 2.3 0 1 1 3.8 1.8c-1 .7-1.6 1.1-1.6 2.3M12 17h.01"></path></svg>
+          <span>Help</span>
+        </button>
         <button class="icon-button" id="btn-undo" type="button" disabled aria-label="Undo" title="Undo">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6"></path></svg>
         </button>
@@ -1732,6 +1736,237 @@
         <button class="button button-primary" id="btn-import-shared-project" type="button">Import complete project</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title">
+    <section class="help-shell">
+      <header class="help-header">
+        <div>
+          <span class="eyebrow">Kerfloom handbook</span>
+          <h2 id="help-title">Create freely. Manufacture deliberately.</h2>
+        </div>
+        <button class="icon-button" id="btn-close-help" type="button" aria-label="Close help" title="Close help">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </header>
+
+      <div class="help-search-wrap">
+        <label class="help-search" for="help-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16 16 5 5"></path></svg>
+          <input id="help-search" type="search" placeholder="Search workflow, supports, export…" autocomplete="off">
+        </label>
+        <span class="help-search-status" id="help-search-status" role="status">Browse 11 topics</span>
+      </div>
+
+      <nav class="help-nav" id="help-nav" aria-label="Handbook topics">
+        <button type="button" data-help-target="start" aria-current="page"><span>01</span> Start here</button>
+        <button type="button" data-help-target="prepare"><span>02</span> Prepare &amp; styles</button>
+        <button type="button" data-help-target="panel"><span>03</span> Panel &amp; profile</button>
+        <button type="button" data-help-target="support"><span>04</span> Supports &amp; editing</button>
+        <button type="button" data-help-target="validate"><span>05</span> Validate &amp; repair</button>
+        <button type="button" data-help-target="export"><span>06</span> Export &amp; CAM</button>
+        <button type="button" data-help-target="projects"><span>07</span> Projects &amp; recovery</button>
+        <button type="button" data-help-target="devices"><span>08</span> Devices &amp; sharing</button>
+        <button type="button" data-help-target="controls"><span>09</span> Mobile &amp; keyboard</button>
+        <button type="button" data-help-target="safety"><span>10</span> Privacy &amp; safety</button>
+        <button type="button" data-help-target="troubleshooting"><span>11</span> Troubleshooting</button>
+      </nav>
+
+      <main class="help-content" id="help-content" tabindex="-1">
+        <article class="help-section" id="help-section-start" data-help-section="start">
+          <span class="help-kicker">Start here</span>
+          <h3 tabindex="-1">From image to CAM without losing the idea</h3>
+          <p>Kerfloom keeps creative interpretation and CNC constraints in one reversible workflow. Dark geometry is retained metal; light geometry is removed. Work from broad intent toward physical detail:</p>
+          <ol class="help-steps">
+            <li><strong>Prepare</strong><span>Import, inspect Tone, choose a style, and save promising Candidates.</span></li>
+            <li><strong>Panel</strong><span>Set the real sheet, place the artwork, and confirm the cutting profile.</span></li>
+            <li><strong>Support</strong><span>Connect islands and stabilize long features without hiding important detail.</span></li>
+            <li><strong>Validate</strong><span>Locate blockers, preview reversible repairs, and finish manual corrections.</span></li>
+            <li><strong>Export</strong><span>Review scale and responsibility, then hand SVG/DXF to CAM.</span></li>
+          </ol>
+          <div class="help-callout"><strong>What Kerfloom can promise</strong><p>It checks measurable geometry against your selected profile. “Ready for CAM review” does not certify material strength, machine setup, heat behavior, cut order, fixturing, or installation safety.</p></div>
+          <h4>Read the canvas</h4>
+          <dl class="help-definition-grid">
+            <div><dt>Original</dt><dd>Imported source and composition.</dd></div>
+            <div><dt>Tone</dt><dd>The light/midtone/shadow field used by photo styles.</dd></div>
+            <div><dt>Artwork</dt><dd>Generated creative treatment.</dd></div>
+            <div><dt>Material</dt><dd>Retained metal and cut-outs—the main edit view.</dd></div>
+            <div><dt>Back-lit</dt><dd>Visual reading of illuminated openings.</dd></div>
+            <div><dt>Problems</dt><dd>Located validation findings and repair previews.</dd></div>
+          </dl>
+        </article>
+
+        <article class="help-section" id="help-section-prepare" data-help-section="prepare" hidden>
+          <span class="help-kicker">Step 1 · Prepare</span>
+          <h3 tabindex="-1">Build the visual language first</h3>
+          <p>Import PNG, JPEG, or WebP. Convert HEIC/HEIF first. Line art is thresholded locally; photographic styles use Kerfloom’s private analysis service. Inspect <strong>Tone</strong> before compensating with manual edits.</p>
+          <h4>Image interpretation</h4>
+          <p>Brightness and contrast set the overall range. Shadow detail controls dark information, surface smoothing suppresses texture, and tone separation strengthens light/midtone/shadow groups. The percentages describe the interpreted source, not final material coverage.</p>
+          <h4>Choose a style by intent</h4>
+          <div class="help-style-grid">
+            <div><strong>Prepared</strong><span>Line art</span><p>Clean drawings and logos.</p></div>
+            <div><strong>Bold portrait</strong><span>Poster, Icon, Graphic, Silhouette</span><p>Grouped shapes and strong recognition.</p></div>
+            <div><strong>Engraved</strong><span>Linework, Woodcut, Flow, Contours</span><p>Marks or ribbons that express light and form.</p></div>
+            <div><strong>Geometric</strong><span>Slats, Hatch, Radial, Dots</span><p>A regular system carries the image.</p></div>
+            <div><strong>Decorative</strong><span>Ornamental symmetry</span><p>Mirrored extracted linework.</p></div>
+          </div>
+          <p>Style guidance translates the current sheet and profile into a starting pitch, width, or diameter. Any mandatory clamp is explained beside the affected control. It is a starting point, not machine verification.</p>
+          <h4>Candidates</h4>
+          <p>Save visually meaningful alternatives before large changes. Candidates sync inside the project and restore the creative treatment. They differ from project Recovery points, which protect the broader editing workflow.</p>
+          <div class="help-tip"><strong>Good loop:</strong> Tone → style → recommendation → one deliberate adjustment → save Candidate → compare in Material and Back-lit.</div>
+        </article>
+
+        <article class="help-section" id="help-section-panel" data-help-section="panel" hidden>
+          <span class="help-kicker">Step 2 · Panel</span>
+          <h3 tabindex="-1">Turn the composition into physical intent</h3>
+          <p>Set real dimensions and orientation before judging pattern sizes. Position, scale, and freely rotate the artwork without stretching it. Arrow keys move it 1 mm; Shift+Arrow moves it 10 mm. Unused letterbox area remains retained metal.</p>
+          <h4>Cutting-profile language</h4>
+          <dl class="help-definition-grid">
+            <div><dt>Kerf / tool diameter</dt><dd>Expected removed path width, used for feasibility checks.</dd></div>
+            <div><dt>Minimum finished web</dt><dd>Metal that must remain between neighboring cuts after machining.</dd></div>
+            <div><dt>Minimum opening</dt><dd>Smallest removable feature the process should produce.</dd></div>
+            <div><dt>Provisional</dt><dd>A useful starting profile without recorded machine evidence.</dd></div>
+            <div><dt>Verified</dt><dd>Material, thickness, machine, source, evidence, verifier, and date are recorded.</dd></div>
+          </dl>
+          <p>The General plasma starting point uses a conservative 3 mm finished web and 2 mm opening. A 2 mm web can be explored, but must be confirmed for the actual process. Each project and retained export carries its exact profile snapshot.</p>
+          <div class="help-callout"><strong>Finished-edge workflow</strong><p>Kerfloom exports intended finished-part edges. Apply inside/outside kerf compensation exactly once in CAM. The profile kerf value supports checking; it is not permission to compensate twice.</p></div>
+          <h4>Frame, anchors, and construction</h4>
+          <p>The frame is retained material around the artwork. Anchor edges identify allowed structural attachment. In One-piece panel construction, all retained regions must connect to the main panel or selected anchors.</p>
+        </article>
+
+        <article class="help-section" id="help-section-support" data-help-section="support" hidden>
+          <span class="help-kicker">Step 3 · Support</span>
+          <h3 tabindex="-1">Connect the panel with the least visual cost</h3>
+          <p><strong>Suggest smart supports</strong> creates a dashed proposal. Review it before accepting. Protect important detail avoids central/high-contrast features; Follow features prefers hair, brows, folds, shadows, and other darker structures. Filter direction aligns ties to Slats, Hatch, or Radial cuts, while long-slat stabilization controls unsupported span.</p>
+          <p>If no feature-aligned safe position exists, Kerfloom may offer a visible fallback or place nothing. Add a manual support instead of forcing an unsafe or destructive suggestion.</p>
+          <h4>Manual support controls</h4>
+          <ul>
+            <li>Drag or tap start/end to create a support.</li>
+            <li>Drag the centre to move it; drag either endpoint for free angle and length.</li>
+            <li>Use numeric centre, angle, length, and width for exact work.</li>
+            <li>Arrow/Shift+Arrow moves 1/10 mm; P/N selects adjacent supports.</li>
+            <li>Delete/Backspace removes; Escape clears selection or an unfinished support.</li>
+          </ul>
+          <h4>Add and Remove</h4>
+          <p>Add paints retained metal; Remove paints cut-out. Choose freehand, line, or connected-region behavior in Tool settings. A stroke can begin outside the sheet when the physical brush overlaps it. One committed gesture creates one undo step. Pan never edits geometry.</p>
+          <div class="help-tip"><strong>Attachment rule:</strong> make endpoints overlap retained material enough to survive the selected kerf and process, then validate the combined result.</div>
+        </article>
+
+        <article class="help-section" id="help-section-validate" data-help-section="validate" hidden>
+          <span class="help-kicker">Step 4 · Validate</span>
+          <h3 tabindex="-1">Use checks as a review queue, not a verdict</h3>
+          <p>Run all checks on the current combined geometry. Blocking errors prevent SVG/DXF export. Structural warnings are advisory and may deserve strengthening or operator review. Select a row or Locate, use Next to cycle occurrences, and press Escape to clear the highlight.</p>
+          <h4>What common findings mean</h4>
+          <ul>
+            <li><strong>Disconnected retained piece:</strong> connect it or remove it in a one-piece panel.</li>
+            <li><strong>Opening too small:</strong> enlarge the removed region or close it.</li>
+            <li><strong>Cuts too close:</strong> add metal locally, move a cut, or revise the pattern.</li>
+            <li><strong>Thin outside a full-width core:</strong> inspect a bottleneck relying on undersized metal.</li>
+            <li><strong>Long unsupported span:</strong> add a stabilizer or revise the span assumption.</li>
+          </ul>
+          <h4>Automatic repair</h4>
+          <p>Repairs are a previewable, reversible layer. Choose categories, build the preview, inspect it at useful zoom, then accept or discard. The planner protects long slat cuts from destructive whole-cut closure and can add small local amounts of metal when that meets the configured web.</p>
+          <p>Manual corrections after accepted repairs override only conflicting generated cells; unaffected repairs remain. Re-running checks evaluates the combined geometry and does not delete accepted repairs. Changing artwork, placement, panel geometry, polarity, or profile can make them stale and require regeneration.</p>
+        </article>
+
+        <article class="help-section" id="help-section-export" data-help-section="export" hidden>
+          <span class="help-kicker">Step 5 · Export</span>
+          <h3 tabindex="-1">Hand off a traceable result</h3>
+          <ul>
+            <li><strong>PNG</strong> is available when geometry exists and is watermarked if validation is missing, stale, or blocking.</li>
+            <li><strong>SVG/DXF</strong> require current validation with zero blockers and preserve true panel scale in the chosen units.</li>
+            <li>Variable Dots preserve circle primitives in vector export when possible.</li>
+            <li>Names include project, panel, style, frame, purpose, and timestamp.</li>
+            <li>Portable project downloads omit the original photograph; a successfully synced server project retains it.</li>
+          </ul>
+          <h4>CAM review checklist</h4>
+          <p>Confirm units, sheet size/orientation, material polarity, frame, profile evidence, scale, duplicate contours, lead-ins, cut order, heat strategy, fixturing, and exactly one CAM kerf-compensation step. Test a new setup on a coupon or lower-risk part.</p>
+          <div class="help-callout"><strong>No automatic release claim</strong><p>Zero geometry blockers means Ready for CAM review. Machine and operator responsibilities remain.</p></div>
+        </article>
+
+        <article class="help-section" id="help-section-projects" data-help-section="projects" hidden>
+          <span class="help-kicker">Projects &amp; recovery</span>
+          <h3 tabindex="-1">Know where the latest work lives</h3>
+          <p>Projects are complete encrypted server bundles with a browser-side offline cache and durable upload queue. Cards expose artwork preview, size, style, validation state, and source availability. Rename, duplicate, download, share, or move to recoverable Trash.</p>
+          <dl class="help-definition-grid">
+            <div><dt>Saving…</dt><dd>A local or server write is in progress.</dd></div>
+            <div><dt>Saved to server</dt><dd>The server acknowledged this revision.</dd></div>
+            <div><dt>Waiting / Offline</dt><dd>Cached on this device and queued.</dd></div>
+            <div><dt>Sync failed</dt><dd>Tap Sync; queued work still needs attention.</dd></div>
+            <div><dt>Local cache failed</dt><dd>Stop before closing—the latest edit may not be safely cached.</dd></div>
+          </dl>
+          <p>Ctrl/Cmd+S asks for an immediate save. Up to ten Recovery points follow significant validation, repair, support, and export events. Concurrent edits become conflict copies rather than silently overwriting work; compare them, rename the keeper, and Trash the duplicate.</p>
+        </article>
+
+        <article class="help-section" id="help-section-devices" data-help-section="devices" hidden>
+          <span class="help-kicker">Devices &amp; sharing</span>
+          <h3 tabindex="-1">Same workspace or independent copy?</h3>
+          <h4>Link your own devices</h4>
+          <p>Open <strong>Projects → Devices</strong> on a linked device. Name the new device, create a one-time invitation, then scan its QR code or send its private link. The receiving browser joins the same workspace. Confirm Saved to server before changing devices and Sync on arrival.</p>
+          <p>An invitation expires, can be cancelled before use, and can be claimed once. A browser already linked elsewhere must explicitly confirm replacement. The current device cannot revoke itself accidentally; another linked device can disconnect a lost device.</p>
+          <h4>Share a project</h4>
+          <p>Share creates an encrypted snapshot for one recipient. The imported project is an independent editable copy—including available source, candidates, supports, repairs, recovery points, and retained exports. Later edits do not synchronize between the copies.</p>
+          <div class="help-tip"><strong>Do not clear site data to “log out” until every pending edit is synced or downloaded.</strong> Clearing it removes the offline cache and upload queue. To move the browser to another workspace, open that workspace’s invitation and confirm replacement.</div>
+        </article>
+
+        <article class="help-section" id="help-section-controls" data-help-section="controls" hidden>
+          <span class="help-kicker">Mobile &amp; keyboard</span>
+          <h3 tabindex="-1">Keep the canvas in reach</h3>
+          <p>On narrow screens the canvas stays fixed. Tap a numbered stage to open controls as a bottom sheet, close it to inspect the result, and use Candidates/Problems for review. The bottom rail scrolls horizontally and retains Projects, Sync, Undo/Redo, and tools.</p>
+          <h4>Install the app</h4>
+          <p>On Windows, open Kerfloom in Edge or Chrome and choose the install icon in the address bar (or the browser’s Apps / Install menu). On Android, choose Install app or Add to Home screen. On iPhone/iPad, open Kerfloom in Safari, use Share, then Add to Home Screen. Open the installed app online once after an update so its PWA files and workspace state can refresh.</p>
+          <h4>Keyboard reference</h4>
+          <table class="help-shortcuts"><thead><tr><th>Keys</th><th>Action</th></tr></thead><tbody>
+            <tr><td><kbd>Ctrl/Cmd</kbd>+<kbd>S</kbd></td><td>Save/sync now</td></tr>
+            <tr><td><kbd>Ctrl/Cmd</kbd>+<kbd>Z</kbd></td><td>Undo when canvas owns focus</td></tr>
+            <tr><td><kbd>Ctrl/Cmd</kbd>+<kbd>Y</kbd></td><td>Redo (also Shift+Z)</td></tr>
+            <tr><td><kbd>F</kbd>, <kbd>+</kbd>, <kbd>−</kbd>, <kbd>0</kbd></td><td>Fit, zoom in/out, reset</td></tr>
+            <tr><td><kbd>I</kbd>, <kbd>K</kbd>, <kbd>R</kbd>, <kbd>B</kbd></td><td>Icon style, Add, Remove, Support</td></tr>
+            <tr><td><kbd>P</kbd> / <kbd>N</kbd></td><td>Previous / next support</td></tr>
+            <tr><td><kbd>Arrows</kbd> / <kbd>Shift</kbd>+<kbd>Arrows</kbd></td><td>Move support or artwork 1 / 10 mm</td></tr>
+            <tr><td><kbd>Delete</kbd></td><td>Delete selected support</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>Clear highlight/selection, cancel, or return to Pan</td></tr>
+          </tbody></table>
+          <p>Text fields retain their native undo. Workflow/review/project tabs support Left/Right, Home, and End. Browser pinch zoom is available in Pan; editing modes reserve one primary pointer for the active gesture.</p>
+        </article>
+
+        <article class="help-section" id="help-section-safety" data-help-section="safety" hidden>
+          <span class="help-kicker">Privacy &amp; safety</span>
+          <h3 tabindex="-1">Understand the boundary of the system</h3>
+          <ul>
+            <li>Complete project and share bundles are encrypted at rest on the server.</li>
+            <li>Photographic styles send the source to Kerfloom’s private analysis service.</li>
+            <li>Linked browsers use a secure HttpOnly device credential and retain an offline project cache.</li>
+            <li>Device/share secrets use the URL fragment rather than an ordinary request path or query.</li>
+            <li>Revocation blocks future server access but cannot remotely erase data already cached on an offline device.</li>
+          </ul>
+          <p>Protect the operating-system account, use HTTPS, send invitations privately, revoke lost devices from another linked device, and avoid shared browser profiles for sensitive artwork.</p>
+          <div class="help-callout"><strong>Operator responsibility</strong><p>Kerfloom does not model stock defects, mechanical loading, consumable condition, gas/air quality, thermal distortion, lead-ins, sequencing, fixturing, or safe machine operation. Verify those in CAM and at the machine.</p></div>
+        </article>
+
+        <article class="help-section" id="help-section-troubleshooting" data-help-section="troubleshooting" hidden>
+          <span class="help-kicker">Troubleshooting</span>
+          <h3 tabindex="-1">Recover without losing work</h3>
+          <details open><summary>Sync spins or turns red</summary><p>Stay online, tap Sync, and watch the pending count. A failed older project can keep the global status red even when the current project synced. Look for conflict copies. Do not clear site data first.</p></details>
+          <details><summary>A project is missing on another device</summary><p>Confirm both appear under Projects → Devices, the source says Saved to server, and the destination completed Sync. Share creates a separate copy; it does not link workspaces.</p></details>
+          <details><summary>Tone controls are missing</summary><p>Select Tone. Prepare should reveal Image interpretation; expand Adjust tone if collapsed.</p></details>
+          <details><summary>Repair layer needs regeneration</summary><p>An upstream dependency changed. Rebuild the preview against the current artwork, placement, panel, polarity, and profile.</p></details>
+          <details><summary>SVG/DXF is disabled</summary><p>Generate geometry, run all checks, and resolve every blocker. PNG remains available and is watermarked while unvalidated.</p></details>
+          <details><summary>The canvas is lost</summary><p>Select Pan and press F or Fit. This reframes the complete panel.</p></details>
+          <details><summary>Smart supports find no safe placement</summary><p>Add a manual tie in a dark feature, widen attachment material, or revise the pattern. Only lower profile limits when the real setup supports them.</p></details>
+        </article>
+
+        <div class="help-no-results" id="help-no-results" hidden>
+          <strong>No handbook topic matches that search.</strong>
+          <span>Try a shorter term such as “sync”, “slats”, “kerf”, or “export”.</span>
+        </div>
+      </main>
+
+      <footer class="help-footer">
+        <span>Searchable handbook · bundled with Kerfloom</span>
+        <button class="button button-secondary" id="btn-help-back" type="button">Close handbook</button>
+      </footer>
+    </section>
   </dialog>
 
   <script type="module" src="/app.js"></script>

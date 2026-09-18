@@ -6,6 +6,12 @@ Kerfloom turns photographs and prepared artwork into connected, manufacturing-aw
 
 The central rule is simple: dark geometry represents retained metal and light geometry represents material to remove. The editor keeps the source treatment, structural frame, supports, manual edits, and automatic manufacturing repairs as separate inputs so the final panel can be rebuilt and checked consistently.
 
+## Documentation
+
+Select **Help** in the Kerfloom header for the searchable, mobile-responsive handbook. The existing question-mark button in each workflow stage opens that handbook directly at the relevant chapter. It covers the complete creative workflow, all style families, tone and placement, cutting-profile terminology, smart and manual supports, validation and reversible repairs, CAM hand-off, autosave and recovery, linked devices, sharing, keyboard/mobile use, privacy boundaries, troubleshooting, and a final release checklist.
+
+The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_USER_GUIDE.md). The separate [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md) records the outstanding physical-device and assistive-technology acceptance matrix, while [`docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md`](docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md) records the product audit and implementation history.
+
 ## What it does
 
 - Converts line art locally in the browser and photographs through a private analysis service.
