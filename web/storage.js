@@ -1,5 +1,6 @@
 import { normalizeCuttingProfile } from '/core/cutting-profile.js';
 import { upgradeProjectRecord } from '/core/project.js';
+import { normalizeReleaseManifest } from '/core/release-manifest.js';
 import { reconcileProjectAcknowledgement } from '/core/sync-state.js';
 
 const LEGACY_DB_NAME = 'stencil-cnc';
@@ -277,6 +278,7 @@ function importedArtifact(projectId, artifact) {
     profileSnapshot: artifact.profileSnapshot
       ? normalizeCuttingProfile(JSON.parse(JSON.stringify(artifact.profileSnapshot)))
       : null,
+    releaseManifest: normalizeReleaseManifest(artifact.releaseManifest),
     blob: artifact.blob,
   };
 }
@@ -534,6 +536,7 @@ export async function saveArtifact(projectId, artifact) {
     profileSnapshot: artifact.profileSnapshot
       ? normalizeCuttingProfile(JSON.parse(JSON.stringify(artifact.profileSnapshot)))
       : null,
+    releaseManifest: normalizeReleaseManifest(artifact.releaseManifest),
     blob: artifact.blob,
   };
   await transaction(ARTIFACT_STORE, 'readwrite', (store) => requestResult(store.put(value)));

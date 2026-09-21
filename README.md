@@ -34,6 +34,10 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 - Exports validated geometry as SVG, DXF, or a shareable PNG. Variable Dots
   retain their generated circle primitives, so zoomed previews and CNC vector
   exports remain round instead of tracing raster stair steps.
+- Reports the export mask's effective X/Y millimetres per cell and retains a
+  tamper-evident release manifest with exact geometry/output hashes, units,
+  cutting-profile snapshot, compensation contract, and validation evidence.
+  The manifest travels inside encrypted synchronized and shared artefacts.
 - Runs as an installable, offline-capable PWA after an authorised device has loaded it.
 
 ## Workflow

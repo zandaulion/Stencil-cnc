@@ -16,6 +16,46 @@ function response(project) {
   });
 }
 
+test('retained release manifests travel with synchronized export artefacts', async () => {
+  const { directory, sync, storage } = await syncHarness();
+  const OriginalFileReader = globalThis.FileReader;
+  globalThis.FileReader = class {
+    readAsDataURL(blob) {
+      blob.arrayBuffer().then((bytes) => {
+        this.result = `data:${blob.type};base64,${Buffer.from(bytes).toString('base64')}`;
+        this.onload?.();
+      }, (error) => {
+        this.error = error;
+        this.onerror?.();
+      });
+    }
+  };
+  try {
+    const record = { id: 'project-1', name: 'Release' };
+    const releaseManifest = {
+      schema: 'kerfloom.manufacturing-release',
+      version: 1,
+      manifestSha256: 'a'.repeat(64),
+    };
+    storage.state.artifacts.set(record.id, [{
+      filename: 'release.svg',
+      kind: 'svg',
+      mimeType: 'image/svg+xml',
+      createdAt: '2026-09-21T10:00:00.000Z',
+      profileSnapshot: { name: 'Shop profile' },
+      releaseManifest,
+      blob: new Blob(['svg'], { type: 'image/svg+xml' }),
+    }]);
+    const bundle = await sync.buildProjectBundle(record);
+    assert.deepEqual(bundle.artifacts[0].releaseManifest, releaseManifest);
+    assert.match(bundle.artifacts[0].dataUrl, /^data:image\/svg\+xml;base64,/);
+  } finally {
+    if (OriginalFileReader === undefined) delete globalThis.FileReader;
+    else globalThis.FileReader = OriginalFileReader;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 async function syncHarness() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kerfloom-client-sync-'));
   const corePath = path.join(directory, 'core.mjs');

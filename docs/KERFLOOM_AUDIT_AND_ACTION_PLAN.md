@@ -580,11 +580,13 @@ Done when a disconnected draft exports a clearly labelled PNG while SVG/DXF rema
 
 ### K18 — Improve precision and manufacturing release records
 
-- [ ] Display effective mm/cell and explain approximation limits; do not imply coordinate decimal places are machining accuracy.
+- [x] Display effective mm/cell and explain approximation limits; do not imply coordinate decimal places are machining accuracy.
 - [ ] Design optional simplification/curve fitting using a physical error tolerance, preserving contour nesting and topology.
 - [ ] Validate actual output vectors after transformation/fitting before claiming they satisfy constraints. If that validator is not implemented, do not enable topology-changing fitting on trusted cutting exports.
-- [ ] Save an immutable release manifest with geometry/export hashes, profile snapshot, units, compensation contract, processing/validation versions, timestamp, warnings, and output artifacts.
+- [x] Save an immutable release manifest with geometry/export hashes, profile snapshot, units, compensation contract, processing/validation versions, timestamp, warnings, and output artifacts.
 - [ ] Verify known dimensions and small features in the owner's target CAM.
+
+**K18A status (2026-09-21):** implemented. The canvas and Export stage now report the actual physical X/Y cell size derived from the export mask and panel dimensions, together with an explicit raster-approximation warning. Every newly retained PNG, SVG, and DXF artefact carries a frozen version-1 release manifest. It binds the exact raster geometry and downloaded bytes with SHA-256 hashes and records sheet size, drawing units, working revision, exact-circle count, cutting-profile snapshot, finished-edge/CAM-compensation contract, exporter and validation-model versions, current validation time, blockers, advisories, filename, media type, and byte size. Manifests remain embedded in the append-only artefact record through encrypted project sync and sharing; the server rejects a manifest whose digest or output hash no longer matches. Legacy artefacts without a manifest remain readable. Optional curve fitting and post-fit vector validation remain deliberately disabled until K18B can prove topology and physical error bounds.
 
 Done when output round trips preserve units/topology within the stated tolerance and the release record identifies exactly what was checked. Physical machining acceptance remains K21, not a numerical-formatting test.
 

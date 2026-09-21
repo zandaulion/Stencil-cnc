@@ -94,6 +94,16 @@ export { exportDxf, maskToDxf } from "./dxf.js";
 export { DRAFT_WATERMARK_LABEL, drawDraftWatermark, maskToRgba } from "./png.js";
 export { buildExportFilename, filenamePart, filenameTimestamp } from "./filenames.js";
 export {
+  RELEASE_MANIFEST_SCHEMA,
+  RELEASE_MANIFEST_VERSION,
+  RASTER_BOUNDARY_EXPORTER_VERSION,
+  canonicalJson,
+  createReleaseManifest,
+  effectiveRasterResolution,
+  normalizeReleaseManifest,
+  sha256Blob,
+} from "./release-manifest.js";
+export {
   PROJECT_SCHEMA,
   PROJECT_VERSION,
   createProject,

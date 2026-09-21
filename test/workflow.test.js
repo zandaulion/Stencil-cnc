@@ -16,6 +16,7 @@ const accessibility = fs.readFileSync(path.join(projectRoot, 'web/core/accessibi
 const geometryWorker = fs.readFileSync(path.join(projectRoot, 'web/workers/geometry.js'), 'utf8');
 const geometryJobsCore = fs.readFileSync(path.join(projectRoot, 'web/core/geometry-jobs.js'), 'utf8');
 const featureGuidance = fs.readFileSync(path.join(projectRoot, 'web/core/feature-guidance.js'), 'utf8');
+const releaseManifest = fs.readFileSync(path.join(projectRoot, 'web/core/release-manifest.js'), 'utf8');
 const userGuide = fs.readFileSync(path.join(projectRoot, 'docs/KERFLOOM_USER_GUIDE.md'), 'utf8');
 
 test('Kerfloom is the public brand while project compatibility remains stable', () => {
@@ -303,6 +304,20 @@ test('PNG previews remain available before validation and are visibly marked as 
   assert.match(editor, /if \(kind !== 'png' && !validated\)/);
   assert.match(editor, /state\.exportTimestamp = state\.validation\.valid \? new Date\(\) : null/);
   assert.match(editor, /el\('btn-export-png'\)\?\.addEventListener\('click', \(\) => exportGeometry\('png'\)\)/);
+});
+
+test('exports disclose raster precision and retain an auditable release manifest', () => {
+  for (const id of [
+    'export-raster-resolution', 'export-raster-resolution-detail', 'raster-resolution-status',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(html, /Edges lie on this physical grid|release record will capture/i);
+  assert.match(html, /Every retained export carries immutable geometry and file hashes/);
+  assert.match(editor, /effectiveRasterResolution\(mask, sheet\(\)\)/);
+  assert.match(editor, /createReleaseManifest\(\{[\s\S]*?validationModelVersion: GEOMETRY_VALIDATION_MODEL_VERSION/);
+  assert.match(editor, /saveArtifact\(state\.projectId, \{[\s\S]*?releaseManifest/);
+  assert.match(storage, /releaseManifest: normalizeReleaseManifest\(artifact\.releaseManifest\)/);
+  assert.match(projectSync, /releaseManifest: artifact\.releaseManifest \?\? null/);
+  assert.match(releaseManifest, /geometrySha256[\s\S]*?outputSha256[\s\S]*?manifestSha256/);
 });
 
 test('automatic supports stay separate and advertise when artwork made them stale', () => {

@@ -3319,6 +3319,47 @@ select:focus {
   font-size: 1rem;
 }
 
+.release-precision-card {
+  margin: 10px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  display: grid;
+  gap: 4px;
+}
+
+.release-precision-card span,
+.release-precision-card small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.release-precision-card strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.release-record-note {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid var(--teal);
+  background: var(--teal-soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.release-record-note strong,
+.release-record-note span {
+  display: block;
+}
+
+.release-record-note strong {
+  margin-bottom: 3px;
+  color: var(--ink);
+}
+
 .export-buttons {
   display: grid;
   gap: 8px;

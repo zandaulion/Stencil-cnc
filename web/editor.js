@@ -18,6 +18,8 @@ import {
   CANDIDATE_PAYLOAD_VERSION,
   FINISHED_BOUNDARY_CAM,
   GEOMETRY_VALIDATION_MODEL_VERSION,
+  PROJECT_SCHEMA,
+  PROJECT_VERSION,
   analyzeConnectivity,
   applyCapsuleBridges,
   applyRasterLayers,
@@ -30,6 +32,7 @@ import {
   createFeatureGuidance,
   createCuttingProfile,
   createProject,
+  createReleaseManifest,
   createSyncRetryController,
   createWorkerJobRunner,
   decodeMask,
@@ -38,6 +41,7 @@ import {
   describeRepairTermination,
   encodeMask,
   erodeMaskPhysical,
+  effectiveRasterResolution,
   exportDxf,
   exportSvg,
   maskFromImageData,
@@ -3644,6 +3648,7 @@ function updateReadouts() {
     : `${Math.round(widthMm * 10) / 10} × ${Math.round(heightMm * 10) / 10} mm`;
   el('export-size').textContent = exportSize;
   if (el('export-unit-scale')) el('export-unit-scale').textContent = `1 drawing unit = 1 ${exportUnit}`;
+  updateRasterResolutionReadout();
   for (const node of all('[data-unit-label]')) node.textContent = state.unit;
   const profileStatus = state.cuttingProfile.status === 'verified' ? 'Verified' : 'Provisional';
   const manufacturingSummary = `${state.cuttingProfile.name} · ${profileStatus} · ${roundUnit(numberField('kerf', 1.2))} ${state.unit} kerf · ${roundUnit(numberField('min-web', 3))} ${state.unit} gaps · ${roundUnit(numberField('min-opening', 2))} ${state.unit} openings`;
@@ -3660,6 +3665,34 @@ function updateReadouts() {
   updateGeometryContractUi();
   updateStyleGuidance();
   updateGeometryPreviewState();
+}
+
+function formatMillimetres(value) {
+  if (!Number.isFinite(value)) return '—';
+  if (value >= 10) return String(Math.round(value * 10) / 10);
+  if (value >= 1) return String(Math.round(value * 100) / 100);
+  return String(Math.round(value * 1000) / 1000);
+}
+
+function updateRasterResolutionReadout() {
+  const mask = geometryForExport();
+  const compact = el('raster-resolution-status');
+  const value = el('export-raster-resolution');
+  const detail = el('export-raster-resolution-detail');
+  if (!mask) {
+    if (compact) compact.textContent = 'grid —';
+    if (value) value.textContent = 'Available after artwork is created';
+    if (detail) detail.textContent = 'The release record will capture the actual export grid.';
+    return;
+  }
+  const resolution = effectiveRasterResolution(mask, sheet());
+  const x = formatMillimetres(resolution.mmPerCellX);
+  const y = formatMillimetres(resolution.mmPerCellY);
+  if (compact) compact.textContent = `${x} × ${y} mm/cell`;
+  if (value) value.textContent = `${x} × ${y} mm/cell`;
+  if (detail) {
+    detail.textContent = `${resolution.widthCells} × ${resolution.heightCells} cells. Edges lie on this physical grid; decimal coordinates do not create finer source geometry.`;
+  }
 }
 
 function updateGeometryContractUi() {
@@ -7294,6 +7327,28 @@ async function exportGeometry(kind) {
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
+    const exportedCircleHoles = kind === 'png' ? previewCircleHoles : vectorCircleHoles;
+    const releaseManifest = await createReleaseManifest({
+      projectId: state.projectId,
+      projectName: state.name,
+      projectRevision: state.revision,
+      projectSchema: PROJECT_SCHEMA,
+      projectVersion: PROJECT_VERSION,
+      mask,
+      sheet: sheet(),
+      exactCircleHoles: exportedCircleHoles,
+      filename,
+      kind,
+      mimeType: blob.type,
+      blob,
+      drawingUnits: units,
+      profileSnapshot: cuttingProfileFromControls(),
+      geometryInterpretation: state.geometryInterpretation,
+      validation: state.validation,
+      validationRevision: state.validatedRevision,
+      validatedAt: state.lastValidatedAt,
+      validationModelVersion: GEOMETRY_VALIDATION_MODEL_VERSION,
+    });
     downloadBlob(filename, blob);
     state.lastExportedAt = new Date().toISOString();
     markDirty();
@@ -7306,6 +7361,7 @@ async function exportGeometry(kind) {
           mimeType: blob.type,
           blob,
           profileSnapshot: cuttingProfileFromControls(),
+          releaseManifest,
         });
         const withArtifact = await loadProject(state.projectId);
         if (withArtifact) await syncStoredProject(withArtifact);

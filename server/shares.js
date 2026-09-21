@@ -6,6 +6,8 @@ const BUNDLE_SCHEMA = 'stencil-cnc.share-bundle';
 const BUNDLE_VERSION = 1;
 const FILE_MAGIC = Buffer.from('STSH1');
 const TOKEN_BYTES = 32;
+const RELEASE_MANIFEST_SCHEMA = 'kerfloom.manufacturing-release';
+const SHA256 = /^[0-9a-f]{64}$/;
 
 function cleanText(value, fallback, maximum = 120) {
   const cleaned = typeof value === 'string' ? value.trim().slice(0, maximum) : '';
@@ -20,6 +22,35 @@ function sameHash(left, right) {
   const a = Buffer.from(String(left), 'hex');
   const b = Buffer.from(String(right), 'hex');
   return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+function canonicalValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]));
+  }
+  return value;
+}
+
+function releaseManifestIsValid(artifact) {
+  if (artifact.releaseManifest == null) return true;
+  const manifest = artifact.releaseManifest;
+  if (!manifest || manifest.schema !== RELEASE_MANIFEST_SCHEMA || manifest.version !== 1 ||
+      !SHA256.test(String(manifest.manifestSha256)) ||
+      !Array.isArray(manifest.outputs) || manifest.outputs.length !== 1) return false;
+  const output = manifest.outputs[0];
+  const separator = artifact.dataUrl.indexOf(',');
+  if (separator < 0 || !SHA256.test(String(output?.sha256))) return false;
+  const bytes = Buffer.from(artifact.dataUrl.slice(separator + 1), 'base64');
+  const outputDigest = crypto.createHash('sha256').update(bytes).digest('hex');
+  if (!sameHash(outputDigest, output.sha256) || output.bytes !== bytes.length ||
+      output.filename !== artifact.filename || output.kind !== artifact.kind ||
+      output.mimeType !== artifact.mimeType) return false;
+  const { manifestSha256, ...content } = manifest;
+  const manifestDigest = crypto.createHash('sha256')
+    .update(JSON.stringify(canonicalValue(content)))
+    .digest('hex');
+  return sameHash(manifestDigest, manifestSha256);
 }
 
 function encryptionKey(secret) {
@@ -55,7 +86,8 @@ export function parseBundle(buffer) {
   if (bundle.checkpoints.length > 10 || bundle.artifacts.length > 30 ||
       bundle.artifacts.some((artifact) => (
         !artifact || typeof artifact.dataUrl !== 'string' ||
-        !/^data:(?:image\/png|image\/svg\+xml|application\/dxf);base64,/.test(artifact.dataUrl)
+        !/^data:(?:image\/png|image\/svg\+xml|application\/dxf);base64,/.test(artifact.dataUrl) ||
+        !releaseManifestIsValid(artifact)
       ))) {
     throw new ShareError(400, 'The package contains unsupported export artefacts.', 'bad_bundle');
   }

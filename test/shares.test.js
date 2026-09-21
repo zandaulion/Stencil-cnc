@@ -7,7 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { AuthService } from '../server/auth.js';
 import { initDatabase } from '../server/db.js';
-import { ShareService } from '../server/shares.js';
+import { parseBundle, ShareService } from '../server/shares.js';
+import { createMask, createReleaseManifest } from '../web/core/index.js';
 
 const bundle = Buffer.from(JSON.stringify({
   schema: 'stencil-cnc.share-bundle',
@@ -66,4 +67,55 @@ test('per-owner limits refuse additional snapshots before writing another file',
     db.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('server bundles verify retained release manifests against their exact export bytes', async () => {
+  const exportBlob = new Blob(['<svg/>'], { type: 'image/svg+xml' });
+  const mask = createMask(2, 2, 1);
+  const releaseManifest = await createReleaseManifest({
+    releaseId: 'release-server-check',
+    createdAt: '2026-09-21T10:00:00.000Z',
+    projectId: 'browser-project',
+    projectName: 'Portrait',
+    projectRevision: 3,
+    projectSchema: 'stencil-cnc.project',
+    projectVersion: 6,
+    mask,
+    sheet: { widthMm: 20, heightMm: 20 },
+    filename: 'portrait.svg',
+    kind: 'svg',
+    mimeType: exportBlob.type,
+    blob: exportBlob,
+    drawingUnits: 'mm',
+    profileSnapshot: { name: 'Profile' },
+    geometryInterpretation: 'finished-boundary-cam-v1',
+    validation: { valid: true, issues: [] },
+    validationRevision: 3,
+    validatedAt: '2026-09-21T09:59:00.000Z',
+    validationModelVersion: 1,
+  });
+  const candidate = JSON.parse(bundle.toString('utf8'));
+  candidate.artifacts = [{
+    filename: 'portrait.svg',
+    kind: 'svg',
+    mimeType: 'image/svg+xml',
+    createdAt: '2026-09-21T10:00:00.000Z',
+    profileSnapshot: { name: 'Profile' },
+    releaseManifest,
+    dataUrl: `data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`,
+  }];
+
+  assert.equal(parseBundle(Buffer.from(JSON.stringify(candidate))).artifacts.length, 1);
+  const originalName = candidate.artifacts[0].releaseManifest.project.name;
+  candidate.artifacts[0].releaseManifest.project.name = 'Changed after release';
+  assert.throws(
+    () => parseBundle(Buffer.from(JSON.stringify(candidate))),
+    /unsupported export artefacts/i,
+  );
+  candidate.artifacts[0].releaseManifest.project.name = originalName;
+  candidate.artifacts[0].dataUrl = `data:image/svg+xml;base64,${Buffer.from('<svg>changed</svg>').toString('base64')}`;
+  assert.throws(
+    () => parseBundle(Buffer.from(JSON.stringify(candidate))),
+    /unsupported export artefacts/i,
+  );
 });

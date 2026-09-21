@@ -1179,6 +1179,14 @@
               <small id="export-unit-scale">1 drawing unit = 1 mm</small>
             </div>
 
+            <div class="release-precision-card">
+              <span>Effective geometry grid</span>
+              <strong id="export-raster-resolution">Available after artwork is created</strong>
+              <small id="export-raster-resolution-detail">The release record will capture the actual export grid.</small>
+            </div>
+
+            <p class="release-record-note"><strong>Auditable release record</strong><span>Every retained export carries immutable geometry and file hashes, the profile snapshot, validation findings, units, and the CAM-compensation contract. It follows the encrypted project through sync and sharing.</span></p>
+
             <p class="section-help">File names include the project, panel size, cut style, frame choice, purpose, and validation or preview timestamp.</p>
 
             <div class="export-buttons">
@@ -1361,6 +1369,7 @@
           </div>
           <div class="canvas-metrics" aria-label="Canvas details">
             <span id="pointer-position">x — &nbsp; y —</span>
+            <span id="raster-resolution-status">grid —</span>
             <span id="panel-scale-status">1250 × 2500 mm</span>
           </div>
         </footer>
@@ -1946,12 +1955,15 @@
             <li><strong>PNG</strong> is available when geometry exists and is watermarked if validation is missing, stale, or blocking.</li>
             <li><strong>SVG/DXF</strong> require current validation with zero blockers and preserve true panel scale in the chosen units.</li>
             <li>Variable Dots preserve circle primitives in vector export when possible.</li>
+            <li>The status bar and Export stage report the real X/Y millimetres per raster cell. Coordinate decimals do not create finer source geometry.</li>
+            <li>Every newly retained export carries a tamper-evident release manifest with exact geometry/file hashes, profile, units, compensation contract, processing versions, and validation findings. It follows encrypted sync and sharing.</li>
             <li>Names include project, panel, style, frame, purpose, and timestamp.</li>
             <li>Portable project downloads omit the original photograph; a successfully synced server project retains it.</li>
           </ul>
           <h4>CAM review checklist</h4>
           <p>Confirm units, sheet size/orientation, material polarity, frame, profile evidence, scale, duplicate contours, lead-ins, cut order, heat strategy, fixturing, and exactly one CAM kerf-compensation step. Test a new setup on a coupon or lower-risk part.</p>
           <div class="help-callout"><strong>No automatic release claim</strong><p>Zero geometry blockers means Ready for CAM review. Machine and operator responsibilities remain.</p></div>
+          <div class="help-tip"><strong>Raster precision is not machine tolerance.</strong> Ordinary contours follow the displayed physical cell grid. The release manifest identifies exactly what was exported, but the target CAM and a suitable test cut still determine production acceptance.</div>
         </article>
 
         <article class="help-section" id="help-section-projects" data-help-section="projects" hidden>

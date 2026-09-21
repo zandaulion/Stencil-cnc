@@ -218,10 +218,14 @@ Processing failures stay visible with **Retry** and **Dismiss** instead of disap
 - **SVG** and **DXF** require a current validation with no blocking errors.
 - SVG/DXF are exported in the selected drawing units and preserve true panel scale.
 - Variable Dots retain true circle primitives in vector export when possible.
+- The canvas status and Export stage show the effective X/Y millimetres per raster cell. This is the grid from which ordinary contour edges are traced; extra coordinate decimals do not create finer source geometry.
+- Every newly retained PNG, SVG, and DXF includes an immutable release manifest in the encrypted project. It records hashes of the exact geometry and exported bytes, dimensions, units, cutting-profile snapshot, compensation contract, processing/validation versions, validation time and findings, and output identity. The manifest follows server sync and project sharing.
 - File names include the project, panel size, style, frame choice, purpose, and a timestamp.
 - An editable project download preserves settings and geometry but intentionally omits the original photograph. The encrypted server project retains the photograph when it was saved successfully.
 
 Before sending geometry to the machine, confirm units, stock size/orientation, material polarity, frame, profile evidence, scale, duplicate contours, lead-ins, cut order, heat strategy, fixturing, and one—and only one—CAM kerf compensation step. Use a coupon or reduced-risk test for a new setup.
+
+The release record makes an export identifiable and tamper-evident; it is not a machining certificate. Current SVG/DXF contours still follow grid-aligned raster boundaries except for preserved Variable Dot circle primitives. Optional curve fitting is not enabled until fitted vectors can be checked directly for topology and physical error.
 
 ## 9. Projects, autosave, and recovery
 
