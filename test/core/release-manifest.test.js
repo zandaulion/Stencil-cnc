@@ -37,6 +37,18 @@ test('release manifests bind exact geometry, export bytes, profile, and validati
     projectVersion: 6,
     mask: fixtureMask(),
     sheet: { widthMm: 20, heightMm: 20 },
+    vectorGeometry: {
+      contours: [[{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 }, { x: 0, y: 2 }]],
+      matchedCircles: [],
+    },
+    vectorProcessing: {
+      modelVersion: 1,
+      status: 'simplified',
+      requestedToleranceMm: 0.2,
+      appliedToleranceMm: 0.2,
+      maximumDeviationMm: 0.15,
+      topologyValidated: true,
+    },
     filename: 'portrait.svg',
     kind: 'svg',
     mimeType: blob.type,
@@ -57,6 +69,9 @@ test('release manifests bind exact geometry, export bytes, profile, and validati
   assert.equal(manifest.validation.status, 'validated');
   assert.equal(manifest.validation.warnings[0].locations, 2);
   assert.equal(manifest.geometry.mmPerCellX, 5);
+  assert.match(manifest.geometry.vectorSha256, /^[0-9a-f]{64}$/);
+  assert.equal(manifest.geometry.representation, 'physically-bounded-simplified-polylines-v1');
+  assert.equal(manifest.processing.vectorProcessing.maximumDeviationMm, 0.15);
   assert.equal(manifest.outputs[0].sha256, createHash('sha256').update('exact svg bytes').digest('hex'));
   assert.deepEqual(normalizeReleaseManifest(manifest), manifest);
 });

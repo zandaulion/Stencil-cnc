@@ -64,6 +64,7 @@ import {
   setSmallOpeningRepairAction,
   trimMaskToContent,
   upgradeProjectRecord,
+  vectorManufacturingValidationRegressed,
   zoomAroundPoint,
   isRetryableSyncError,
   isStorageQuotaError,
@@ -3649,6 +3650,7 @@ function updateReadouts() {
   el('export-size').textContent = exportSize;
   if (el('export-unit-scale')) el('export-unit-scale').textContent = `1 drawing unit = 1 ${exportUnit}`;
   updateRasterResolutionReadout();
+  updateVectorSimplificationUi();
   for (const node of all('[data-unit-label]')) node.textContent = state.unit;
   const profileStatus = state.cuttingProfile.status === 'verified' ? 'Verified' : 'Provisional';
   const manufacturingSummary = `${state.cuttingProfile.name} · ${profileStatus} · ${roundUnit(numberField('kerf', 1.2))} ${state.unit} kerf · ${roundUnit(numberField('min-web', 3))} ${state.unit} gaps · ${roundUnit(numberField('min-opening', 2))} ${state.unit} openings`;
@@ -3665,6 +3667,36 @@ function updateReadouts() {
   updateGeometryContractUi();
   updateStyleGuidance();
   updateGeometryPreviewState();
+}
+
+function updateVectorSimplificationUi(report = null) {
+  const enabled = el('export-simplify')?.checked === true;
+  const tolerance = el('curve-tolerance');
+  const status = el('vector-simplification-status');
+  tolerance?.toggleAttribute('disabled', !enabled);
+  if (tolerance) {
+    tolerance.min = state.unit === 'in' ? '0.001' : '0.01';
+    tolerance.max = state.unit === 'in' ? '0.4' : '10';
+    tolerance.step = state.unit === 'in' ? '0.001' : '0.01';
+  }
+  if (!status) return;
+  if (!report) {
+    status.dataset.state = enabled ? 'guarded' : 'exact';
+    status.textContent = enabled
+      ? 'Guarded simplification: topology and the rasterized manufacturing result will be checked before export.'
+      : 'Exact raster trace. No contour simplification will be applied.';
+    return;
+  }
+  status.dataset.state = report.status;
+  if (report.status === 'simplified') {
+    status.textContent = `${report.sourceVertexCount.toLocaleString()} → ${report.outputVertexCount.toLocaleString()} vertices at ${formatMillimetres(report.appliedToleranceMm)} mm maximum deviation. Topology and manufacturing checks passed.`;
+  } else if (report.status === 'unchanged') {
+    status.textContent = 'The exact trace already has no removable vertices within the requested tolerance; exact contours were exported.';
+  } else if (report.status === 'fallback') {
+    status.textContent = `Safety fallback: exact contours were exported. ${report.fallbackReason || 'The simplified result did not pass every check.'}`;
+  } else {
+    status.textContent = 'Exact raster trace exported without contour simplification.';
+  }
 }
 
 function formatMillimetres(value) {
@@ -3894,6 +3926,12 @@ function applyControls(controls = {}) {
   }
   if (!Object.hasOwn(controls, 'support-follow-features')) {
     migratedControls['support-follow-features'] = true;
+  }
+  if (!Object.hasOwn(controls, 'export-simplify')) {
+    migratedControls['export-simplify'] = false;
+  }
+  if (!Object.hasOwn(controls, 'curve-tolerance')) {
+    migratedControls['curve-tolerance'] = controls['measurement-unit'] === 'in' ? '0.008' : '0.2';
   }
   if (!Object.hasOwn(controls, 'placement-fit-version') &&
       Number(controls['panel-margin']) === 35) {
@@ -7294,6 +7332,80 @@ function pngBlob(mask, { draft = false, exactCircleHoles = [] } = {}) {
   });
 }
 
+function postFitValidationRecord(validation, reusedCurrentValidation = false) {
+  return {
+    modelVersion: GEOMETRY_VALIDATION_MODEL_VERSION,
+    reusedCurrentValidation,
+    valid: validation?.valid === true,
+    blockingLocations: countValidationLocations(validation, 'error'),
+    advisoryLocations: countValidationLocations(validation, 'warning'),
+  };
+}
+
+async function prepareGeometryForVectorExport(mask, vectorCircleHoles, requestedRevision) {
+  const simplify = el('export-simplify')?.checked === true;
+  const requestedToleranceMm = Math.max(0.01, Math.min(10,
+    toMm(numberField('curve-tolerance', state.unit === 'in' ? 0.008 : 0.2)),
+  ));
+  const result = await runGeometryJob('vector-prepare', {
+    mask,
+    sheet: sheet(),
+    exactCircleHoles: vectorCircleHoles,
+    options: { simplify, toleranceMm: requestedToleranceMm },
+    validationOptions: currentValidationOptions(),
+  }, {
+    title: 'Preparing export vectors…',
+    detail: 'Simplifying within the physical limit, checking topology, and rechecking manufacturing constraints.',
+    retry: null,
+  });
+  if (!result) return null;
+  if (requestedRevision !== state.revision) {
+    toast('The design changed while export vectors were checked. Export again.');
+    return null;
+  }
+  let { prepared } = result;
+  const changesRasterResult = result.changesRasterResult === true;
+  let postFitValidation = changesRasterResult ? result.postFitValidation : state.validation;
+  const regressed = changesRasterResult &&
+    vectorManufacturingValidationRegressed(state.validation, postFitValidation);
+  if (regressed) {
+    const attempted = prepared.report;
+    const blockerCount = countValidationLocations(postFitValidation, 'error');
+    const warningCount = countValidationLocations(postFitValidation, 'warning');
+    const currentWarningCount = countValidationLocations(state.validation, 'warning');
+    const reason = blockerCount > 0
+      ? `The rasterized vector result introduced ${blockerCount} blocking ${blockerCount === 1 ? 'location' : 'locations'}.`
+      : `The rasterized vector result increased advisory locations from ${currentWarningCount} to ${warningCount}.`;
+    prepared = {
+      contours: prepared.exactRasterContours,
+      matchedCircles: [],
+      exactRasterContours: prepared.exactRasterContours,
+      rasterMask: mask,
+      report: {
+        ...prepared.report,
+        requested: simplify,
+        status: 'fallback',
+        requestedToleranceMm: simplify ? requestedToleranceMm : null,
+        appliedToleranceMm: null,
+        outputVertexCount: prepared.exactRasterContours.reduce((sum, contour) => sum + contour.length, 0),
+        maximumDeviationMm: 0,
+        topologyValidated: attempted.topologyValidated,
+        attemptedOutputVertexCount: attempted.outputVertexCount,
+        attemptedMaximumDeviationMm: attempted.maximumDeviationMm,
+        fallbackReason: reason,
+        postFitValidation: postFitValidationRecord(postFitValidation),
+      },
+    };
+    postFitValidation = state.validation;
+  } else {
+    prepared.report = {
+      ...prepared.report,
+      postFitValidation: postFitValidationRecord(postFitValidation, !changesRasterResult),
+    };
+  }
+  return { ...prepared, postFitValidation };
+}
+
 async function exportGeometry(kind) {
   if (!state.designMask) {
     toast('Import or create artwork before exporting.');
@@ -7313,30 +7425,43 @@ async function exportGeometry(kind) {
   const previewCircleHoles = exactVectorDotHoles();
   try {
     const units = el('export-units')?.value === 'in' ? 'in' : 'mm';
+    const requestedRevision = state.revision;
+    const vectorExport = kind === 'svg' || kind === 'dxf';
+    const preparedGeometry = vectorExport
+      ? await prepareGeometryForVectorExport(mask, vectorCircleHoles, requestedRevision)
+      : null;
+    if (vectorExport && !preparedGeometry) return;
     let blob;
     let filename;
     if (kind === 'svg') {
       filename = exportFilename('svg');
-      blob = new Blob([exportSvg(mask, sheet(), { title: state.name, units, exactCircleHoles: vectorCircleHoles })], { type: 'image/svg+xml' });
+      blob = new Blob([exportSvg(mask, sheet(), { title: state.name, units, preparedGeometry })], { type: 'image/svg+xml' });
     } else if (kind === 'dxf') {
       filename = exportFilename('dxf');
-      blob = new Blob([exportDxf(mask, sheet(), { units, exactCircleHoles: vectorCircleHoles })], { type: 'application/dxf' });
+      blob = new Blob([exportDxf(mask, sheet(), { units, preparedGeometry })], { type: 'application/dxf' });
     } else if (kind === 'png') {
       filename = exportFilename('png', undefined, { draft });
       blob = await pngBlob(mask, { draft, exactCircleHoles: previewCircleHoles });
     } else {
       throw new Error(`Unsupported export format: ${kind}`);
     }
-    const exportedCircleHoles = kind === 'png' ? previewCircleHoles : vectorCircleHoles;
+    const exportedCircleHoles = kind === 'png' ? previewCircleHoles : preparedGeometry.matchedCircles;
+    const releaseMask = preparedGeometry?.rasterMask ?? mask;
+    const releaseValidation = preparedGeometry?.postFitValidation ?? state.validation;
     const releaseManifest = await createReleaseManifest({
       projectId: state.projectId,
       projectName: state.name,
       projectRevision: state.revision,
       projectSchema: PROJECT_SCHEMA,
       projectVersion: PROJECT_VERSION,
-      mask,
+      mask: releaseMask,
       sheet: sheet(),
       exactCircleHoles: exportedCircleHoles,
+      vectorGeometry: preparedGeometry ? {
+        contours: preparedGeometry.contours,
+        matchedCircles: preparedGeometry.matchedCircles,
+      } : null,
+      vectorProcessing: preparedGeometry?.report ?? null,
       filename,
       kind,
       mimeType: blob.type,
@@ -7344,7 +7469,7 @@ async function exportGeometry(kind) {
       drawingUnits: units,
       profileSnapshot: cuttingProfileFromControls(),
       geometryInterpretation: state.geometryInterpretation,
-      validation: state.validation,
+      validation: releaseValidation,
       validationRevision: state.validatedRevision,
       validatedAt: state.lastValidatedAt,
       validationModelVersion: GEOMETRY_VALIDATION_MODEL_VERSION,
@@ -7369,9 +7494,14 @@ async function exportGeometry(kind) {
         console.warn('The downloaded export could not be retained with the server project:', artifactError);
       }
     }
+    if (preparedGeometry) updateVectorSimplificationUi(preparedGeometry.report);
     toast(draft
       ? 'Draft PNG written with a validation watermark.'
-      : `${kind.toUpperCase()} written.`);
+      : preparedGeometry?.report.status === 'simplified'
+        ? `${kind.toUpperCase()} written with ${preparedGeometry.report.sourceVertexCount.toLocaleString()} → ${preparedGeometry.report.outputVertexCount.toLocaleString()} vertices; post-fit checks passed.`
+        : preparedGeometry?.report.status === 'fallback'
+          ? `${kind.toUpperCase()} written with exact raster contours after the guarded fallback.`
+          : `${kind.toUpperCase()} written.`);
   } catch (error) {
     console.error(error);
     toast(`The ${kind.toUpperCase()} could not be written.`);
@@ -8536,6 +8666,17 @@ function wire() {
     markDirty();
   });
   el('export-units')?.addEventListener('change', updateReadouts);
+  el('export-simplify')?.addEventListener('change', () => {
+    updateVectorSimplificationUi();
+    markDirty();
+    pushHistory();
+  });
+  el('curve-tolerance')?.addEventListener('input', () => updateVectorSimplificationUi());
+  el('curve-tolerance')?.addEventListener('change', () => {
+    updateVectorSimplificationUi();
+    markDirty();
+    pushHistory();
+  });
 
   el('btn-reset-treatment')?.addEventListener('click', () => {
     el('threshold').value = 50; el('contrast').value = 0;

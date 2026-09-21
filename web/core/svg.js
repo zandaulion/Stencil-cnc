@@ -64,7 +64,7 @@ export function traceMaskContours(mask) {
  *
  * @param {import('./mask.js').RasterMask} mask
  * @param {{ widthMm: number, heightMm: number }} sheet
- * @param {{ precision?: number, title?: string, fill?: string, includeXmlDeclaration?: boolean, units?: 'mm'|'in', exactCircleHoles?:Array<{cxMm:number,cyMm:number,radiusMm:number}> }} [options]
+ * @param {{ precision?: number, title?: string, fill?: string, includeXmlDeclaration?: boolean, units?: 'mm'|'in', exactCircleHoles?:Array<{cxMm:number,cyMm:number,radiusMm:number}>, preparedGeometry?:{contours:Array<Array<{x:number,y:number}>>,matchedCircles:Array<{cxMm:number,cyMm:number,radiusMm:number}>} }} [options]
  */
 export function exportSvg(mask, sheet, options = {}) {
   assertMask(mask);
@@ -81,7 +81,8 @@ export function exportSvg(mask, sheet, options = {}) {
   const width = formatNumber(widthInUnits, precision);
   const height = formatNumber(heightInUnits, precision);
   const fill = options.fill ?? "#000000";
-  const separated = separateCircleContours(traceMaskContours(mask), mask, sheet, options.exactCircleHoles);
+  const separated = options.preparedGeometry ??
+    separateCircleContours(traceMaskContours(mask), mask, sheet, options.exactCircleHoles);
   const pathData = separated.contours.map((contour) => contourToPath(
     contour,
     widthInUnits / mask.width,

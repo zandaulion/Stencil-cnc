@@ -309,12 +309,20 @@ test('PNG previews remain available before validation and are visibly marked as 
 test('exports disclose raster precision and retain an auditable release manifest', () => {
   for (const id of [
     'export-raster-resolution', 'export-raster-resolution-detail', 'raster-resolution-status',
+    'export-simplify', 'curve-tolerance', 'vector-simplification-status',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(html, /Edges lie on this physical grid|release record will capture/i);
   assert.match(html, /Every retained export carries immutable geometry and file hashes/);
   assert.match(editor, /effectiveRasterResolution\(mask, sheet\(\)\)/);
   assert.match(editor, /createReleaseManifest\(\{[\s\S]*?validationModelVersion: GEOMETRY_VALIDATION_MODEL_VERSION/);
   assert.match(editor, /saveArtifact\(state\.projectId, \{[\s\S]*?releaseManifest/);
+  assert.match(editor, /runGeometryJob\('vector-prepare',[\s\S]*?exactCircleHoles: vectorCircleHoles/);
+  assert.match(geometryJobsCore, /prepareVectorGeometry[\s\S]*?postFitValidation = validateDesign\(prepared\.rasterMask/);
+  assert.match(editor, /!Object\.hasOwn\(controls, 'export-simplify'\)[\s\S]*?migratedControls\['export-simplify'\] = false/);
+  assert.match(editor, /vectorManufacturingValidationRegressed\(state\.validation, postFitValidation\)/);
+  assert.match(editor, /contours: prepared\.exactRasterContours,[\s\S]*?matchedCircles: \[\]/);
+  assert.match(editor, /vectorGeometry: preparedGeometry/);
+  assert.match(editor, /vectorProcessing: preparedGeometry\?\.report/);
   assert.match(storage, /releaseManifest: normalizeReleaseManifest\(artifact\.releaseManifest\)/);
   assert.match(projectSync, /releaseManifest: artifact\.releaseManifest \?\? null/);
   assert.match(releaseManifest, /geometrySha256[\s\S]*?outputSha256[\s\S]*?manifestSha256/);

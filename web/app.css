@@ -3360,6 +3360,28 @@ select:focus {
   color: var(--ink);
 }
 
+.vector-simplification-status {
+  margin: 5px 0 12px;
+  padding: 9px 11px;
+  border-left: 3px solid var(--line-strong);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.42;
+}
+
+.vector-simplification-status[data-state="guarded"],
+.vector-simplification-status[data-state="simplified"] {
+  border-left-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.vector-simplification-status[data-state="fallback"] {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
 .export-buttons {
   display: grid;
   gap: 8px;

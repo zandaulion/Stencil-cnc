@@ -32,6 +32,34 @@ test('background validation is deterministic and structured-clone safe', () => {
   assert.doesNotThrow(() => structuredClone(first));
 });
 
+test('vector preparation and post-fit manufacturing validation stay off-thread and cloneable', () => {
+  const rows = Array.from({ length: 20 }, (_, y) => (
+    Array.from({ length: 20 }, (_, x) => (
+      y >= 2 && y < 18 && x >= 2 && x < 10 + (y % 2) ? '#' : '.'
+    )).join('')
+  ));
+  const mask = maskFromAscii(rows);
+  const phases = [];
+  const result = executeGeometryJob('vector-prepare', {
+    mask,
+    sheet: { widthMm: 200, heightMm: 200 },
+    exactCircleHoles: [],
+    options: { simplify: true, toleranceMm: 6 },
+    validationOptions: {
+      ...validationOptions,
+      sheet: { widthMm: 200, heightMm: 200 },
+      minimumWebMm: 0,
+      minimumOpeningMm: 0,
+    },
+  }, (phase) => phases.push(phase));
+
+  assert.equal(result.prepared.report.status, 'simplified');
+  assert.equal(result.changesRasterResult, true);
+  assert.ok(result.postFitValidation);
+  assert.deepEqual(phases, ['simplifying', 'checking']);
+  assert.doesNotThrow(() => structuredClone(result));
+});
+
 test('background support planning returns a proposal and finished-connectivity check', () => {
   const mask = maskFromAscii(['#...#']);
   const result = executeGeometryJob('support', {

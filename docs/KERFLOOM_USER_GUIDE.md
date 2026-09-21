@@ -219,13 +219,16 @@ Processing failures stay visible with **Retry** and **Dismiss** instead of disap
 - SVG/DXF are exported in the selected drawing units and preserve true panel scale.
 - Variable Dots retain true circle primitives in vector export when possible.
 - The canvas status and Export stage show the effective X/Y millimetres per raster cell. This is the grid from which ordinary contour edges are traced; extra coordinate decimals do not create finer source geometry.
+- **Simplify vector contours** is optional and off by default. When enabled, **Maximum boundary deviation** is a physical millimetre/inch limit for removing redundant polyline vertices; it is not coordinate rounding and does not create smooth splines.
+- Before a simplified SVG/DXF is written, Kerfloom verifies the deviation bound, closed-contour orientation, self/inter-contour intersections, nesting, and preserved-circle clearance. It then rasterizes the actual proposed vectors and re-runs the configured manufacturing checks. A new blocker, new warning type, or increased warning count triggers an automatic fallback to the exact raster contours.
+- The status below the control reports the nodes before/after and the applied safe tolerance, or explains why exact contours were used. The release manifest hashes the actual vectors and records the simplification and post-fit validation result.
 - Every newly retained PNG, SVG, and DXF includes an immutable release manifest in the encrypted project. It records hashes of the exact geometry and exported bytes, dimensions, units, cutting-profile snapshot, compensation contract, processing/validation versions, validation time and findings, and output identity. The manifest follows server sync and project sharing.
 - File names include the project, panel size, style, frame choice, purpose, and a timestamp.
 - An editable project download preserves settings and geometry but intentionally omits the original photograph. The encrypted server project retains the photograph when it was saved successfully.
 
 Before sending geometry to the machine, confirm units, stock size/orientation, material polarity, frame, profile evidence, scale, duplicate contours, lead-ins, cut order, heat strategy, fixturing, and one—and only one—CAM kerf compensation step. Use a coupon or reduced-risk test for a new setup.
 
-The release record makes an export identifiable and tamper-evident; it is not a machining certificate. Current SVG/DXF contours still follow grid-aligned raster boundaries except for preserved Variable Dot circle primitives. Optional curve fitting is not enabled until fitted vectors can be checked directly for topology and physical error.
+The release record makes an export identifiable and tamper-evident; it is not a machining certificate. With simplification off—or after a safety fallback—SVG/DXF contours follow grid-aligned raster boundaries except for validated Variable Dot circle primitives. Simplification produces straight polyline segments within the stated error bound, not Bézier curves or a smoother source image. Target-CAM import and physical acceptance remain necessary.
 
 ## 9. Projects, autosave, and recovery
 

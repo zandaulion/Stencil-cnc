@@ -8,6 +8,7 @@ import {
 } from "./repairs.js";
 import { suggestKerfAwareBridges } from "./suggestions.js";
 import { validateDesign } from "./validation.js";
+import { prepareVectorGeometry } from "./vector-geometry.js";
 import { materializeBridgeStrategy } from "./feature-guidance.js";
 
 function geometryOnlyStrategy(strategy) {
@@ -54,6 +55,22 @@ function planSupports(payload, report) {
 
 /** Executes one structured-clone-safe geometry task inside a Worker or test. */
 export function executeGeometryJob(type, payload, report = () => {}) {
+  if (type === "vector-prepare") {
+    report("simplifying", "Preparing physical-tolerance vector contours…");
+    const prepared = prepareVectorGeometry(
+      payload.mask,
+      payload.sheet,
+      payload.exactCircleHoles,
+      payload.options,
+    );
+    const changesRasterResult = prepared.rasterMask !== payload.mask;
+    let postFitValidation = null;
+    if (changesRasterResult) {
+      report("checking", "Rasterizing the actual vector output and rechecking manufacturing constraints…");
+      postFitValidation = validateDesign(prepared.rasterMask, payload.validationOptions);
+    }
+    return { prepared, changesRasterResult, postFitValidation };
+  }
   if (type === "validate") {
     report("checking", "Checking connectivity, openings, and finished metal widths…");
     return validateDesign(payload.mask, payload.options);

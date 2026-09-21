@@ -85,6 +85,8 @@ export async function createReleaseManifest({
   mask,
   sheet,
   exactCircleHoles = [],
+  vectorGeometry = null,
+  vectorProcessing = null,
   filename,
   kind,
   mimeType,
@@ -113,8 +115,11 @@ export async function createReleaseManifest({
     height: mask.height,
   });
   const rasterSha256 = await sha256Parts([rasterHeader, '\n', mask.data]);
+  const vectorSha256 = vectorGeometry
+    ? await sha256Parts([canonicalJson(vectorGeometry)])
+    : null;
   const geometrySha256 = await sha256Parts([
-    canonicalJson({ rasterSha256, sheet, exactCircleHoles: circles }),
+    canonicalJson({ rasterSha256, vectorSha256, sheet, exactCircleHoles: circles }),
   ]);
   const outputSha256 = await sha256Blob(blob);
   const currentValidation = validation && validationRevision === projectRevision;
@@ -124,6 +129,13 @@ export async function createReleaseManifest({
   const validationStatus = currentValidation
     ? validation.valid === true ? 'validated' : 'checked-with-blockers'
     : 'not-current';
+  const vectorRepresentation = vectorGeometry
+    ? vectorProcessing?.status === 'simplified'
+      ? 'physically-bounded-simplified-polylines-v1'
+      : vectorGeometry.matchedCircles?.length
+        ? 'grid-aligned-raster-boundaries-with-circle-primitives-v1'
+        : 'grid-aligned-raster-boundaries-v1'
+    : 'grid-aligned-raster-boundaries-v1';
 
   const content = {
     schema: RELEASE_MANIFEST_SCHEMA,
@@ -149,9 +161,12 @@ export async function createReleaseManifest({
       rasterHeightCells: resolution.heightCells,
       mmPerCellX: resolution.mmPerCellX,
       mmPerCellY: resolution.mmPerCellY,
+      vectorSha256,
       exactCircleHoleCount: circles.length,
-      representation: 'grid-aligned-raster-boundaries-v1',
-      approximationNote: 'Coordinate decimals do not improve the source raster resolution.',
+      representation: vectorRepresentation,
+      approximationNote: vectorProcessing?.status === 'simplified'
+        ? 'Polyline vertices were reduced within the recorded physical deviation after topology and manufacturing checks.'
+        : 'Coordinate decimals do not improve the source raster resolution.',
     },
     compensation: {
       geometryInterpretation: String(geometryInterpretation),
@@ -162,6 +177,7 @@ export async function createReleaseManifest({
     processing: {
       rasterBoundaryExporterVersion: RASTER_BOUNDARY_EXPORTER_VERSION,
       validationModelVersion: Number(validationModelVersion),
+      vectorProcessing: vectorProcessing ? cloneJson(vectorProcessing) : null,
     },
     validation: {
       status: validationStatus,

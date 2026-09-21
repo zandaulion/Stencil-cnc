@@ -91,6 +91,13 @@ export {
 export { recommendStyleSettings } from "./style-guidance.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";
+export {
+  VECTOR_SIMPLIFICATION_MODEL_VERSION,
+  prepareVectorGeometry,
+  rasterizeVectorGeometry,
+  validateVectorGeometry,
+  vectorManufacturingValidationRegressed,
+} from "./vector-geometry.js";
 export { DRAFT_WATERMARK_LABEL, drawDraftWatermark, maskToRgba } from "./png.js";
 export { buildExportFilename, filenamePart, filenameTimestamp } from "./filenames.js";
 export {

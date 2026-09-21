@@ -1158,10 +1158,15 @@
                   <option value="in">Inches</option>
                 </select>
               </label>
+              <label class="toggle-row" for="export-simplify">
+                <span>Simplify vector contours<small>Optional · guarded by post-fit validation</small></span>
+                <input class="switch" id="export-simplify" name="exportSimplify" type="checkbox">
+              </label>
               <label class="field-row" for="curve-tolerance">
-                <span>Curve tolerance <small>Planned for a later version</small></span>
+                <span>Maximum boundary deviation <small>Physical limit, not coordinate precision</small></span>
                 <span class="number-field compact"><input id="curve-tolerance" name="curveTolerance" type="number" min="0.01" max="10" step="0.01" value="0.2" disabled><span data-unit-label>mm</span></span>
               </label>
+              <p class="vector-simplification-status" id="vector-simplification-status" data-state="exact">Exact raster trace. No contour simplification will be applied.</p>
               <label class="toggle-row" for="export-frame">
                 <span>Include outer frame</span>
                 <input class="switch" id="export-frame" name="exportFrame" type="checkbox" checked>
@@ -1955,6 +1960,7 @@
             <li><strong>PNG</strong> is available when geometry exists and is watermarked if validation is missing, stale, or blocking.</li>
             <li><strong>SVG/DXF</strong> require current validation with zero blockers and preserve true panel scale in the chosen units.</li>
             <li>Variable Dots preserve circle primitives in vector export when possible.</li>
+            <li>Optional vector simplification reduces polyline nodes within a physical deviation limit. Kerfloom checks deviation, intersections, nesting, topology, and a rasterized manufacturing result; any regression automatically falls back to the exact raster trace.</li>
             <li>The status bar and Export stage report the real X/Y millimetres per raster cell. Coordinate decimals do not create finer source geometry.</li>
             <li>Every newly retained export carries a tamper-evident release manifest with exact geometry/file hashes, profile, units, compensation contract, processing versions, and validation findings. It follows encrypted sync and sharing.</li>
             <li>Names include project, panel, style, frame, purpose, and timestamp.</li>

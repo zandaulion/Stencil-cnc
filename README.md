@@ -38,6 +38,11 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
   tamper-evident release manifest with exact geometry/output hashes, units,
   cutting-profile snapshot, compensation contract, and validation evidence.
   The manifest travels inside encrypted synchronized and shared artefacts.
+- Optionally reduces SVG/DXF polyline nodes within a user-set physical
+  deviation. The proposed vectors must preserve contour topology, nesting,
+  intersections, and exact-circle clearance, then pass the manufacturing
+  validator after rasterization; otherwise export falls back automatically to
+  the exact raster contours. The release manifest records the decision.
 - Runs as an installable, offline-capable PWA after an authorised device has loaded it.
 
 ## Workflow

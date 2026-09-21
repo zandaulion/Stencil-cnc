@@ -14,7 +14,7 @@ const DXF_UNITS = Object.freeze({
  *
  * @param {import('./mask.js').RasterMask} mask
  * @param {{widthMm:number,heightMm:number}} sheet
- * @param {{units?:'mm'|'in',title?:string,precision?:number,exactCircleHoles?:Array<{cxMm:number,cyMm:number,radiusMm:number}>}} [options]
+ * @param {{units?:'mm'|'in',title?:string,precision?:number,exactCircleHoles?:Array<{cxMm:number,cyMm:number,radiusMm:number}>,preparedGeometry?:{contours:Array<Array<{x:number,y:number}>>,matchedCircles:Array<{cxMm:number,cyMm:number,radiusMm:number}>}}} [options]
  */
 export function exportDxf(mask, sheet, options = {}) {
   assertMask(mask);
@@ -72,7 +72,8 @@ export function exportDxf(mask, sheet, options = {}) {
 
   pair(0, "SECTION");
   pair(2, "ENTITIES");
-  const separated = separateCircleContours(traceMaskContours(mask), mask, sheet, options.exactCircleHoles);
+  const separated = options.preparedGeometry ??
+    separateCircleContours(traceMaskContours(mask), mask, sheet, options.exactCircleHoles);
   for (const contour of separated.contours) {
     pair(0, "LWPOLYLINE");
     pair(100, "AcDbEntity");
