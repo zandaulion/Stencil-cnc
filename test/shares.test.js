@@ -101,7 +101,7 @@ test('server bundles verify retained release manifests against their exact expor
     mimeType: 'image/svg+xml',
     createdAt: '2026-09-21T10:00:00.000Z',
     profileSnapshot: { name: 'Profile' },
-    releaseManifest,
+    releaseManifest: JSON.parse(JSON.stringify(releaseManifest)),
     dataUrl: `data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`,
   }];
 
