@@ -206,6 +206,12 @@ The preview records the exact cutting-profile revision, status, geometry interpr
 
 Manual corrections made after accepting repairs override only conflicting generated cells; unaffected automatic repairs stay active. Running checks again evaluates the combined result and does not, by itself, delete accepted repairs. Changing an upstream dependency—artwork, placement, panel geometry, polarity, or cutting limits—can invalidate that layer and require regeneration.
 
+### Processing, cancellation, and device timings
+
+Validation, repair planning, repair-choice evaluation, and smart-support planning run outside the interface thread. The progress card keeps the current geometry visible and offers **Cancel**; Escape also cancels while that card is active. Cancellation terminates the calculation and does not add geometry, Undo steps, recovery points, or save operations. A result computed for an older artwork revision, support configuration, repair plan, or cutting-profile contract is discarded automatically.
+
+Processing failures stay visible with **Retry** and **Dismiss** instead of disappearing in a toast. Open **Help → Processing performance** to see the latest timings measured on that browser. Those local diagnostics store only task names, durations, outcomes, desktop/mobile layout, and timestamps—not artwork or geometry. Use them when reporting a slow operation. The deterministic repository baseline and physical acceptance checklist are in `docs/K16_PROCESSING_BASELINE.md`.
+
 ## 8. Export and CAM hand-off
 
 - **PNG** is always available once geometry exists. If validation is missing, stale, or blocking, the PNG includes a visible validation watermark.

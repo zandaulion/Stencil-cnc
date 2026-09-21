@@ -3556,7 +3556,7 @@ select:focus {
   display: grid;
   width: min(360px, calc(100% - 80px));
   min-height: 66px;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 11px 14px 14px;
@@ -3566,7 +3566,42 @@ select:focus {
   background: rgb(255 255 255 / 96%);
   box-shadow: 0 12px 34px rgb(20 33 41 / 22%);
   transform: translateX(-50%);
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.render-progress[data-state="failed"] {
+  border-color: rgb(196 61 61 / 42%);
+}
+
+.render-progress[data-state="failed"] .render-progress-spinner {
+  border-color: rgb(196 61 61 / 18%);
+  border-top-color: #c43d3d;
+  animation: none;
+}
+
+.render-progress-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.render-progress-actions button {
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid rgb(20 33 41 / 20%);
+  border-radius: 7px;
+  color: var(--ink);
+  background: white;
+  font: inherit;
+  font-size: 0.63rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.render-progress-actions button:hover { border-color: var(--teal); }
+
+.render-progress-actions button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .render-progress-spinner {
@@ -3608,6 +3643,8 @@ select:focus {
   overflow: hidden;
   background: var(--teal-soft);
 }
+
+.render-progress[data-state="failed"] .render-progress-track { display: none; }
 
 .render-progress-track i {
   display: block;

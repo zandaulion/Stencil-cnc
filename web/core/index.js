@@ -82,6 +82,12 @@ export {
 export { formatRulerValue, rulerStep, rulerTicks } from "./rulers.js";
 export { isCanvasShortcutTarget, isEditableShortcutTarget } from "./shortcuts.js";
 export { contrastRatio, tabIndexForKey } from "./accessibility.js";
+export { createWorkerJobRunner, isJobCancelled, JobCancelledError } from "./async-jobs.js";
+export {
+  bridgeSamplersFromGuidance,
+  createFeatureGuidance,
+  materializeBridgeStrategy,
+} from "./feature-guidance.js";
 export { recommendStyleSettings } from "./style-guidance.js";
 export { exportSvg, maskToSvg, traceMaskContours } from "./svg.js";
 export { exportDxf, maskToDxf } from "./dxf.js";

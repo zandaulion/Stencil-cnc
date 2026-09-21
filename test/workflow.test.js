@@ -13,6 +13,9 @@ const manifest = fs.readFileSync(path.join(projectRoot, 'web/manifest.webmanifes
 const projectSync = fs.readFileSync(path.join(projectRoot, 'web/project-sync.js'), 'utf8');
 const png = fs.readFileSync(path.join(projectRoot, 'web/core/png.js'), 'utf8');
 const accessibility = fs.readFileSync(path.join(projectRoot, 'web/core/accessibility.js'), 'utf8');
+const geometryWorker = fs.readFileSync(path.join(projectRoot, 'web/workers/geometry.js'), 'utf8');
+const geometryJobsCore = fs.readFileSync(path.join(projectRoot, 'web/core/geometry-jobs.js'), 'utf8');
+const featureGuidance = fs.readFileSync(path.join(projectRoot, 'web/core/feature-guidance.js'), 'utf8');
 const userGuide = fs.readFileSync(path.join(projectRoot, 'docs/KERFLOOM_USER_GUIDE.md'), 'utf8');
 
 test('Kerfloom is the public brand while project compatibility remains stable', () => {
@@ -332,11 +335,12 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
   for (const action of ['close', 'enlarge', 'merge']) {
     assert.match(html, new RegExp(`data-repair-action="${action}"`), action);
   }
-  assert.match(editor, /planManufacturingRepairs\(mask/);
+  assert.match(editor, /runGeometryJob\('repair'/);
+  assert.match(geometryJobsCore, /planManufacturingRepairs\(payload\.mask/);
   assert.match(editor, /maximumBridges: 192/);
   assert.match(editor, /profileRef: contract\.profile/);
   assert.match(editor, /repairContractMatchesCurrent\(state\.repairPlan\.validationContract\)/);
-  assert.match(editor, /measureRepairEffects\(mask, state\.repairPreviewMask/);
+  assert.match(geometryJobsCore, /measureRepairEffects\(payload\.mask, candidate/);
   assert.match(editor, /describeRepairTermination\(/);
   assert.match(editor, /state\.repairPlan = plan;[\s\S]*?No automatic changes were kept/);
   assert.match(editor, /if \(mode === 'warnings'\)/);
@@ -498,21 +502,20 @@ test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.doesNotMatch(html, /id="protect-faces"[^>]*disabled/);
   assert.match(html, /id="support-follow-features"[^>]*type="checkbox" checked/);
   assert.match(editor, /function smartBridgeStrategy\(/);
-  assert.match(editor, /function bridgeImageSamplers\(\)/);
-  assert.match(editor, /const analysisMaximumDimension = 768/);
-  assert.match(editor, /const portraitRisk = faceInterior \* lightSkinLikelihood/);
-  assert.match(editor, /featureAt: imageSamplers\.featureAt/);
+  assert.match(editor, /function bridgeFeatureGuidance\(\)/);
+  assert.match(featureGuidance, /maximumDimension = 768/);
+  assert.match(featureGuidance, /portraitRisk: faceInterior \* lightSkinLikelihood/);
+  assert.match(editor, /featureGuidance: sampleImage \? bridgeFeatureGuidance\(\) : null/);
   assert.match(editor, /el\('support-follow-features'\)\?\.addEventListener\('change', supportPlanChanged\)/);
   assert.match(editor, /strategy\.preferredAngleDeg = barAngleDeg \+ 90/);
-  assert.match(editor, /const planWith = \(candidateStrategy\) => suggestKerfAwareBridges/);
-  assert.match(editor, /strategy: candidateStrategy/);
+  assert.match(editor, /runGeometryJob\('support'/);
+  assert.match(geometryJobsCore, /suggestKerfAwareBridges\(mask/);
   assert.match(editor, /minimumWebMm,\s*kerfMm,/);
   assert.match(html, /id="bridge-selection-meta"/);
   assert.match(editor, /bridge\.fallback === true/);
   assert.match(editor, /Shortest-path fallback/);
   assert.match(editor, /Planning smart supports/);
-  assert.match(editor, /suggestKerfAwareBridges\(base\.mask/);
-  assert.match(editor, /Feature-following support scoring failed; retrying without it/);
+  assert.match(geometryJobsCore, /Image guidance failed; preserving detail with structural placement/);
   assert.match(editor, /smartBridgeStrategy\(\{ sampleImage: false \}\)/);
   assert.match(editor, /Image guidance was unavailable, so structural placement was used/);
   assert.match(editor, /Support planning failed before changing the geometry/);
@@ -543,6 +546,28 @@ test('server rendering has a visible queued and in-flight progress state', () =>
   assert.match(editor, /setRenderProgress\('queued'\)/);
   assert.match(editor, /setRenderProgress\('running', requestedStyle\)/);
   assert.match(editor, /viewport\?\.setAttribute\('aria-busy', String\(visible\)\)/);
+});
+
+test('long geometry work is cancellable, measured, and protected from stale results', () => {
+  for (const id of [
+    'btn-processing-cancel', 'btn-processing-retry', 'btn-processing-dismiss',
+    'processing-metrics-list', 'btn-clear-processing-metrics',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(editor, /createWorkerJobRunner\(\{ workerUrl: '\/workers\/geometry\.js' \}\)/);
+  for (const kind of ['validate', 'repair', 'repair-evaluate', 'support']) {
+    assert.match(editor + geometryWorker + geometryJobsCore, new RegExp(`['"]${kind}['"]`), kind);
+  }
+  assert.match(editor, /geometryJobs\.cancel\('Processing cancelled; the current geometry was kept'\)/);
+  assert.match(editor, /requestedRevision !== state\.revision/);
+  assert.match(editor, /repairContractMatchesCurrent\(proposal\.validationContract\)/);
+  assert.match(editor, /requestedSignature !== supportPlanSignature\(\)/);
+  assert.match(editor, /state\.repairPlan !== plan/);
+  assert.match(editor, /recordProcessingMetric\('render'/);
+  assert.match(editor, /recordProcessingMetric\('local save'/);
+  assert.match(editor, /recordProcessingMetric\('server sync'/);
+  assert.match(html, /Only task names, durations, outcome, device layout, and timestamps are stored/);
+  assert.match(geometryWorker, /self\.onmessage/);
+  assert.match(geometryWorker, /kind: "result"/);
 });
 
 test('a new editor opens on an unlinked 1250 by 2500 mm panel', () => {
@@ -583,7 +608,7 @@ test('artwork can be positioned, rotated, and zoomed as persistent geometry', ()
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(editor, /artworkTransform: artworkTransform\(\)/);
   assert.match(editor, /pointFromArtworkPlacement\(/);
-  assert.match(editor, /pointToArtworkPlacement\(/);
+  assert.match(editor + featureGuidance, /pointToArtworkPlacement\(/);
   assert.match(editor, /state\.tool === 'artwork'/);
   assert.match(editor, /draggingArtwork/);
   assert.match(editor, /context\.rotate\(\(state\.placement\.rotationDeg \|\| 0\)/);

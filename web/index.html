@@ -1344,6 +1344,11 @@
               <strong id="render-progress-title">Updating preview…</strong>
               <small id="render-progress-detail">Rendering on the private server.</small>
             </span>
+            <span class="render-progress-actions">
+              <button id="btn-processing-cancel" type="button">Cancel</button>
+              <button id="btn-processing-retry" type="button" hidden>Retry</button>
+              <button id="btn-processing-dismiss" type="button" hidden>Dismiss</button>
+            </span>
             <span class="render-progress-track" aria-hidden="true"><i></i></span>
           </div>
           <div class="scale-indicator" id="scale-readout" aria-hidden="true"><span></span><small>100 mm</small></div>
@@ -1817,7 +1822,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16 16 5 5"></path></svg>
           <input id="help-search" type="search" placeholder="Search workflow, supports, export…" autocomplete="off">
         </label>
-        <span class="help-search-status" id="help-search-status" role="status">Browse 11 topics</span>
+        <span class="help-search-status" id="help-search-status" role="status">Browse 12 topics</span>
       </div>
 
       <nav class="help-nav" id="help-nav" aria-label="Handbook topics">
@@ -1832,6 +1837,7 @@
         <button type="button" data-help-target="controls"><span>09</span> Mobile &amp; keyboard</button>
         <button type="button" data-help-target="safety"><span>10</span> Privacy &amp; safety</button>
         <button type="button" data-help-target="troubleshooting"><span>11</span> Troubleshooting</button>
+        <button type="button" data-help-target="performance"><span>12</span> Processing performance</button>
       </nav>
 
       <main class="help-content" id="help-content" tabindex="-1">
@@ -2018,6 +2024,18 @@
           <details><summary>SVG/DXF is disabled</summary><p>Generate geometry, run all checks, and resolve every blocker. PNG remains available and is watermarked while unvalidated.</p></details>
           <details><summary>The canvas is lost</summary><p>Select Pan and press F or Fit. This reframes the complete panel.</p></details>
           <details><summary>Smart supports find no safe placement</summary><p>Add a manual tie in a dark feature, widen attachment material, or revise the pattern. Only lower profile limits when the real setup supports them.</p></details>
+        </article>
+
+        <article class="help-section" id="help-section-performance" data-help-section="performance" hidden>
+          <span class="help-kicker">Processing performance</span>
+          <h3 tabindex="-1">Measure this device without exposing artwork</h3>
+          <p>Kerfloom records the latest elapsed times for rendering, geometry checks, repair planning, smart supports, and saving in this browser. Only task names, durations, outcome, device layout, and timestamps are stored—never image pixels or geometry.</p>
+          <dl class="help-definition-grid" id="processing-metrics-list">
+            <div><dt>No measurements yet</dt><dd>Run a render, check, repair, support plan, or save on this device.</dd></div>
+          </dl>
+          <button class="button button-quiet" id="btn-clear-processing-metrics" type="button">Clear timing history</button>
+          <p>Validation, repair planning, and smart-support graph work run outside the interface thread. Cancel stops that Worker immediately; a superseded or stale result cannot replace newer work. The last accepted geometry stays visible until a new result is accepted.</p>
+          <div class="help-tip"><strong>When reporting a slow operation:</strong> include the task name and elapsed time shown here, the device/browser, panel dimensions, and approximate artwork complexity. Do not send the source image unless you intend to share it.</div>
         </article>
 
         <div class="help-no-results" id="help-no-results" hidden>

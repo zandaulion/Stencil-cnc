@@ -27,9 +27,11 @@ import {
   calculateArtworkPlacement,
   connectedRegionIndices,
   countValidationLocations,
+  createFeatureGuidance,
   createCuttingProfile,
   createProject,
   createSyncRetryController,
+  createWorkerJobRunner,
   decodeMask,
   deserializeProject,
   drawDraftWatermark,
@@ -41,7 +43,6 @@ import {
   maskFromImageData,
   maskFingerprint,
   maskToRgba,
-  measureRepairEffects,
   mergeRepairLayerEdits,
   manualEditIndices,
   normalizeManualEdit,
@@ -53,16 +54,12 @@ import {
   normalizeVectorDots,
   nextIssueReviewTarget,
   placeVectorDots,
-  planManufacturingRepairs,
   placeMaskOnSheet,
   pointFromArtworkPlacement,
-  pointToArtworkPlacement,
   serializeProject,
   setSmallOpeningRepairAction,
-  suggestKerfAwareBridges,
   trimMaskToContent,
   upgradeProjectRecord,
-  validateDesign,
   zoomAroundPoint,
   isRetryableSyncError,
   isStorageQuotaError,
@@ -70,6 +67,7 @@ import {
   cuttingProfileVerificationProblems,
   isCanvasShortcutTarget,
   isEditableShortcutTarget,
+  isJobCancelled,
   tabIndexForKey,
   isLegacyGeometryInterpretation,
   kerfErosionMm,
@@ -1359,18 +1357,165 @@ let styleToken = 0;
 let styleAbort = null;
 let renderProgressClock = null;
 let toolOptionsKind = null;
+let processingPanelOwner = null;
+let processingCancel = null;
+let processingRetry = null;
+let processingPanelStartedAt = null;
+let geometryJobSequence = 0;
+const geometryJobs = createWorkerJobRunner({ workerUrl: '/workers/geometry.js' });
+const PROCESSING_METRICS_KEY = 'kerfloom-processing-metrics-v1';
+let processingMetrics = [];
+
+try {
+  const storedMetrics = JSON.parse(localStorage.getItem(PROCESSING_METRICS_KEY) || '[]');
+  if (Array.isArray(storedMetrics)) processingMetrics = storedMetrics.slice(-40);
+} catch {
+  processingMetrics = [];
+}
+
+function recordProcessingMetric(kind, durationMs, outcome = 'completed', workerDurationMs = null) {
+  if (!(durationMs >= 0)) return;
+  processingMetrics.push({
+    kind,
+    durationMs: Math.round(durationMs),
+    workerDurationMs: workerDurationMs == null ? null : Math.round(workerDurationMs),
+    outcome,
+    mobile: matchMedia('(max-width: 760px)').matches,
+    at: new Date().toISOString(),
+  });
+  processingMetrics = processingMetrics.slice(-40);
+  try {
+    localStorage.setItem(PROCESSING_METRICS_KEY, JSON.stringify(processingMetrics));
+  } catch {
+    // Timing diagnostics are expendable and must never interfere with work.
+  }
+  renderProcessingMetrics();
+}
+
+function renderProcessingMetrics() {
+  const list = el('processing-metrics-list');
+  if (!list) return;
+  const completed = processingMetrics.filter((metric) => metric.outcome === 'completed');
+  if (!completed.length) {
+    list.innerHTML = '<div><dt>No measurements yet</dt><dd>Run a render, check, repair, support plan, or save on this device.</dd></div>';
+    return;
+  }
+  const latestByKind = new Map();
+  for (const metric of completed) latestByKind.set(`${metric.mobile ? 'Phone' : 'Desktop'} · ${metric.kind}`, metric);
+  list.innerHTML = [...latestByKind.entries()].map(([label, metric]) =>
+    `<div><dt>${escapeHtml(label)}</dt><dd>${(metric.durationMs / 1000).toFixed(2)} s</dd></div>`).join('');
+}
+
+function clearProcessingMetrics() {
+  processingMetrics = [];
+  try {
+    localStorage.removeItem(PROCESSING_METRICS_KEY);
+  } catch {
+    // The in-memory list can still be cleared when storage is unavailable.
+  }
+  renderProcessingMetrics();
+}
+
+function hideProcessingPanel(owner = processingPanelOwner) {
+  if (owner !== processingPanelOwner) return;
+  clearInterval(renderProgressClock);
+  renderProgressClock = null;
+  processingPanelOwner = null;
+  processingCancel = null;
+  processingRetry = null;
+  processingPanelStartedAt = null;
+  el('render-progress')?.setAttribute('hidden', '');
+}
+
+function showProcessingPanel({ owner, title, detail, cancel = null, stateName = 'running', retry = null }) {
+  const progress = el('render-progress');
+  if (!progress) return;
+  clearInterval(renderProgressClock);
+  renderProgressClock = null;
+  if (processingPanelOwner !== owner || processingPanelStartedAt === null) {
+    processingPanelStartedAt = performance.now();
+  }
+  processingPanelOwner = owner;
+  processingCancel = cancel;
+  processingRetry = retry;
+  progress.hidden = false;
+  progress.dataset.state = stateName;
+  const titleNode = el('render-progress-title');
+  const detailNode = el('render-progress-detail');
+  if (titleNode) titleNode.textContent = title;
+  const updateDetail = () => {
+    if (!detailNode || processingPanelOwner !== owner) return;
+    const elapsed = Math.floor((performance.now() - processingPanelStartedAt) / 1000);
+    detailNode.textContent = stateName === 'running' && elapsed > 0 ? `${detail} · ${elapsed}s elapsed` : detail;
+  };
+  updateDetail();
+  if (stateName === 'running') renderProgressClock = setInterval(updateDetail, 1000);
+  el('btn-processing-cancel')?.toggleAttribute('hidden', !cancel || stateName !== 'running');
+  el('btn-processing-retry')?.toggleAttribute('hidden', !retry || stateName !== 'failed');
+  el('btn-processing-dismiss')?.toggleAttribute('hidden', stateName !== 'failed');
+}
+
+function failProcessingPanel(owner, title, detail, retry) {
+  if (processingPanelOwner !== owner) return;
+  showProcessingPanel({ owner, title, detail, stateName: 'failed', retry });
+}
+
+async function runGeometryJob(type, payload, { title, detail, retry, onProgress } = {}) {
+  const owner = `geometry-${++geometryJobSequence}`;
+  const startedAt = performance.now();
+  showProcessingPanel({
+    owner,
+    title,
+    detail,
+    cancel: () => geometryJobs.cancel('Processing cancelled; the current geometry was kept'),
+  });
+  el('canvas-viewport')?.setAttribute('aria-busy', 'true');
+  try {
+    const result = await geometryJobs.run(type, payload, {
+      onProgress: (progress) => {
+        if (processingPanelOwner === owner && progress.detail) {
+          showProcessingPanel({
+            owner,
+            title,
+            detail: progress.detail,
+            cancel: () => geometryJobs.cancel('Processing cancelled; the current geometry was kept'),
+          });
+        }
+        onProgress?.(progress);
+      },
+    });
+    recordProcessingMetric(type, performance.now() - startedAt, 'completed', result.durationMs);
+    hideProcessingPanel(owner);
+    return result.value;
+  } catch (error) {
+    const elapsed = performance.now() - startedAt;
+    if (isJobCancelled(error)) {
+      recordProcessingMetric(type, elapsed, 'cancelled');
+      const wasVisible = processingPanelOwner === owner;
+      hideProcessingPanel(owner);
+      if (wasVisible) toast('Processing cancelled. The previous geometry was kept.');
+      return null;
+    }
+    recordProcessingMetric(type, elapsed, 'failed');
+    failProcessingPanel(
+      owner,
+      `${title} failed`,
+      `${error.message || 'The calculation could not finish.'} The previous geometry is still active.`,
+      retry,
+    );
+    throw error;
+  } finally {
+    el('canvas-viewport')?.setAttribute('aria-busy', String(geometryJobs.active || state.styleBusy));
+  }
+}
 
 function setRenderProgress(phase = null, style = selectedCutStyle()) {
-  const progress = el('render-progress');
   const viewport = el('canvas-viewport');
   const controls = el('style-controls');
   const status = el('style-status');
   const rerender = el('btn-restyle');
   const visible = Boolean(phase && state.source && !state.offline);
 
-  clearInterval(renderProgressClock);
-  renderProgressClock = null;
-  progress?.toggleAttribute('hidden', !visible);
   viewport?.setAttribute('aria-busy', String(visible));
   controls?.setAttribute('aria-busy', String(visible));
   status?.classList.toggle('is-busy', visible);
@@ -1380,27 +1525,37 @@ function setRenderProgress(phase = null, style = selectedCutStyle()) {
     else delete viewport.dataset.renderProgress;
   }
   updateGeometryPreviewState();
-  if (!visible) return;
-
-  const title = el('render-progress-title');
-  const detail = el('render-progress-detail');
-  const styleName = CUT_STYLE_NAMES[style] || 'Artwork';
-  if (phase === 'queued') {
-    if (title) title.textContent = 'Preview update queued';
-    if (detail) detail.textContent = `${styleName} will render when you finish adjusting.`;
+  if (!visible) {
+    hideProcessingPanel('style');
     return;
   }
+  const styleName = CUT_STYLE_NAMES[style] || 'Artwork';
+  if (phase === 'queued') {
+    showProcessingPanel({
+      owner: 'style',
+      title: 'Preview update queued',
+      detail: `${styleName} will render when you finish adjusting.`,
+      stateName: 'queued',
+    });
+    return;
+  }
+  showProcessingPanel({
+    owner: 'style',
+    title: 'Updating preview…',
+    detail: `${styleName} is rendering on the private server.`,
+    cancel: cancelStyleRendering,
+  });
+}
 
-  if (title) title.textContent = 'Updating preview…';
-  const startedAt = performance.now();
-  const updateElapsed = () => {
-    const seconds = Math.max(0, Math.floor((performance.now() - startedAt) / 1000));
-    if (detail) detail.textContent = seconds > 0
-      ? `${styleName} is rendering on the private server · ${seconds}s elapsed.`
-      : `${styleName} is rendering on the private server. This can take a few seconds.`;
-  };
-  updateElapsed();
-  renderProgressClock = setInterval(updateElapsed, 1000);
+function cancelStyleRendering() {
+  if (!state.styleBusy && !styleAbort) return;
+  styleToken += 1;
+  styleAbort?.abort();
+  styleAbort = null;
+  state.styleBusy = false;
+  setRenderProgress();
+  setStyleStatus('Preview update cancelled · previous geometry kept');
+  toast('Preview update cancelled. The previous geometry was kept.');
 }
 
 function invalidateStyleRender({ useLocalPreview = state.mode === 'line-art' } = {}) {
@@ -1453,6 +1608,7 @@ async function renderStyle() {
   styleAbort?.abort();
   styleAbort = new AbortController();
   state.styleBusy = true;
+  const renderStartedAt = performance.now();
   setRenderProgress('running', requestedStyle);
   setStyleStatus(requestedStyle === 'line-art'
     ? 'Refining at manufacturing resolution…'
@@ -1501,19 +1657,31 @@ async function renderStyle() {
     setStyleStatus(`Rendered · ${Math.round(payload.info.material * 100)}% material`);
     refresh({ immediate: true });
     if (!hadPlacedMask) fitToView();
+    recordProcessingMetric('render', performance.now() - renderStartedAt);
     return true;
   } catch (error) {
-    if (error.name === 'AbortError') return false;
-    if (mine !== styleToken) return false;
+    if (error.name === 'AbortError' || mine !== styleToken) {
+      recordProcessingMetric('render', performance.now() - renderStartedAt, 'cancelled');
+      return false;
+    }
     console.error(error);
+    recordProcessingMetric('render', performance.now() - renderStartedAt, 'failed');
     setStyleStatus(error.message);
+    failProcessingPanel(
+      'style',
+      'Preview update failed',
+      `${error.message}. The previous geometry is still active.`,
+      () => void renderStyle(),
+    );
     toast(error.message);
     return false;
   } finally {
     if (mine === styleToken) {
       state.styleBusy = false;
       styleAbort = null;
-      setRenderProgress();
+      if (processingPanelOwner === 'style' && el('render-progress')?.dataset.state !== 'failed') {
+        setRenderProgress();
+      }
     }
   }
 }
@@ -1646,6 +1814,7 @@ function finishedGeometryPreview(mask) {
 }
 
 function invalidateValidation({ clearAnalysis = false } = {}) {
+  if (geometryJobs.active) geometryJobs.cancel('Geometry changed; the outdated calculation was cancelled');
   cancelManualValidationReview();
   state.revision += 1;
   state.validated = false;
@@ -1837,7 +2006,7 @@ function scheduleManualValidationReview(reviewAnchor) {
   state.validationPending = true;
   renderIssues([]);
   updateExportReadiness();
-  manualValidationTimer = setTimeout(() => {
+  manualValidationTimer = setTimeout(async () => {
     manualValidationTimer = null;
     if (!state.designMask || requestedRevision !== state.revision) {
       pendingManualReview = null;
@@ -1846,10 +2015,16 @@ function scheduleManualValidationReview(reviewAnchor) {
     }
     const anchor = pendingManualReview;
     pendingManualReview = null;
-    const result = validateCurrentGeometry({
+    const result = await validateCurrentGeometry({
       reviewAnchor: anchor,
       focusReview: Boolean(anchor?.code),
     });
+    if (!result) {
+      state.validationPending = false;
+      renderIssues(state.validation?.issues ?? []);
+      updateExportReadiness();
+      return;
+    }
     setSidePanel('issues');
     setView('issues');
     markDirty();
@@ -1872,7 +2047,9 @@ async function runValidation() {
     const ready = await renderStyle();
     if (!ready || !hasFreshStyleMask()) return;
   }
-  const { blockingLocations, advisoryLocations } = validateCurrentGeometry();
+  const result = await validateCurrentGeometry();
+  if (!result) return;
+  const { blockingLocations, advisoryLocations } = result;
   toast(state.validation.valid
     ? advisoryLocations > 0
       ? `No blocking geometry issues found; review ${advisoryLocations} advisory ${advisoryLocations === 1 ? 'location' : 'locations'} before CAM review.`
@@ -1882,9 +2059,8 @@ async function runValidation() {
   await createRecoveryPoint(state.validation.valid ? 'Geometry checks passed' : 'Geometry checks run');
 }
 
-function validateCurrentGeometry({ reviewAnchor = null, focusReview = false } = {}) {
-  const validationMask = geometryForExport();
-  state.validation = validateDesign(validationMask, {
+function currentValidationOptions() {
+  return {
     sheet: sheet(),
     kerfMm: toMm(numberField('kerf', 1.2)),
     minimumWebMm: toMm(numberField('min-web', 3)),
@@ -1893,7 +2069,28 @@ function validateCurrentGeometry({ reviewAnchor = null, focusReview = false } = 
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
-  });
+  };
+}
+
+async function validateCurrentGeometry({ reviewAnchor = null, focusReview = false } = {}) {
+  const validationMask = cloneGeometry(geometryForExport());
+  const requestedRevision = state.revision;
+  let validation;
+  try {
+    validation = await runGeometryJob('validate', {
+      mask: validationMask,
+      options: currentValidationOptions(),
+    }, {
+      title: 'Checking geometry…',
+      detail: 'Checking connectivity, openings, and finished metal widths.',
+      retry: () => void validateCurrentGeometry({ reviewAnchor, focusReview }),
+    });
+  } catch (error) {
+    console.error('Could not validate the current geometry:', error);
+    return null;
+  }
+  if (!validation || requestedRevision !== state.revision) return null;
+  state.validation = validation;
   state.validationPending = false;
   state.validated = state.validation.valid;
   state.validatedRevision = state.revision;
@@ -2172,8 +2369,8 @@ function repairContractMatchesCurrent(contract) {
   }));
 }
 
-function repairValidation(mask, contract = currentRepairValidationContract()) {
-  return validateDesign(mask, {
+function repairValidationOptions(contract = currentRepairValidationContract()) {
+  return {
     sheet: contract.sheet,
     kerfMm: contract.kerfMm,
     minimumWebMm: contract.minimumWebMm,
@@ -2182,7 +2379,7 @@ function repairValidation(mask, contract = currentRepairValidationContract()) {
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
-  });
+  };
 }
 
 function selectedRepairCategories(mode = 'errors') {
@@ -2241,25 +2438,38 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
     const contract = currentRepairValidationContract({ allowanceMm: allowance });
     const { minimumWebMm, minimumOpeningMm, kerfMm, targetWebMm, targetOpeningMm } = contract;
     const requestedWidthMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6)));
-    const proposal = planManufacturingRepairs(mask, {
-      sheet: contract.sheet,
-      strategy,
-      categories,
-      kerfMm,
-      minimumWebMm,
-      minimumOpeningMm,
-      geometryInterpretation: contract.geometryInterpretation,
-      targetWebMm,
-      targetOpeningMm,
-      protectedMask: repairProtectedMask(mask),
-      bridgeWidthMm: Math.max(
-        requestedWidthMm,
-        rasterWebWidthMm(targetWebMm, kerfMm, contract.geometryInterpretation),
-      ),
-      bridgeStrategy: smartBridgeStrategy(),
-      maximumBridges: 192,
-      profileRef: contract.profile,
+    const repairResult = await runGeometryJob('repair', {
+      mask,
+      options: {
+        sheet: contract.sheet,
+        strategy,
+        categories,
+        kerfMm,
+        minimumWebMm,
+        minimumOpeningMm,
+        geometryInterpretation: contract.geometryInterpretation,
+        targetWebMm,
+        targetOpeningMm,
+        protectedMask: repairProtectedMask(mask),
+        bridgeWidthMm: Math.max(
+          requestedWidthMm,
+          rasterWebWidthMm(targetWebMm, kerfMm, contract.geometryInterpretation),
+        ),
+        bridgeStrategy: smartBridgeStrategy(),
+        maximumBridges: 192,
+        profileRef: contract.profile,
+      },
+    }, {
+      title: mode === 'warnings' ? 'Planning warning corrections…' : 'Planning error repairs…',
+      detail: 'Testing local changes without replacing the current geometry.',
+      retry: () => void buildRepairPreview({ focus, mode }),
     });
+    if (!repairResult) return false;
+    const { proposal, finishedMask } = repairResult;
+    if (!repairContractMatchesCurrent(proposal.validationContract)) {
+      toast('The panel or cutting profile changed while repairs were planned. The stale result was discarded.');
+      return false;
+    }
     const candidate = proposal.mask;
     const plan = {
       kind: proposal.kind,
@@ -2277,7 +2487,7 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
       state.repairPreviewBaseMask = mask;
       state.repairPreviewUsesExistingLayer = usesExistingLayer;
       state.repairPreviewMask = candidate;
-      state.repairPreviewKerfMask = finishedGeometryPreview(candidate);
+      state.repairPreviewKerfMask = finishedMask;
       const explanation = plan.outcome.notes[0] ??
         'The selected categories found no change that reduced blocking defects without creating new ones.';
       toast(`No automatic changes were kept. ${plan.outcome.termination?.message ?? explanation}`);
@@ -2289,7 +2499,7 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
     state.repairPreviewBaseMask = mask;
     state.repairPreviewUsesExistingLayer = usesExistingLayer;
     state.repairPreviewMask = candidate;
-    state.repairPreviewKerfMask = finishedGeometryPreview(candidate);
+    state.repairPreviewKerfMask = finishedMask;
     state.repairItemIndex = Math.min(state.repairItemIndex, plan.items.length - 1);
     state.repairResult = null;
     renderRepairPanel();
@@ -2312,20 +2522,29 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
   }
 }
 
-function updateRepairPreviewMasks() {
+async function updateRepairPreviewMasks() {
   const mask = state.repairPreviewBaseMask ?? geometryForExport();
   if (!mask || !state.repairPlan) {
     state.repairPreviewMask = null;
     state.repairPreviewKerfMask = null;
     return;
   }
-  state.repairPreviewMask = applySmallOpeningRepairPlan(mask, state.repairPlan);
-  if (state.repairPlan.kind === 'manufacturing') {
-    const validation = repairValidation(
-      state.repairPreviewMask,
-      state.repairPlan.validationContract,
-    );
-    const outcome = state.repairPlan.outcome;
+  const plan = state.repairPlan;
+  if (plan.kind === 'manufacturing') {
+    const result = await runGeometryJob('repair-evaluate', {
+      mask,
+      plan,
+      options: repairValidationOptions(plan.validationContract),
+    }, {
+      title: 'Updating repair preview…',
+      detail: 'Rechecking the selected choices while keeping the accepted geometry active.',
+      retry: () => void updateRepairPreviewMasks(),
+    });
+    if (!result || state.repairPlan !== plan) return;
+    state.repairPreviewMask = result.candidate;
+    state.repairPreviewKerfMask = result.finishedMask;
+    const validation = result.afterValidation;
+    const outcome = plan.outcome;
     outcome.afterErrors = countValidationLocations(validation, 'error');
     outcome.afterWarnings = countValidationLocations(validation, 'warning');
     outcome.afterConnectivityErrors = countValidationLocations(validation, 'error', new Set([
@@ -2339,18 +2558,16 @@ function updateRepairPreviewMasks() {
         outcome.afterWarnings < outcome.beforeWarnings);
     outcome.safeToApply = outcome.afterErrors <= outcome.beforeErrors && outcome.improved;
     outcome.complete = outcome.afterErrors === 0;
-    outcome.effects = measureRepairEffects(mask, state.repairPreviewMask, {
-      sheet: state.repairPlan.validationContract.sheet,
-      beforeValidation: repairValidation(mask, state.repairPlan.validationContract),
-      afterValidation: validation,
-    });
+    outcome.effects = result.effects;
     outcome.termination = describeRepairTermination(
       outcome,
       validation,
       outcome.diagnostics,
     );
+  } else {
+    state.repairPreviewMask = applySmallOpeningRepairPlan(mask, plan);
+    state.repairPreviewKerfMask = finishedGeometryPreview(state.repairPreviewMask);
   }
-  state.repairPreviewKerfMask = finishedGeometryPreview(state.repairPreviewMask);
 }
 
 function discardRepairPreview() {
@@ -2623,16 +2840,26 @@ function renderRepairPanel() {
   }
 }
 
-function overrideRepairAction(action) {
+async function overrideRepairAction(action) {
   const item = state.repairPlan?.items[state.repairItemIndex];
   if (!item) return;
   const changed = setSmallOpeningRepairAction(state.repairPlan, item.id, action, {
     similar: el('repair-similar')?.checked === true,
   });
   if (!changed) return;
-  updateRepairPreviewMasks();
-  renderRepairPanel();
-  draw();
+  const applyButton = el('btn-apply-repairs');
+  if (applyButton) {
+    applyButton.disabled = true;
+    applyButton.textContent = 'Rechecking preview…';
+  }
+  try {
+    await updateRepairPreviewMasks();
+    draw();
+  } catch (error) {
+    console.error('Could not update the repair preview:', error);
+  } finally {
+    renderRepairPanel();
+  }
 }
 
 async function applyRepairPlan() {
@@ -4060,6 +4287,7 @@ async function persistLocally() {
     if (!state.dirty) return lastSavedRecord;
   }
   if (!state.dirty) return lastSavedRecord || (state.projectId ? loadProject(state.projectId) : null);
+  const saveStartedAt = performance.now();
   const generation = dirtyGeneration;
   const operation = (async () => {
     const record = {
@@ -4095,8 +4323,11 @@ async function persistLocally() {
   })();
   localSaveInFlight = operation;
   try {
-    return await operation;
+    const saved = await operation;
+    recordProcessingMetric('local save', performance.now() - saveStartedAt);
+    return saved;
   } catch (error) {
+    recordProcessingMetric('local save', performance.now() - saveStartedAt, 'failed');
     console.error(error);
     state.dirty = true;
     if (!reportStorageFailure(error)) {
@@ -4128,6 +4359,7 @@ async function syncPendingSave() {
     }
     return lastSavedRecord;
   }
+  const syncStartedAt = performance.now();
   const operation = (async () => {
     const locallySaved = await flushPendingLocalSave();
     if (!locallySaved?.id) return null;
@@ -4177,8 +4409,11 @@ async function syncPendingSave() {
   })();
   serverSyncInFlight = operation;
   try {
-    return await operation;
+    const saved = await operation;
+    recordProcessingMetric('server sync', performance.now() - syncStartedAt);
+    return saved;
   } catch (error) {
+    recordProcessingMetric('server sync', performance.now() - syncStartedAt, 'failed');
     console.error('Server project synchronization failed:', error);
     if (reportStorageFailure(error, { projectCached: true })) {
       pauseAutomaticSyncRetry();
@@ -6459,142 +6694,27 @@ function placedStyleScale() {
   return state.placement.widthMm / croppedWidthMm;
 }
 
-/**
- * Builds two local-only views of the source photograph for bridge planning.
- * `detailAt` protects important portrait detail. `featureAt` does the inverse
- * aesthetic job: it tells the planner where added metal will disappear into a
- * dark eyebrow, hair mass, fold, or shadow, and which way that feature runs.
- */
-function bridgeImageSamplers() {
+function bridgeFeatureGuidance() {
   const protectDetail = el('protect-faces')?.checked === true;
   const followFeatures = el('support-follow-features')?.checked === true;
-  if ((!protectDetail && !followFeatures) || !state.source?.imageData || !state.placement) {
-    return { detailAt: null, featureAt: null, fallbackDetailAt: null };
-  }
-  const { width, height, data } = state.source.imageData;
-  // Keep photographic guidance deliberately smaller than the uploaded image.
-  // Phone photos are commonly 9-20 MP; duplicating one into a Float32Array can
-  // add 40-80 MB just as the component planner allocates its own large rasters.
-  // A bounded analysis raster is ample for choosing a bridge location and
-  // feature direction, while preventing memory pressure from aborting support
-  // planning before any structural work has begun.
-  const analysisMaximumDimension = 768;
-  const analysisScale = Math.min(1, analysisMaximumDimension / Math.max(width, height));
-  const analysisWidth = Math.max(1, Math.round(width * analysisScale));
-  const analysisHeight = Math.max(1, Math.round(height * analysisScale));
-  const analysisLuminance = new Float32Array(analysisWidth * analysisHeight);
-  // Relative percentiles make "dark" mean dark within this photograph, while
-  // ignoring a few clipped black or white pixels that would distort the range.
-  const histogram = new Uint32Array(256);
-  for (let analysisY = 0; analysisY < analysisHeight; analysisY += 1) {
-    const sourceY = analysisHeight === 1
-      ? 0
-      : Math.round(analysisY / (analysisHeight - 1) * (height - 1));
-    for (let analysisX = 0; analysisX < analysisWidth; analysisX += 1) {
-      const sourceX = analysisWidth === 1
-        ? 0
-        : Math.round(analysisX / (analysisWidth - 1) * (width - 1));
-      const sourceOffset = (sourceY * width + sourceX) * 4;
-      const alpha = data[sourceOffset + 3] / 255;
-      const value = (0.2126 * data[sourceOffset] + 0.7152 * data[sourceOffset + 1]
-        + 0.0722 * data[sourceOffset + 2]) * alpha + 255 * (1 - alpha);
-      analysisLuminance[analysisY * analysisWidth + analysisX] = value;
-      histogram[Math.round(value)] += 1;
-    }
-  }
-  const sourceLuminance = (x, y) => analysisLuminance[
-    Math.max(0, Math.min(analysisHeight - 1, y)) * analysisWidth
-      + Math.max(0, Math.min(analysisWidth - 1, x))
-  ];
-  const percentile = (ratio) => {
-    const target = analysisLuminance.length * ratio;
-    let total = 0;
-    for (let value = 0; value < histogram.length; value += 1) {
-      total += histogram[value];
-      if (total >= target) return value;
-    }
-    return 255;
-  };
-  const darkPoint = percentile(0.05);
-  const lightPoint = Math.max(darkPoint + 24, percentile(0.95));
-  const toneRange = lightPoint - darkPoint;
-  const placement = { ...state.placement };
-  const bounds = state.contentBounds ? { ...state.contentBounds } : null;
-  const sourceSize = state.contentSourceSize ? { ...state.contentSourceSize } : null;
-
-  const sampleSource = ({ x, y }) => {
-    if (!bounds || !sourceSize) return null;
-    const local = pointToArtworkPlacement(placement, { x, y });
-    if (local.x < 0 || local.y < 0 || local.x > 1 || local.y > 1) return null;
-    const localX = local.x;
-    const localY = local.y;
-    const fullX = (bounds.x + localX * bounds.width) / Math.max(1, sourceSize.width);
-    const fullY = (bounds.y + localY * bounds.height) / Math.max(1, sourceSize.height);
-    const imageX = Math.max(0, Math.min(analysisWidth - 1,
-      Math.round(fullX * (analysisWidth - 1))));
-    const imageY = Math.max(0, Math.min(analysisHeight - 1,
-      Math.round(fullY * (analysisHeight - 1))));
-    const center = sourceLuminance(imageX, imageY);
-    const gx = sourceLuminance(imageX + 1, imageY) - sourceLuminance(imageX - 1, imageY);
-    const gy = sourceLuminance(imageX, imageY + 1) - sourceLuminance(imageX, imageY - 1);
-    const lightness = Math.max(0, Math.min(1, (center - darkPoint) / toneRange));
-    const strength = Math.max(0, Math.min(1, Math.hypot(gx, gy) / Math.max(32, toneRange * 0.55)));
-    const dx = (fullX - 0.5) / 0.42;
-    const dy = (fullY - 0.43) / 0.48;
-    const portraitFocus = Math.max(0, 1 - Math.hypot(dx, dy));
-    // Protect light central face tissue separately from dark hair. Edge
-    // strength alone cannot make that distinction: an eyebrow and a cheek
-    // boundary are both detailed, but only the former can conceal a tie.
-    const faceX = (fullX - 0.5) / 0.35;
-    const faceY = (fullY - 0.43) / 0.34;
-    const faceInterior = Math.max(0, 1 - Math.hypot(faceX, faceY));
-    const lightSkinLikelihood = Math.max(0, Math.min(1, (lightness - 0.30) / 0.42));
-    const portraitRisk = faceInterior * lightSkinLikelihood;
-    return {
-      lightness,
-      strength,
-      tangentAngleDeg: Math.atan2(gy, gx) * 180 / Math.PI + 90 + (placement.rotationDeg || 0),
-      portraitFocus,
-      portraitRisk,
-    };
-  };
-
-  const detailAt = protectDetail ? (point) => {
-    const sample = sampleSource(point);
-    return sample ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0;
-  } : null;
-  return {
-    // Feature samples already carry their own detail value, so do not sample
-    // the photograph twice for every candidate. Retain the standalone sampler
-    // only for the feature-free retry.
-    detailAt: followFeatures ? null : detailAt,
-    fallbackDetailAt: detailAt,
-    featureAt: followFeatures ? (point) => {
-      const sample = sampleSource(point);
-      // Outside the visible source there is no image feature to hide in.
-      if (!sample) return { lightness: 1, strength: 0, tangentAngleDeg: 0, detail: 0 };
-      return {
-        ...sample,
-        detail: protectDetail ? Math.min(1, Math.max(sample.strength, sample.portraitFocus * 0.55)) : 0,
-        portraitRisk: protectDetail ? sample.portraitRisk : 0,
-      };
-    } : null,
-  };
+  if ((!protectDetail && !followFeatures) || !state.source?.imageData || !state.placement) return null;
+  return createFeatureGuidance(state.source.imageData, {
+    placement: state.placement,
+    bounds: state.contentBounds,
+    sourceSize: state.contentSourceSize,
+    protectDetail,
+    followFeatures,
+  });
 }
 
 function smartBridgeStrategy({ sampleImage = true } = {}) {
   const style = selectedCutStyle();
   const level = Math.max(1, Math.min(3, Number(el('bridge-count')?.value || 2)));
-  const imageSamplers = sampleImage
-    ? bridgeImageSamplers()
-    : { detailAt: null, featureAt: null, fallbackDetailAt: null };
   const strategy = {
     mode: 'smart',
     kind: style,
     level,
-    detailAt: imageSamplers.detailAt,
-    featureAt: imageSamplers.featureAt,
-    fallbackDetailAt: imageSamplers.fallbackDetailAt,
+    featureGuidance: sampleImage ? bridgeFeatureGuidance() : null,
   };
   // A tie across parallel retained bars is their normal. It reads as one of
   // the pattern's own rungs, like the supplied diagonal-slat reference.
@@ -6649,6 +6769,9 @@ async function autoBridge() {
     updateRangeOutputs();
     toast(`Raised bridge width to ${el('bridge-width').value} ${state.unit} to meet the finished-web requirement.`);
   }
+  // Capture ownership only after the automatic width correction above. Doing
+  // this earlier would make an unchanged request reject its own result.
+  const requestedSignature = supportPlanSignature();
   try {
     const manual = state.bridges.filter((bridge) => bridge.source !== 'automatic');
     const base = buildDesignMask(state.sourceMask, {
@@ -6666,7 +6789,7 @@ async function autoBridge() {
       maxPasses: 4,
     };
     let strategy;
-    let usedImageFallback = false;
+    let guidanceUnavailable = false;
     try {
       strategy = smartBridgeStrategy();
     } catch (imageError) {
@@ -6674,47 +6797,34 @@ async function autoBridge() {
       // never prevent the geometry-only support planner from running.
       console.warn('Could not prepare image guidance for smart supports; using structural placement.', imageError);
       strategy = smartBridgeStrategy({ sampleImage: false });
-      usedImageFallback = true;
+      guidanceUnavailable = true;
     }
-    const planWith = (candidateStrategy) => suggestKerfAwareBridges(base.mask, {
-      ...planningConfig,
-      strategy: candidateStrategy,
+    const supportResult = await runGeometryJob('support', {
+      mask: base.mask,
+      config: { ...planningConfig, strategy },
+      validation: {
+        sheet: sheet(),
+        kerfMm,
+        minimumWebMm: 0,
+        minimumOpeningMm: 0,
+        geometryInterpretation: state.geometryInterpretation,
+        anchorBoundary: false,
+        requireAnchored: false,
+        requireSingleComponent: true,
+      },
+    }, {
+      title: 'Planning smart supports…',
+      detail: 'Finding connections while keeping the current supports unchanged.',
+      retry: () => void autoBridge(),
     });
-    let plan;
-    try {
-      plan = planWith(strategy);
-    } catch (featureError) {
-      if (!strategy.featureAt) throw featureError;
-      // A failing photographic callback should only weaken the aesthetic
-      // guidance, never cancel the structural repair. First retain facial
-      // detail avoidance; if that sampler also fails, use geometry alone.
-      console.warn('Feature-following support scoring failed; retrying without it.', featureError);
-      try {
-        plan = planWith({
-          ...strategy,
-          featureAt: null,
-          detailAt: strategy.fallbackDetailAt,
-        });
-      } catch (detailError) {
-        console.warn('Image-aware support scoring failed; retrying structurally.', detailError);
-        plan = planWith(smartBridgeStrategy({ sampleImage: false }));
-      }
-      usedImageFallback = true;
+    if (!supportResult) return;
+    if (requestedSignature !== supportPlanSignature()) {
+      toast('Artwork or support settings changed while planning. The stale proposal was discarded.');
+      return;
     }
+    const { plan, supportSimulation } = supportResult;
+    const usedImageFallback = guidanceUnavailable || supportResult.usedImageFallback;
     const suggested = plan.bridges;
-    const proposedDesign = buildDesignMask(state.sourceMask, {
-      sheet: sheet(), frame: frameConfig(), bridges: [...manual, ...suggested],
-    });
-    const supportSimulation = validateDesign(proposedDesign.mask, {
-      sheet: sheet(),
-      kerfMm,
-      minimumWebMm: 0,
-      minimumOpeningMm: 0,
-      geometryInterpretation: state.geometryInterpretation,
-      anchorBoundary: false,
-      requireAnchored: false,
-      requireSingleComponent: true,
-    });
     const finishedConnected = supportSimulation.postKerf.componentCount === 1;
     const fallbackCount = suggested.filter((bridge) => bridge.fallback).length;
     const redundantCount = suggested.filter((bridge) => bridge.redundant).length;
@@ -8635,6 +8745,10 @@ function wire() {
   });
 
   // --- validation and export
+  el('btn-processing-cancel')?.addEventListener('click', () => processingCancel?.());
+  el('btn-processing-retry')?.addEventListener('click', () => processingRetry?.());
+  el('btn-processing-dismiss')?.addEventListener('click', () => hideProcessingPanel());
+  el('btn-clear-processing-metrics')?.addEventListener('click', clearProcessingMetrics);
   el('btn-validate')?.addEventListener('click', runValidation);
   el('btn-validate-sidebar')?.addEventListener('click', runValidation);
   el('btn-preview-repairs')?.addEventListener('click', () => void buildRepairPreview({ mode: 'errors' }));
@@ -9487,7 +9601,8 @@ function wire() {
     }
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
+      if (processingCancel) processingCancel();
+      else if (clearIssueHighlight()) viewport.focus({ preventScroll: true });
       else if (state.supportTapStart) {
         state.supportTapStart = null;
         state.bridgePreview = null;
@@ -9627,6 +9742,7 @@ function wire() {
   };
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
+      if (geometryJobs.active) geometryJobs.cancel('Processing cancelled while the app was hidden');
       flushLocalForLifecycle();
     } else if (navigator.onLine && state.projectId) {
       void syncWorkspaceProjects({ announce: false });
@@ -9694,6 +9810,7 @@ export async function startEditor({ device, offline = false } = {}) {
   updateAutomaticSupportState();
   renderCandidates();
   renderIssues([]);
+  renderProcessingMetrics();
 
   // Reopen the complete local copy first so a slow mobile connection never
   // blocks the editor. Server reconciliation continues safely in the background.
@@ -9730,7 +9847,7 @@ export async function startEditor({ device, offline = false } = {}) {
 
   pushHistory();
   window.stencilCncIsBusy = () => Boolean(
-    state.dirty || state.styleBusy || state.shareBusy || workspaceSyncInFlight ||
+    state.dirty || state.styleBusy || state.shareBusy || geometryJobs.active || workspaceSyncInFlight ||
     localSaveInFlight || serverSyncInFlight || rebuildTimer || localSaveTimer || serverSyncTimer || styleTimer,
   );
   window.addEventListener('resize', () => {

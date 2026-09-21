@@ -10,7 +10,7 @@ The central rule is simple: dark geometry represents retained metal and light ge
 
 Select **Help** in the Kerfloom header for the searchable, mobile-responsive handbook. The existing question-mark button in each workflow stage opens that handbook directly at the relevant chapter. It covers the complete creative workflow, all style families, tone and placement, cutting-profile terminology, smart and manual supports, validation and reversible repairs, CAM hand-off, autosave and recovery, linked devices, sharing, keyboard/mobile use, privacy boundaries, troubleshooting, and a final release checklist.
 
-The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_USER_GUIDE.md). The separate [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md) records the outstanding physical-device and assistive-technology acceptance matrix, while [`docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md`](docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md) records the product audit and implementation history.
+The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_USER_GUIDE.md). The separate [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md) records the outstanding physical-device and assistive-technology acceptance matrix, [`docs/K16_PROCESSING_BASELINE.md`](docs/K16_PROCESSING_BASELINE.md) records the deterministic performance baseline and device-acceptance procedure, and [`docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md`](docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md) records the product audit and implementation history.
 
 ## What it does
 
@@ -28,6 +28,7 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 - Stores a versioned cutting-profile snapshot with each project and retained export: process, stock, machine/consumable, geometry limits, support assumptions, revision, and evidence status travel together.
 - Builds reversible manufacturing-repair previews before changing the artwork.
 - Reports each repair attempt's physical area, connectivity, full-width-core survival, raster uncertainty, stop reason, rejected-candidate counts, and next action against the exact cutting-profile revision and validation model.
+- Keeps validation, repair planning, repair-choice evaluation, and smart-support planning off the interface thread. Each operation has visible progress and Cancel; stale results are rejected while the last accepted geometry remains usable. Private per-device timing diagnostics are available in Help.
 - Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
 - Exports validated geometry as SVG, DXF, or a shareable PNG. Variable Dots

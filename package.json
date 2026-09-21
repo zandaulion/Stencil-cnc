@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "benchmark:processing": "node scripts/benchmark-processing.mjs",
     "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
