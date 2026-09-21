@@ -17,6 +17,10 @@ import {
   pixelSizeMm,
 } from "./mask.js";
 
+// Bump only when the meaning of the geometry checks changes. Repair previews
+// and release records use this value to prove which validator judged them.
+export const GEOMETRY_VALIDATION_MODEL_VERSION = 1;
+
 /**
  * Runs topology and approximate physical-width checks. In the current
  * finished-boundary contract the raster describes the intended final material
@@ -338,6 +342,7 @@ export function validateDesign(mask, config) {
   const errors = issues.filter((entry) => entry.severity === "error");
   const warnings = issues.filter((entry) => entry.severity === "warning");
   return {
+    modelVersion: GEOMETRY_VALIDATION_MODEL_VERSION,
     valid: errors.length === 0,
     hasWarnings: warnings.length > 0,
     issues,

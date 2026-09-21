@@ -320,7 +320,11 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
     'repair-category-gaps', 'repair-category-webs', 'repair-error-step',
     'repair-warning-step', 'btn-preview-warning-repairs', 'repair-warning-readiness', 'repair-layer-status',
     'btn-toggle-repair-layer', 'btn-clear-repair-layer', 'repair-plan-status',
-    'repair-plan-note',
+    'repair-plan-note', 'repair-impact-title', 'repair-added-area', 'repair-removed-area',
+    'repair-changed-area', 'repair-connectivity', 'repair-core-survival',
+    'repair-raster-uncertainty', 'repair-validation-contract', 'repair-termination-title',
+    'repair-termination-message', 'repair-next-actions', 'repair-diagnostics',
+    'repair-rejection-reasons',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   for (const strategy of ['preserve', 'balanced', 'durable']) {
     assert.match(html, new RegExp(`name="openingRepairStrategy"[^>]*value="${strategy}"`), strategy);
@@ -330,6 +334,11 @@ test('manufacturing errors offer a combined reversible preview with per-occurren
   }
   assert.match(editor, /planManufacturingRepairs\(mask/);
   assert.match(editor, /maximumBridges: 192/);
+  assert.match(editor, /profileRef: contract\.profile/);
+  assert.match(editor, /repairContractMatchesCurrent\(state\.repairPlan\.validationContract\)/);
+  assert.match(editor, /measureRepairEffects\(mask, state\.repairPreviewMask/);
+  assert.match(editor, /describeRepairTermination\(/);
+  assert.match(editor, /state\.repairPlan = plan;[\s\S]*?No automatic changes were kept/);
   assert.match(editor, /if \(mode === 'warnings'\)/);
   assert.match(editor, /warnings: false/);
   assert.ok(html.indexOf('id="repair-error-step"') < html.indexOf('id="repair-warning-step"'));

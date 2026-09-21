@@ -4482,6 +4482,75 @@ select:focus {
   color: var(--teal);
 }
 
+.repair-impact,
+.repair-termination {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-1);
+}
+
+.repair-impact > strong,
+.repair-termination > strong {
+  color: var(--ink-soft);
+  font-size: 0.58rem;
+}
+
+.repair-impact dl {
+  display: grid;
+  gap: 4px;
+  margin: 7px 0 0;
+}
+
+.repair-impact dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.51rem;
+}
+
+.repair-impact dt,
+.repair-impact dd {
+  margin: 0;
+}
+
+.repair-impact dd {
+  color: var(--ink);
+  font-weight: 700;
+  text-align: right;
+}
+
+.repair-impact p,
+.repair-termination p,
+.repair-termination li,
+.repair-termination summary {
+  color: var(--muted);
+  font-size: 0.49rem;
+  line-height: 1.45;
+}
+
+.repair-impact p,
+.repair-termination p {
+  margin: 7px 0 0;
+}
+
+.repair-termination ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.repair-termination details {
+  margin-top: 8px;
+}
+
+.repair-termination summary {
+  color: var(--teal);
+  cursor: pointer;
+  font-weight: 720;
+}
+
 .repair-plan-counts > div {
   display: flex;
   min-width: 0;

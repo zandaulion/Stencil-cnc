@@ -42,6 +42,8 @@ export {
 } from "./manual-edits.js";
 export {
   applySmallOpeningRepairPlan,
+  describeRepairTermination,
+  measureRepairEffects,
   mergeRepairLayerEdits,
   planCutGapRepairs,
   planLoosePieceRepairs,
@@ -61,7 +63,12 @@ export {
   rasterWebWidthMm,
   requiredOpeningMm,
 } from "./geometry-contract.js";
-export { countValidationLocations, issueLocationCount, validateDesign } from "./validation.js";
+export {
+  GEOMETRY_VALIDATION_MODEL_VERSION,
+  countValidationLocations,
+  issueLocationCount,
+  validateDesign,
+} from "./validation.js";
 export { nextIssueReviewTarget } from "./issue-review.js";
 export { zoomAroundPoint } from "./viewport.js";
 export {

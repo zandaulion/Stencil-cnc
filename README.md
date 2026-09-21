@@ -27,6 +27,7 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and configured minimum-web geometry.
 - Stores a versioned cutting-profile snapshot with each project and retained export: process, stock, machine/consumable, geometry limits, support assumptions, revision, and evidence status travel together.
 - Builds reversible manufacturing-repair previews before changing the artwork.
+- Reports each repair attempt's physical area, connectivity, full-width-core survival, raster uncertainty, stop reason, rejected-candidate counts, and next action against the exact cutting-profile revision and validation model.
 - Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
 - Exports validated geometry as SVG, DXF, or a shareable PNG. Variable Dots

@@ -200,6 +200,10 @@ Counts are grouped physical occurrences, not a promise that every pixel is an in
 
 Automatic repair is a previewable, reversible layer. Choose categories, build the preview, inspect the proposed geometry and counts, and accept or discard it. The planner protects long slat cuts from destructive whole-cut closure and can use small, local additions where they satisfy the configured finished web without erasing the pattern.
 
+Each attempt remains available as a report, including attempts where no safe change was kept. **Physical effect** shows metal added and removed, total artwork area changed, finished-piece connectivity, and the area/components that survive the configured full-width-core check. The cell dimensions and diagonal state the raster sampling uncertainty; they are not machine tolerances. **Why planning stopped** distinguishes a completed pass, a safe partial result, rejected unsafe proposals, and the support-tie safety limit, then suggests the relevant manual or pattern-level next action. Expand **Planner diagnostics** to see considered, kept, and rejected candidate counts without recording the source image.
+
+The preview records the exact cutting-profile revision, status, geometry interpretation, dimensions, limits, and validation-model version used to judge it. If one of those inputs changes, Kerfloom refuses to apply the old preview. Applied geometry is checked again under that same contract before it can participate in export readiness.
+
 Manual corrections made after accepting repairs override only conflicting generated cells; unaffected automatic repairs stay active. Running checks again evaluates the combined result and does not, by itself, delete accepted repairs. Changing an upstream dependency—artwork, placement, panel geometry, polarity, or cutting limits—can invalidate that layer and require regeneration.
 
 ## 8. Export and CAM hand-off

@@ -1498,7 +1498,31 @@
               <div><dt>Warning locations</dt><dd><span id="repair-before-warnings">0</span> → <strong id="repair-after-warnings">0</strong></dd></div>
             </dl>
 
-            <div class="repair-exception">
+            <section class="repair-impact" aria-labelledby="repair-impact-title">
+              <strong id="repair-impact-title">Physical effect</strong>
+              <dl>
+                <div><dt>Metal added</dt><dd id="repair-added-area">0 mm²</dd></div>
+                <div><dt>Metal removed</dt><dd id="repair-removed-area">0 mm²</dd></div>
+                <div><dt>Artwork changed</dt><dd id="repair-changed-area">0 mm²</dd></div>
+                <div><dt>Finished pieces</dt><dd id="repair-connectivity">—</dd></div>
+                <div><dt>Full-width core</dt><dd id="repair-core-survival">—</dd></div>
+              </dl>
+              <p id="repair-raster-uncertainty">Raster measurement resolution will appear here.</p>
+              <p id="repair-validation-contract">Validation profile will appear here.</p>
+            </section>
+
+            <section class="repair-termination" aria-labelledby="repair-termination-title">
+              <strong id="repair-termination-title">Why planning stopped</strong>
+              <p id="repair-termination-message">Planning has not run.</p>
+              <ul id="repair-next-actions"></ul>
+              <details>
+                <summary>Planner diagnostics</summary>
+                <p id="repair-diagnostics">No diagnostics yet.</p>
+                <ul id="repair-rejection-reasons"></ul>
+              </details>
+            </section>
+
+            <div class="repair-exception" id="repair-exception">
               <div class="repair-exception-heading">
                 <strong>Highlighted exception</strong>
                 <button class="repair-next" id="btn-repair-next" type="button">1 / 1 · Next</button>
@@ -1905,6 +1929,7 @@
           </ul>
           <h4>Automatic repair</h4>
           <p>Repairs are a previewable, reversible layer. Choose categories, build the preview, inspect it at useful zoom, then accept or discard. The planner protects long slat cuts from destructive whole-cut closure and can add small local amounts of metal when that meets the configured web.</p>
+          <p>Every attempt leaves an actionable report—even when no safe change was kept. Review physical area changed, finished connectivity, full-width-core survival, raster sampling uncertainty, the exact profile/model contract, why planning stopped, and the suggested next action. Planner diagnostics contain geometry counts and rejection reasons, never the photograph.</p>
           <p>Manual corrections after accepted repairs override only conflicting generated cells; unaffected repairs remain. Re-running checks evaluates the combined geometry and does not delete accepted repairs. Changing artwork, placement, panel geometry, polarity, or profile can make them stale and require regeneration.</p>
         </article>
 

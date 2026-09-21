@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  GEOMETRY_VALIDATION_MODEL_VERSION,
   RETAINED,
   applySmallOpeningRepairPlan,
   createMask,
+  describeRepairTermination,
+  measureRepairEffects,
   mergeRepairLayerEdits,
   planCutGapRepairs,
   planLoosePieceRepairs,
@@ -24,6 +27,50 @@ function validate(mask, sheet = { widthMm: mask.width, heightMm: mask.height }) 
     requireSingleComponent: true,
   });
 }
+
+test("repair effects report physical area, topology, and raster uncertainty", () => {
+  const before = maskFromAscii(["#.", "##"]);
+  const after = maskFromAscii(["##", ".#"]);
+  const sheet = { widthMm: 2, heightMm: 2 };
+  const beforeValidation = validateDesign(before, {
+    sheet, minimumOpeningMm: 0, minimumWebMm: 0, requireAnchored: false,
+  });
+  const afterValidation = validateDesign(after, {
+    sheet, minimumOpeningMm: 0, minimumWebMm: 0, requireAnchored: false,
+  });
+  const effects = measureRepairEffects(before, after, {
+    sheet, beforeValidation, afterValidation,
+  });
+
+  assert.equal(effects.addedCells, 1);
+  assert.equal(effects.removedCells, 1);
+  assert.equal(effects.changedAreaMm2, 2);
+  assert.equal(effects.changedPanelPercent, 50);
+  assert.equal(effects.rasterUncertaintyMm, Math.sqrt(2));
+  assert.equal(effects.beforeFinishedComponents, beforeValidation.postKerf.componentCount);
+  assert.equal(effects.afterFinishedComponents, afterValidation.postKerf.componentCount);
+});
+
+test("repair termination distinguishes a safe subset and gives issue-specific next actions", () => {
+  const validation = {
+    errors: [{ code: "MIN_CUT_GAP" }, { code: "KERF_DISCONNECTED_RETAINED_MATERIAL" }],
+    warnings: [],
+    issues: [
+      { code: "MIN_CUT_GAP", severity: "error" },
+      { code: "KERF_DISCONNECTED_RETAINED_MATERIAL", severity: "error" },
+    ],
+  };
+  const termination = describeRepairTermination(
+    { afterErrors: 2, safeToApply: true },
+    validation,
+    { supportBudgetHit: false, rejectedCandidateCount: 1 },
+  );
+
+  assert.equal(termination.code, "safe-subset-complete");
+  assert.ok(termination.nextActions.some((action) => /pattern spacing/.test(action)));
+  assert.ok(termination.nextActions.some((action) => /manual support/.test(action)));
+  assert.ok(termination.nextActions.some((action) => /shop test/.test(action)));
+});
 
 test("a warning pass composes with the existing error-repair layer", () => {
   const repaired = maskFromAscii(["#.#."]);
@@ -391,6 +438,7 @@ test("manufacturing repair connects blockers without increasing the complete err
     bridgeWidthMm: 1,
     bridgeStrategy: { mode: "smart", kind: "generic", level: 1 },
     maximumBridges: 8,
+    profileRef: { id: "shop-plasma", name: "Shop plasma", revision: 7, status: "verified", version: 1 },
   });
 
   assert.ok(plan.items.length > 0);
@@ -400,6 +448,14 @@ test("manufacturing repair connects blockers without increasing the complete err
   assert.ok(plan.outcome.afterErrors < plan.outcome.beforeErrors);
   assert.equal(plan.outcome.safeToApply, true);
   assert.equal(plan.outcome.complete, true);
+  assert.equal(plan.validationContract.modelVersion, GEOMETRY_VALIDATION_MODEL_VERSION);
+  assert.deepEqual(plan.validationContract.profile, {
+    id: "shop-plasma", name: "Shop plasma", revision: 7, status: "verified", version: 1,
+  });
+  assert.ok(plan.outcome.effects.changedAreaMm2 > 0);
+  assert.ok(plan.outcome.effects.afterFinishedComponents < plan.outcome.effects.beforeFinishedComponents);
+  assert.ok(plan.outcome.diagnostics.proposedCandidateCount >= plan.outcome.diagnostics.acceptedCandidateCount);
+  assert.equal(plan.outcome.termination.code, "checks-clear");
 });
 
 test("manufacturing repair never accepts a proposal that worsens blockers", () => {

@@ -17,6 +17,7 @@
 import {
   CANDIDATE_PAYLOAD_VERSION,
   FINISHED_BOUNDARY_CAM,
+  GEOMETRY_VALIDATION_MODEL_VERSION,
   analyzeConnectivity,
   applyCapsuleBridges,
   applyRasterLayers,
@@ -32,6 +33,7 @@ import {
   decodeMask,
   deserializeProject,
   drawDraftWatermark,
+  describeRepairTermination,
   encodeMask,
   erodeMaskPhysical,
   exportDxf,
@@ -39,6 +41,7 @@ import {
   maskFromImageData,
   maskFingerprint,
   maskToRgba,
+  measureRepairEffects,
   mergeRepairLayerEdits,
   manualEditIndices,
   normalizeManualEdit,
@@ -2138,13 +2141,44 @@ function repairProtectedMask(mask) {
   return protectedMask;
 }
 
-function repairValidation(mask) {
-  return validateDesign(mask, {
-    sheet: sheet(),
-    kerfMm: toMm(numberField('kerf', 1.2)),
-    minimumWebMm: toMm(numberField('min-web', 3)),
-    minimumOpeningMm: toMm(numberField('min-opening', 2)),
+function currentRepairValidationContract({ allowanceMm = repairAllowanceMm() } = {}) {
+  const profile = cuttingProfileFromControls();
+  const currentSheet = sheet();
+  const minimumWebMm = toMm(numberField('min-web', 3));
+  const minimumOpeningMm = toMm(numberField('min-opening', 2));
+  return {
+    modelVersion: GEOMETRY_VALIDATION_MODEL_VERSION,
     geometryInterpretation: state.geometryInterpretation,
+    sheet: { widthMm: currentSheet.widthMm, heightMm: currentSheet.heightMm },
+    kerfMm: toMm(numberField('kerf', 1.2)),
+    minimumWebMm,
+    minimumOpeningMm,
+    targetWebMm: minimumWebMm + allowanceMm,
+    targetOpeningMm: minimumOpeningMm + allowanceMm,
+    profile: {
+      id: profile.id,
+      name: profile.name,
+      revision: profile.revision,
+      status: profile.status,
+      version: profile.version,
+    },
+  };
+}
+
+function repairContractMatchesCurrent(contract) {
+  if (!contract) return false;
+  return JSON.stringify(contract) === JSON.stringify(currentRepairValidationContract({
+    allowanceMm: contract.targetWebMm - contract.minimumWebMm,
+  }));
+}
+
+function repairValidation(mask, contract = currentRepairValidationContract()) {
+  return validateDesign(mask, {
+    sheet: contract.sheet,
+    kerfMm: contract.kerfMm,
+    minimumWebMm: contract.minimumWebMm,
+    minimumOpeningMm: contract.minimumOpeningMm,
+    geometryInterpretation: contract.geometryInterpretation,
     anchorBoundary: false,
     requireAnchored: false,
     requireSingleComponent: true,
@@ -2204,29 +2238,27 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
   try {
     const allowance = repairAllowanceMm();
     const strategy = selectedRepairStrategy();
-    const minimumWebMm = toMm(numberField('min-web', 3));
-    const minimumOpeningMm = toMm(numberField('min-opening', 2));
-    const kerfMm = toMm(numberField('kerf', 1.2));
-    const targetWebMm = minimumWebMm + allowance;
-    const targetOpeningMm = minimumOpeningMm + allowance;
+    const contract = currentRepairValidationContract({ allowanceMm: allowance });
+    const { minimumWebMm, minimumOpeningMm, kerfMm, targetWebMm, targetOpeningMm } = contract;
     const requestedWidthMm = Math.max(PLASMA_MIN_WEB_MM, toMm(numberField('bridge-width', 6)));
     const proposal = planManufacturingRepairs(mask, {
-      sheet: sheet(),
+      sheet: contract.sheet,
       strategy,
       categories,
       kerfMm,
       minimumWebMm,
       minimumOpeningMm,
-      geometryInterpretation: state.geometryInterpretation,
+      geometryInterpretation: contract.geometryInterpretation,
       targetWebMm,
       targetOpeningMm,
       protectedMask: repairProtectedMask(mask),
       bridgeWidthMm: Math.max(
         requestedWidthMm,
-        rasterWebWidthMm(targetWebMm, kerfMm, state.geometryInterpretation),
+        rasterWebWidthMm(targetWebMm, kerfMm, contract.geometryInterpretation),
       ),
       bridgeStrategy: smartBridgeStrategy(),
       maximumBridges: 192,
+      profileRef: contract.profile,
     });
     const candidate = proposal.mask;
     const plan = {
@@ -2237,17 +2269,18 @@ async function buildRepairPreview({ focus = true, mode = 'errors' } = {}) {
       items: proposal.items,
       counts: proposal.counts,
       supportCount: proposal.supportCount,
+      validationContract: proposal.validationContract,
       outcome: proposal.outcome,
     };
     if (!plan.items.length || !plan.outcome.safeToApply) {
-      state.repairPlan = null;
-      state.repairPreviewBaseMask = null;
-      state.repairPreviewUsesExistingLayer = false;
-      state.repairPreviewMask = null;
-      state.repairPreviewKerfMask = null;
+      state.repairPlan = plan;
+      state.repairPreviewBaseMask = mask;
+      state.repairPreviewUsesExistingLayer = usesExistingLayer;
+      state.repairPreviewMask = candidate;
+      state.repairPreviewKerfMask = finishedGeometryPreview(candidate);
       const explanation = plan.outcome.notes[0] ??
         'The selected categories found no change that reduced blocking defects without creating new ones.';
-      toast(`No automatic changes met the current geometry checks. ${explanation}`);
+      toast(`No automatic changes were kept. ${plan.outcome.termination?.message ?? explanation}`);
       renderRepairPanel();
       draw();
       return false;
@@ -2288,7 +2321,10 @@ function updateRepairPreviewMasks() {
   }
   state.repairPreviewMask = applySmallOpeningRepairPlan(mask, state.repairPlan);
   if (state.repairPlan.kind === 'manufacturing') {
-    const validation = repairValidation(state.repairPreviewMask);
+    const validation = repairValidation(
+      state.repairPreviewMask,
+      state.repairPlan.validationContract,
+    );
     const outcome = state.repairPlan.outcome;
     outcome.afterErrors = countValidationLocations(validation, 'error');
     outcome.afterWarnings = countValidationLocations(validation, 'warning');
@@ -2303,6 +2339,16 @@ function updateRepairPreviewMasks() {
         outcome.afterWarnings < outcome.beforeWarnings);
     outcome.safeToApply = outcome.afterErrors <= outcome.beforeErrors && outcome.improved;
     outcome.complete = outcome.afterErrors === 0;
+    outcome.effects = measureRepairEffects(mask, state.repairPreviewMask, {
+      sheet: state.repairPlan.validationContract.sheet,
+      beforeValidation: repairValidation(mask, state.repairPlan.validationContract),
+      afterValidation: validation,
+    });
+    outcome.termination = describeRepairTermination(
+      outcome,
+      validation,
+      outcome.diagnostics,
+    );
   }
   state.repairPreviewKerfMask = finishedGeometryPreview(state.repairPreviewMask);
 }
@@ -2340,6 +2386,22 @@ function focusRepairItem(index) {
   renderIssues(state.issues);
   focusIssue(issue);
   draw();
+}
+
+function repairMeasurement(value, digits = 1) {
+  if (!Number.isFinite(value)) return '—';
+  return value.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function renderRepairTextList(id, items) {
+  const list = el(id);
+  if (!list) return;
+  list.replaceChildren(...items.map((copy) => {
+    const item = document.createElement('li');
+    item.textContent = copy;
+    return item;
+  }));
+  list.hidden = items.length === 0;
 }
 
 function renderRepairPanel() {
@@ -2465,6 +2527,32 @@ function renderRepairPanel() {
   el('repair-after-errors').textContent = String(outcome?.afterErrors ?? '—');
   el('repair-before-warnings').textContent = String(outcome?.beforeWarnings ?? '—');
   el('repair-after-warnings').textContent = String(outcome?.afterWarnings ?? '—');
+  const effects = outcome?.effects ?? {};
+  el('repair-added-area').textContent = `${repairMeasurement(effects.addedAreaMm2)} mm²`;
+  el('repair-removed-area').textContent = `${repairMeasurement(effects.removedAreaMm2)} mm²`;
+  el('repair-changed-area').textContent = `${repairMeasurement(effects.changedAreaMm2)} mm² · ${repairMeasurement(effects.changedPanelPercent, 2)}% of panel`;
+  el('repair-connectivity').textContent = effects.beforeFinishedComponents == null
+    ? '—'
+    : `${effects.beforeFinishedComponents} → ${effects.afterFinishedComponents}`;
+  el('repair-core-survival').textContent = effects.beforeFullWidthCoreComponents == null
+    ? '—'
+    : `${effects.beforeFullWidthCoreComponents} → ${effects.afterFullWidthCoreComponents} regions · ${repairMeasurement(effects.beforeFullWidthCoreAreaMm2)} → ${repairMeasurement(effects.afterFullWidthCoreAreaMm2)} mm²`;
+  el('repair-raster-uncertainty').textContent = Number.isFinite(effects.rasterUncertaintyMm)
+    ? `Measured on ${repairMeasurement(effects.pixelWidthMm, 3)} × ${repairMeasurement(effects.pixelHeightMm, 3)} mm cells; the ${repairMeasurement(effects.rasterUncertaintyMm, 3)} mm cell diagonal is sampling uncertainty, not machine tolerance.`
+    : 'Raster sampling uncertainty is unavailable.';
+  const contract = state.repairPlan.validationContract;
+  const profileStatus = contract?.profile?.status === 'verified' ? 'Verified' : 'Provisional';
+  el('repair-validation-contract').textContent = contract
+    ? `Rechecked with ${contract.profile?.name ?? 'project profile'} revision ${contract.profile?.revision ?? '—'} · ${profileStatus} · validation model ${contract.modelVersion}.`
+    : 'No validation contract recorded.';
+  el('repair-termination-message').textContent = outcome?.termination?.message ?? 'Planning has not reported a stop reason.';
+  renderRepairTextList('repair-next-actions', outcome?.termination?.nextActions ?? []);
+  const diagnostics = outcome?.diagnostics ?? {};
+  el('repair-diagnostics').textContent = `Considered ${diagnostics.proposedCandidateCount ?? 0} candidate changes; kept ${diagnostics.acceptedCandidateCount ?? 0}, rejected ${diagnostics.rejectedCandidateCount ?? 0}. Cleanup rounds ${diagnostics.cleanupRoundsRun ?? 0} (maximum ${diagnostics.cleanupRoundsPerStageLimit ?? 3} per stage); support ties ${diagnostics.supportTiesAccepted ?? 0}/${diagnostics.supportTieLimit ?? 192}; connectivity passes ${diagnostics.supportPassesRun ?? 0}/${diagnostics.supportPassLimit ?? 8}; optional warning passes up to ${diagnostics.warningTiePassLimit ?? 3} ties + ${diagnostics.materialShellPassLimit ?? 0} shells.`;
+  renderRepairTextList(
+    'repair-rejection-reasons',
+    (diagnostics.rejectionReasons ?? []).map(({ reason, count }) => `${count} rejected: ${reason}.`),
+  );
   const status = el('repair-plan-status');
   const note = el('repair-plan-note');
   const applicable = outcome?.safeToApply === true;
@@ -2482,6 +2570,9 @@ function renderRepairPanel() {
   note.textContent = notes.join(' ');
   el('btn-apply-repairs').disabled = !applicable;
 
+  const exception = el('repair-exception');
+  exception.hidden = items.length === 0;
+  if (items.length === 0) return;
   state.repairItemIndex = Math.min(state.repairItemIndex, items.length - 1);
   const item = items[state.repairItemIndex];
   el('btn-repair-next').textContent = `${state.repairItemIndex + 1} / ${items.length} · Next`;
@@ -2551,6 +2642,12 @@ async function applyRepairPlan() {
     toast('This preview does not improve the complete geometry-check result, so it cannot be applied.');
     return;
   }
+  if (!repairContractMatchesCurrent(state.repairPlan.validationContract)) {
+    state.repairPlan.outcome.safeToApply = false;
+    renderRepairPanel();
+    toast('The panel or cutting profile changed. Regenerate the repair preview before applying it.');
+    return;
+  }
   // Merge this pass into the active reversible layer. Warning correction can
   // therefore build on error repair without replacing the earlier edits.
   const { keep, remove } = mergeRepairLayerEdits(
@@ -2571,6 +2668,7 @@ async function applyRepairPlan() {
     repairCount,
     mode: repairMode,
     supportCount: state.repairPlan.supportCount ?? 0,
+    validationContract: state.repairPlan.validationContract,
     strategy: state.repairPlan.strategy,
     categories: state.repairPlan.categories,
   };
@@ -2594,6 +2692,18 @@ async function applyRepairPlan() {
   pushHistory();
   renderRepairPanel();
   await runValidation();
+  if (state.validation?.modelVersion !== repairSummary.validationContract.modelVersion) {
+    state.validated = false;
+    state.validatedRevision = -1;
+    state.exportTimestamp = null;
+    state.repairResult = {
+      kind: repairKind, mode: repairMode, count: repairCount, running: false, remaining: null,
+    };
+    updateExportReadiness();
+    renderRepairPanel();
+    toast('The repair was retained, but its validation model could not be confirmed. Re-run all checks before export.');
+    return;
+  }
   const remaining = countValidationLocations(state.validation, 'error');
   const remainingWarnings = countValidationLocations(state.validation, 'warning');
   state.repairResult = {

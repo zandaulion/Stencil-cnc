@@ -2,7 +2,11 @@ import { physicalDiscIndices, physicalStrokeIndices } from "./editing.js";
 import { applyCapsuleBridges } from "./bridges.js";
 import { dilateMaskPhysical } from "./morphology.js";
 import { suggestBridges, suggestKerfAwareBridges } from "./suggestions.js";
-import { countValidationLocations, validateDesign } from "./validation.js";
+import {
+  GEOMETRY_VALIDATION_MODEL_VERSION,
+  countValidationLocations,
+  validateDesign,
+} from "./validation.js";
 import {
   FINISHED_BOUNDARY_CAM,
   normalizeGeometryInterpretation,
@@ -21,6 +25,99 @@ import {
 
 const STRATEGIES = new Set(["preserve", "balanced", "durable"]);
 const ACTIONS = new Set(["close", "enlarge", "merge"]);
+
+/**
+ * Measures what a proposed repair changes in physical terms. These are raster
+ * measurements, deliberately accompanied by the cell diagonal so the UI does
+ * not imply sub-cell manufacturing accuracy.
+ */
+export function measureRepairEffects(before, after, {
+  sheet,
+  beforeValidation = null,
+  afterValidation = null,
+} = {}) {
+  assertMask(before);
+  assertMask(after);
+  assertSameSize(before, after);
+  assertSheet(sheet);
+  const pixel = pixelSizeMm(before, sheet);
+  const cellAreaMm2 = pixel.x * pixel.y;
+  let addedCells = 0;
+  let removedCells = 0;
+  for (let index = 0; index < before.data.length; index += 1) {
+    if (before.data[index] === after.data[index]) continue;
+    if (after.data[index] === RETAINED) addedCells += 1;
+    else removedCells += 1;
+  }
+  const changedCells = addedCells + removedCells;
+  const coreArea = (validation) =>
+    (validation?.minimumWebCore?.retainedPixels ?? 0) * cellAreaMm2;
+  return {
+    addedCells,
+    removedCells,
+    changedCells,
+    addedAreaMm2: addedCells * cellAreaMm2,
+    removedAreaMm2: removedCells * cellAreaMm2,
+    changedAreaMm2: changedCells * cellAreaMm2,
+    changedPanelPercent: before.data.length > 0 ? changedCells / before.data.length * 100 : 0,
+    beforeFinishedComponents: beforeValidation?.postKerf?.componentCount ?? null,
+    afterFinishedComponents: afterValidation?.postKerf?.componentCount ?? null,
+    beforeFullWidthCoreComponents: beforeValidation?.minimumWebCore?.componentCount ?? 0,
+    afterFullWidthCoreComponents: afterValidation?.minimumWebCore?.componentCount ?? 0,
+    beforeFullWidthCoreAreaMm2: coreArea(beforeValidation),
+    afterFullWidthCoreAreaMm2: coreArea(afterValidation),
+    pixelWidthMm: pixel.x,
+    pixelHeightMm: pixel.y,
+    rasterUncertaintyMm: Math.hypot(pixel.x, pixel.y),
+  };
+}
+
+/** Returns an explicit stop reason and useful next actions for a repair pass. */
+export function describeRepairTermination(outcome, validation, diagnostics = {}) {
+  const errors = new Set((validation?.errors ?? []).map((issue) => issue.code));
+  const warnings = new Set((validation?.warnings ?? []).map((issue) => issue.code));
+  const warningCount = countValidationLocations(validation, "warning");
+  let code = "no-safe-change";
+  let message = "No selected automatic change safely improved the complete geometry check.";
+  if (outcome?.afterErrors === 0 && warningCount === 0) {
+    code = "checks-clear";
+    message = "Stopped because every configured geometry check is clear.";
+  } else if (outcome?.afterErrors === 0) {
+    code = "blockers-clear";
+    message = "Stopped because every blocker is resolved; remaining findings are optional advisories.";
+  } else if (diagnostics.supportBudgetHit) {
+    code = "support-budget-reached";
+    message = `Stopped at the ${diagnostics.supportTieLimit}-tie safety limit with blockers still visible.`;
+  } else if (outcome?.safeToApply) {
+    code = "safe-subset-complete";
+    message = "Stopped after keeping every safe improvement found; unresolved blockers need a design or manual change.";
+  } else if ((diagnostics.rejectedCandidateCount ?? 0) > 0) {
+    code = "unsafe-candidates-rejected";
+    message = "Stopped because the remaining proposals failed the complete-design safety check.";
+  }
+
+  const nextActions = [];
+  if (errors.has("MIN_CUT_GAP")) {
+    nextActions.push("Increase pattern spacing or use Add material at the highlighted narrow web.");
+  }
+  if (errors.has("MIN_OPENING_UNCUTTABLE")) {
+    nextActions.push("Enlarge or Restore the highlighted opening, or increase the source pattern scale.");
+  }
+  if (errors.has("DISCONNECTED_RETAINED_MATERIAL") || errors.has("KERF_DISCONNECTED_RETAINED_MATERIAL")) {
+    nextActions.push("Add a manual support at the highlighted detached finished piece.");
+  }
+  if (outcome?.afterErrors === 0 && [...warnings].some((code) =>
+    ["MIN_WEB_NO_SURVIVING_CORE", "MIN_WEB_DISCONNECT", "MIN_WEB_THIN_AREAS"].includes(code))) {
+    nextActions.push("Review the optional warning pass; it may visibly thicken the artwork.");
+  }
+  if (warnings.has("FEATURE_BELOW_RASTER_RESOLUTION")) {
+    nextActions.push("Increase the pattern scale or render resolution before trusting sub-cell features.");
+  }
+  if (outcome?.afterErrors > 0) {
+    nextActions.push("Change a manufacturing limit only when machine documentation or a shop test supports it.");
+  }
+  return { code, message, nextActions: [...new Set(nextActions)] };
+}
 
 /**
  * Builds reversible repair choices for every opening rejected by validation.
@@ -435,6 +532,7 @@ const CONNECTIVITY_ERROR_CODES = new Set([
  *   bridgeWidthMm:number,
  *   bridgeStrategy?:object,
  *   maximumBridges?:number,
+ *   profileRef?:{id?:string,name?:string,revision?:number,status?:string,version?:number}|null,
  *   geometryInterpretation?:'finished-boundary-cam-v1'|'legacy-uncompensated-centerline-v1',
  * }} options
  */
@@ -480,6 +578,23 @@ export function planManufacturingRepairs(mask, options) {
     requireSingleComponent: true,
   });
   const beforeValidation = validate(mask);
+  const validationContract = {
+    modelVersion: GEOMETRY_VALIDATION_MODEL_VERSION,
+    geometryInterpretation,
+    sheet: { widthMm: options.sheet.widthMm, heightMm: options.sheet.heightMm },
+    kerfMm,
+    minimumWebMm,
+    minimumOpeningMm,
+    targetWebMm,
+    targetOpeningMm,
+    profile: options.profileRef ? {
+      id: options.profileRef.id ?? null,
+      name: options.profileRef.name ?? null,
+      revision: options.profileRef.revision ?? null,
+      status: options.profileRef.status ?? null,
+      version: options.profileRef.version ?? null,
+    } : null,
+  };
   let candidate = cloneMask(mask);
   let validation = beforeValidation;
   const items = [];
@@ -490,16 +605,28 @@ export function planManufacturingRepairs(mask, options) {
   const openingRepairRejectionReasons = new Set();
   let supportCount = 0;
   let cleanupRound = 0;
+  let proposedCandidateCount = 0;
+  let rejectedCandidateCount = 0;
+  let supportPassesRun = 0;
+  let supportBudgetHit = false;
+  const rejectionCounts = new Map();
+  const recordRejection = (reason, count = 1) => {
+    if (count <= 0) return;
+    rejectedCandidateCount += count;
+    rejectionCounts.set(reason, (rejectionCounts.get(reason) ?? 0) + count);
+  };
 
   const applyRawPlan = (plan, category, issueCode, pass) => {
     const stageItems = repairPlanItems(plan, category, issueCode, pass);
     if (!stageItems.length) return [];
+    proposedCandidateCount += stageItems.length;
     candidate = applySmallOpeningRepairPlan(candidate, { items: stageItems });
     validation = validate(candidate);
     return stageItems;
   };
   const tryIndividuallyCheckedPlan = (plan, category, issueCode, pass) => {
     const stageItems = repairPlanItems(plan, category, issueCode, pass);
+    proposedCandidateCount += stageItems.length;
     const accepted = [];
     for (const item of stageItems) {
       const proposed = applySmallOpeningRepairPlan(candidate, { items: [item] });
@@ -507,6 +634,7 @@ export function planManufacturingRepairs(mask, options) {
       const rejection = blockingRepairRejectionReason(validation, proposedValidation, issueCode);
       if (rejection) {
         openingRepairRejectionReasons.add(rejection);
+        recordRejection(rejection);
         continue;
       }
       candidate = proposed;
@@ -532,6 +660,7 @@ export function planManufacturingRepairs(mask, options) {
     }
     candidate = previousMask;
     validation = previousValidation;
+    recordRejection("the batch did not reduce the complete blocking-error count", stageItems.length);
     return false;
   };
   const tryCleanupPlanner = (planner, category, issueCode, pass, checkOptions) => {
@@ -612,6 +741,9 @@ export function planManufacturingRepairs(mask, options) {
         ? { ...options.bridgeStrategy, maximumUnsupportedSpanMm: undefined }
         : undefined,
     });
+    proposedCandidateCount += supportPlan.bridges.length;
+    supportPassesRun += supportPlan.passes;
+    supportBudgetHit ||= supportPlan.capped;
     const supportItem = supportRepairItem(candidate, supportPlan.bridges, options.sheet, "connectivity");
     if (supportItem) {
       candidate = applyCapsuleBridges(candidate, supportPlan.bridges, options.sheet);
@@ -630,6 +762,10 @@ export function planManufacturingRepairs(mask, options) {
       protectedMask = previousProtectedMask;
       items.length = previousItemsLength;
       supportCount = 0;
+      recordRejection(
+        "the support package did not reduce the complete blocking-error result",
+        supportPlan.bridges.length,
+      );
       notes.push("No support package was kept because it did not reduce the complete blocking-error result.");
     } else if (!supportPlan.complete) {
       notes.push(`Support planning stopped at its ${maximumBridges}-tie safety limit; remaining blockers stay visible for review.`);
@@ -657,12 +793,14 @@ export function planManufacturingRepairs(mask, options) {
           ? { ...options.bridgeStrategy, maximumUnsupportedSpanMm: undefined }
           : undefined,
       }).filter((bridge) => !bridge.stabilizer).slice(0, available);
+      proposedCandidateCount += bridges.length;
       const supportItem = supportRepairItem(candidate, bridges, options.sheet, `minimum-web-${pass}`);
       if (!supportItem) break;
       const supported = applyCapsuleBridges(candidate, bridges, options.sheet);
       const supportedValidation = validate(supported);
       const rejection = structuralWarningRejectionReason(validation, supportedValidation);
       if (rejection) {
+        recordRejection(rejection, bridges.length);
         notes.push(`The next structural-tie pass was not kept because ${rejection}`);
         break;
       }
@@ -684,9 +822,11 @@ export function planManufacturingRepairs(mask, options) {
         : "MIN_WEB_THIN_AREAS";
       const thickeningItem = materialAdditionRepairItem(candidate, expanded, pass, pixel, issueCode);
       if (!thickeningItem) break;
+      proposedCandidateCount += 1;
       const expandedValidation = validate(expanded);
       const rejection = structuralWarningRejectionReason(validation, expandedValidation);
       if (rejection) {
+        recordRejection(rejection);
         notes.push(`The next material-thickening pass was not kept because ${rejection}`);
         break;
       }
@@ -696,6 +836,7 @@ export function planManufacturingRepairs(mask, options) {
     }
 
     const remainingStructuralWarnings = structuralWarningLocationCount(validation);
+    supportBudgetHit ||= supportCount >= maximumBridges && remainingStructuralWarnings > 0;
     if (remainingStructuralWarnings > 0) {
       notes.push(
         `${remainingStructuralWarnings} structural warning ${remainingStructuralWarnings === 1 ? "location remains" : "locations remain"}; further automatic thickening would not be safely beneficial.`,
@@ -753,6 +894,51 @@ export function planManufacturingRepairs(mask, options) {
     );
   }
 
+  const diagnostics = {
+    cleanupRoundsPerStageLimit: 3,
+    cleanupRoundsRun: cleanupRound,
+    supportPassLimit: 8,
+    supportPassesRun,
+    supportTieLimit: maximumBridges,
+    supportTiesAccepted: supportCount,
+    warningTiePassLimit: 3,
+    materialShellPassLimit: { preserve: 1, balanced: 2, durable: 3 }[strategy],
+    supportBudgetHit,
+    proposedCandidateCount,
+    acceptedCandidateCount: items.reduce((sum, item) => sum + (item.supportCount ?? 1), 0),
+    rejectedCandidateCount,
+    rejectionReasons: [...rejectionCounts].map(([reason, count]) => ({ reason, count })),
+  };
+  const effects = measureRepairEffects(mask, candidate, {
+    sheet: options.sheet,
+    beforeValidation,
+    afterValidation,
+  });
+  const outcome = {
+    beforeErrors,
+    afterErrors,
+    beforeWarnings,
+    afterWarnings,
+    beforeOpeningErrors,
+    afterOpeningErrors,
+    acceptedOpeningRepairs,
+    remainingOpeningErrors: afterOpeningErrors,
+    openingRepairRejectionReasons: [...openingRepairRejectionReasons],
+    beforeConnectivityErrors: connectivityErrorCount(beforeValidation),
+    afterConnectivityErrors: connectivityErrorCount(afterValidation),
+    beforeWeakWebs: weakWebCount(beforeValidation),
+    afterWeakWebs: weakWebCount(afterValidation),
+    beforeThinAreaPixels: thinAreaPixelCount(beforeValidation),
+    afterThinAreaPixels: thinAreaPixelCount(afterValidation),
+    improved,
+    safeToApply,
+    complete: afterErrors === 0,
+    effects,
+    diagnostics,
+    notes,
+  };
+  outcome.termination = describeRepairTermination(outcome, afterValidation, diagnostics);
+
   return {
     kind: "manufacturing",
     strategy,
@@ -763,27 +949,8 @@ export function planManufacturingRepairs(mask, options) {
     mask: candidate,
     beforeValidation,
     afterValidation,
-    outcome: {
-      beforeErrors,
-      afterErrors,
-      beforeWarnings,
-      afterWarnings,
-      beforeOpeningErrors,
-      afterOpeningErrors,
-      acceptedOpeningRepairs,
-      remainingOpeningErrors: afterOpeningErrors,
-      openingRepairRejectionReasons: [...openingRepairRejectionReasons],
-      beforeConnectivityErrors: connectivityErrorCount(beforeValidation),
-      afterConnectivityErrors: connectivityErrorCount(afterValidation),
-      beforeWeakWebs: weakWebCount(beforeValidation),
-      afterWeakWebs: weakWebCount(afterValidation),
-      beforeThinAreaPixels: thinAreaPixelCount(beforeValidation),
-      afterThinAreaPixels: thinAreaPixelCount(afterValidation),
-      improved,
-      safeToApply,
-      complete: afterErrors === 0,
-      notes,
-    },
+    validationContract,
+    outcome,
   };
 }
 
