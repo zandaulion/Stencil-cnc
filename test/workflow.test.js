@@ -104,6 +104,8 @@ test('the desktop editor stays within the viewport while side panels scroll inte
   assert.match(css, /html\.editor-open \{[\s\S]*?height: 100%;[\s\S]*?overflow: hidden;/);
   assert.match(css, /body\.editor-open \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
   assert.match(css, /body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
+  assert.match(css, /\.anchor-grid label \{[\s\S]*?position: relative;/);
+  assert.match(css, /\.anchor-grid input \{[\s\S]*?position: absolute;[\s\S]*?inset: 0;[\s\S]*?width: 100%;[\s\S]*?height: 100%;/);
   assert.match(css, /#app-main,\s*\.app-shell \{[\s\S]*?height: 100dvh;[\s\S]*?max-height: 100dvh;/);
   assert.match(css, /@media \(max-width: 1020px\)[\s\S]*?\.editor-layout \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);[\s\S]*?overflow: hidden;/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*?body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
