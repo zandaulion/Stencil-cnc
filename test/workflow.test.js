@@ -96,8 +96,13 @@ test('readiness, storage, sharing, and input-format copy matches actual behavior
 });
 
 test('the desktop editor stays within the viewport while side panels scroll internally', () => {
-  assert.match(app, /document\.body\.classList\.add\('editor-open'\)/);
-  assert.match(app, /document\.body\.classList\.remove\('editor-open'\)/);
+  assert.match(app, /history\.scrollRestoration = 'manual'/);
+  assert.match(app, /function pinEditorViewport\(\)[\s\S]*?document\.scrollingElement[\s\S]*?window\.scrollTo\(0, 0\)/);
+  assert.match(app, /function lockEditorViewport\(\)[\s\S]*?document\.documentElement\.classList\.add\('editor-open'\)[\s\S]*?document\.body\.classList\.add\('editor-open'\)[\s\S]*?requestAnimationFrame\(pinEditorViewport\)/);
+  assert.match(app, /function unlockEditorViewport\(\)[\s\S]*?document\.documentElement\.classList\.remove\('editor-open'\)[\s\S]*?document\.body\.classList\.remove\('editor-open'\)/);
+  assert.match(app, /window\.addEventListener\('scroll', pinEditorViewport, \{ passive: true \}\)/);
+  assert.match(css, /html\.editor-open \{[\s\S]*?height: 100%;[\s\S]*?overflow: hidden;/);
+  assert.match(css, /body\.editor-open \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
   assert.match(css, /body\.editor-open \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
   assert.match(css, /#app-main,\s*\.app-shell \{[\s\S]*?height: 100dvh;[\s\S]*?max-height: 100dvh;/);
   assert.match(css, /@media \(max-width: 1020px\)[\s\S]*?\.editor-layout \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);[\s\S]*?overflow: hidden;/);

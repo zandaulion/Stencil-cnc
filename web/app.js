@@ -8,6 +8,40 @@ const state = {
   device: null
 };
 
+// The editor owns the viewport and gives its side panes their own scroll
+// containers. Browsers can nevertheless restore an old document scroll
+// position before authentication finishes, and focus/scrollIntoView can move
+// an overflow-hidden root programmatically. Once that happens the fixed-height
+// editor appears above a large blank page and the user cannot scroll it back.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+function pinEditorViewport() {
+  if (!document.body.classList.contains('editor-open')) return;
+  const root = document.scrollingElement;
+  if ((root?.scrollTop ?? 0) === 0 && (root?.scrollLeft ?? 0) === 0 &&
+      window.scrollX === 0 && window.scrollY === 0) return;
+  if (root) {
+    root.scrollTop = 0;
+    root.scrollLeft = 0;
+  }
+  window.scrollTo(0, 0);
+}
+
+function lockEditorViewport() {
+  document.documentElement.classList.add('editor-open');
+  document.body.classList.add('editor-open');
+  pinEditorViewport();
+  requestAnimationFrame(pinEditorViewport);
+}
+
+function unlockEditorViewport() {
+  document.documentElement.classList.remove('editor-open');
+  document.body.classList.remove('editor-open');
+}
+
+window.addEventListener('scroll', pinEditorViewport, { passive: true });
+window.addEventListener('pageshow', () => requestAnimationFrame(pinEditorViewport));
+
 function isBusy() {
   return Boolean(window.stencilCncIsBusy?.());
 }
@@ -39,7 +73,7 @@ async function requestJson(path, options = {}) {
 }
 
 function showGate(prefilledCode = '', { relink = false, currentLabel = '' } = {}) {
-  document.body.classList.remove('editor-open');
+  unlockEditorViewport();
   document.getElementById('gate-screen')?.removeAttribute('hidden');
   document.getElementById('app-main')?.setAttribute('hidden', '');
   const input = document.getElementById('invite-code-input');
@@ -65,7 +99,7 @@ async function openEditor(device, { offline = false } = {}) {
     throw new Error('Reconnect once so Kerfloom can identify this device workspace.');
   }
   state.device = device || null;
-  document.body.classList.add('editor-open');
+  lockEditorViewport();
   document.getElementById('gate-screen')?.setAttribute('hidden', '');
   document.getElementById('app-main')?.removeAttribute('hidden');
   const deviceLabel = document.getElementById('device-label');
