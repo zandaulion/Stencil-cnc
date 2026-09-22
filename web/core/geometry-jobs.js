@@ -10,6 +10,7 @@ import { suggestKerfAwareBridges } from "./suggestions.js";
 import { validateDesign } from "./validation.js";
 import { prepareVectorGeometry } from "./vector-geometry.js";
 import { materializeBridgeStrategy } from "./feature-guidance.js";
+import { encodeMask } from "./project.js";
 
 function geometryOnlyStrategy(strategy) {
   if (!strategy) return strategy;
@@ -55,6 +56,12 @@ function planSupports(payload, report) {
 
 /** Executes one structured-clone-safe geometry task inside a Worker or test. */
 export function executeGeometryJob(type, payload, report = () => {}) {
+  if (type === "encode-project-masks") {
+    return {
+      sourceMask: payload.sourceMask ? encodeMask(payload.sourceMask) : null,
+      baseMask: payload.baseMask ? encodeMask(payload.baseMask) : null,
+    };
+  }
   if (type === "vector-prepare") {
     report("simplifying", "Preparing physical-tolerance vector contours…");
     const prepared = prepareVectorGeometry(

@@ -176,7 +176,7 @@ async function openEditor({ viewport = { width: 1280, height: 900 } } = {}) {
     mimeType: 'application/json',
     buffer: Buffer.from(syntheticProject()),
   });
-  await page.locator('[data-candidate-id="candidate-browser"]').waitFor({ state: 'attached' }).catch(async (error) => {
+  await page.locator('[data-candidate-id="candidate-browser"]').waitFor({ state: 'attached', timeout: 10_000 }).catch(async (error) => {
     const status = await page.locator('#app-status').textContent().catch(() => 'missing status');
     const notices = await page.locator('.toast').allTextContents().catch(() => []);
     const candidates = await page.locator('#candidate-list').textContent().catch(() => 'missing candidates');
@@ -306,6 +306,42 @@ test('unvalidated artwork downloads a visibly watermarked draft PNG', async () =
       return coloured;
     }, bytes.toString('base64'));
     assert.ok(colourPixels > 0, 'the draft contains the red safety watermark, not only artwork pixels');
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('creative material points commit without forcing connectivity review', async () => {
+  const fixture = await openEditor();
+  try {
+    await fixture.page.locator('#tool-remove').click();
+    const canvas = fixture.page.locator('#editor-canvas');
+    const clickKnownMaterial = async () => {
+      const bounds = await canvas.boundingBox();
+      assert.ok(bounds);
+      await fixture.page.mouse.click(
+        bounds.x + bounds.width * (45.5 / 96),
+        bounds.y + bounds.height * (33.5 / 68),
+      );
+    };
+
+    await clickKnownMaterial();
+    await fixture.page.waitForFunction(
+      (count) => document.querySelector('#manual-edit-count')?.textContent === count,
+      '1',
+      { timeout: 5_000 },
+    );
+    await fixture.page.locator('#tool-keep').click();
+    await clickKnownMaterial();
+    await fixture.page.waitForFunction(
+      (count) => document.querySelector('#manual-edit-count')?.textContent === count,
+      '2',
+      { timeout: 5_000 },
+    );
+
+    assert.equal(await fixture.page.locator('#island-count').textContent(), 'Not analysed');
+    assert.notEqual(await fixture.page.locator('#canvas-viewport').getAttribute('aria-busy'), 'true');
+    assert.equal(await fixture.page.locator('.toast').filter({ hasText: 'Edit leaves' }).count(), 0);
   } finally {
     await fixture.close();
   }

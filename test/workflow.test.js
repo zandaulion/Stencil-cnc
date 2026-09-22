@@ -421,6 +421,7 @@ test('manual geometry tools use physical gestures, previews, and snapping', () =
   assert.match(editor, /state\.bridgePreview = \{ start: drawingFrom, end/);
   assert.match(editor, /function bridgeHandleAtPointer\(/);
   assert.match(editor, /function nearestRetainedPoint\(/);
+  assert.match(editor, /function manualProblemReviewIsActive\(reviewAnchor\)/);
   assert.match(editor, /function scheduleManualValidationReview\(reviewAnchor\)/);
   assert.match(editor, /nextIssueReviewTarget\(state\.validation\.issues/);
   assert.match(editor, /Updating the issue queue/);
@@ -487,7 +488,9 @@ test('freehand material tools paint continuously but commit as one gesture', () 
   assert.doesNotMatch(editor, /else if \(touchupStroke\) \{\s*if \(!inside\) return/);
   assert.match(editor, /touchupStroke\.mode === 'freehand'\)[\s\S]*?paintSegment\(touchupStroke\.last, rasterPoint/);
   assert.match(editor, /const kerf = !state\.touchupLive/);
-  assert.match(editor, /state\.touchupLive = false;[\s\S]*?refresh\(\{ immediate: true, manualGeometryEdit: true \}\);[\s\S]*?pushHistory\(\)/);
+  assert.match(editor, /state\.touchupLive = false;[\s\S]*?commitLiveManualGeometryEdit\(\);[\s\S]*?pushHistory\(\)/);
+  assert.match(editor, /function commitLiveManualGeometryEdit\(\)[\s\S]*?invalidateValidation\(\{ clearAnalysis: true \}\)/);
+  assert.match(editor, /projectEncodingJobs\.run\('encode-project-masks'/);
 });
 
 test('manual material work is an editable physical operation layer', () => {

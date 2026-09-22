@@ -12,8 +12,9 @@ class FakeWorker {
     FakeWorker.instances.push(this);
   }
 
-  postMessage(message) {
+  postMessage(message, transfer = []) {
     this.sent = message;
+    this.transfer = transfer;
   }
 
   terminate() {
@@ -45,6 +46,16 @@ test('worker jobs report progress and resolve only the matching generation', asy
   assert.deepEqual(progress, [{ phase: 'checking' }]);
   assert.equal(worker.terminated, true);
   assert.equal(jobs.active, false);
+});
+
+test('worker jobs can transfer snapshot buffers without cloning the live source', async () => {
+  const jobs = runner();
+  const bytes = new Uint8Array([1, 0, 1]);
+  const pending = jobs.run('encode-project-masks', { bytes }, { transfer: [bytes.buffer] });
+  const worker = FakeWorker.instances[0];
+  assert.deepEqual(worker.transfer, [bytes.buffer]);
+  worker.emit({ id: worker.sent.id, kind: 'result', result: { value: 'encoded' } });
+  assert.equal((await pending).value, 'encoded');
 });
 
 test('a newer job terminates and rejects the superseded job', async () => {

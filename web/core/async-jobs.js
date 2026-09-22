@@ -44,7 +44,7 @@ export function createWorkerJobRunner({ workerUrl, createWorker } = {}) {
       return stopActive(message);
     },
 
-    run(type, payload, { onProgress } = {}) {
+    run(type, payload, { onProgress, transfer = [] } = {}) {
       if (!type) return Promise.reject(new TypeError("Job type is required"));
       stopActive("Superseded by newer processing", { advanceGeneration: false });
       const id = ++generation;
@@ -84,7 +84,7 @@ export function createWorkerJobRunner({ workerUrl, createWorker } = {}) {
           finish(reject, error);
         };
         try {
-          worker.postMessage({ id, type, payload });
+          worker.postMessage({ id, type, payload }, transfer);
         } catch (error) {
           finish(reject, error);
         }

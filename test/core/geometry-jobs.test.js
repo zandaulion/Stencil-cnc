@@ -32,6 +32,16 @@ test('background validation is deterministic and structured-clone safe', () => {
   assert.doesNotThrow(() => structuredClone(first));
 });
 
+test('project masks are RLE encoded by the background worker task', () => {
+  const sourceMask = maskFromAscii(['##..#']);
+  const baseMask = maskFromAscii(['#.#.#']);
+  const result = executeGeometryJob('encode-project-masks', { sourceMask, baseMask });
+
+  assert.deepEqual(result.sourceMask.runs, [2, 2, 1]);
+  assert.deepEqual(result.baseMask.runs, [1, 1, 1, 1, 1]);
+  assert.doesNotThrow(() => structuredClone(result));
+});
+
 test('vector preparation and post-fit manufacturing validation stay off-thread and cloneable', () => {
   const rows = Array.from({ length: 20 }, (_, y) => (
     Array.from({ length: 20 }, (_, x) => (

@@ -1370,6 +1370,10 @@ let processingRetry = null;
 let processingPanelStartedAt = null;
 let geometryJobSequence = 0;
 const geometryJobs = createWorkerJobRunner({ workerUrl: '/workers/geometry.js' });
+// Project raster encoding is intentionally isolated from validation. Large
+// panels can contain several million cells; RLE encoding them on the UI thread
+// made the brush pause shortly after every autosave-worthy gesture.
+const projectEncodingJobs = createWorkerJobRunner({ workerUrl: '/workers/geometry.js' });
 const PROCESSING_METRICS_KEY = 'kerfloom-processing-metrics-v1';
 let processingMetrics = [];
 
@@ -1883,6 +1887,31 @@ function refresh({
   if (immediate) run(); else rebuildTimer = setTimeout(run, 120);
 }
 
+function commitLiveManualGeometryEdit() {
+  // Add/Remove gestures already update sourceMask and designMask while the
+  // pointer is down. Rebuilding, eroding, and scanning the entire multi-
+  // megapixel panel here used to freeze the next gesture. Keep that exact live
+  // result, mark derived manufacturing information stale, and let the user
+  // decide when to run the expensive checks.
+  clearTimeout(rebuildTimer);
+  rebuildTimer = null;
+  if (state.selectedCandidateId) {
+    state.selectedCandidateId = null;
+    renderCandidates();
+  }
+  markAutomaticSupportsStale();
+  state.kerfPreviewMask = null;
+  state.supportAnalysis = null;
+  updateManufacturingRepairState();
+  updateCandidateAvailability();
+  invalidateValidation({ clearAnalysis: true });
+  renderIssues([]);
+  updateConnectivityCard();
+  draw();
+  updateReadouts();
+  markDirty();
+}
+
 /* --------------------------------------------------------------- analysis */
 
 function analyse() {
@@ -2005,8 +2034,19 @@ function captureManualValidationReview() {
   } : null;
 }
 
+function manualProblemReviewIsActive(reviewAnchor) {
+  return Boolean(
+    reviewAnchor?.code &&
+    el('touchup-safety')?.checked === true &&
+    (state.view === 'issues' || state.sidePanel === 'issues' || state.stage === 'validate')
+  );
+}
+
 function scheduleManualValidationReview(reviewAnchor) {
-  if (!reviewAnchor || !state.designMask) return;
+  // Continue an explicit problem-by-problem review, but do not turn ordinary
+  // creative painting into a full manufacturing check after every gesture.
+  // Run all checks remains the deliberate boundary before vector export.
+  if (!manualProblemReviewIsActive(reviewAnchor) || !state.designMask) return;
   if (manualValidationTimer !== null) clearTimeout(manualValidationTimer);
   pendingManualReview = reviewAnchor;
   const requestedRevision = state.revision;
@@ -2040,7 +2080,7 @@ function scheduleManualValidationReview(reviewAnchor) {
         ? `Manual review cleared every blocker; ${result.advisoryLocations} advisory ${result.advisoryLocations === 1 ? 'location remains' : 'locations remain'}.`
         : 'Manual review cleared every geometry issue. Ready for CAM review.');
     }
-  }, 280);
+  }, 420);
 }
 
 async function runValidation() {
@@ -4281,7 +4321,7 @@ function scheduleSave() {
   if (!state.isDraft) scheduleServerSync();
 }
 
-function projectFromState() {
+function projectFromState({ raster = null } = {}) {
   rememberStyleSettings();
   const threshold = Math.round((numberField('threshold', 50) / 100) * 255);
   const sourceWidth = state.source?.width ?? state.baseMask?.width ?? null;
@@ -4314,7 +4354,7 @@ function projectFromState() {
       heightPx: sourceHeight,
       imageDataUrl: null,
     },
-    raster: {
+    raster: raster ?? {
       sourceMask: state.sourceMask ? encodeMask(state.sourceMask) : null,
       baseMask: state.baseMask ? encodeMask(state.baseMask) : null,
     },
@@ -4351,6 +4391,38 @@ function projectFromState() {
   });
 }
 
+function backgroundMaskSnapshot(mask) {
+  if (!mask) return null;
+  return {
+    width: mask.width,
+    height: mask.height,
+    // TypedArray#slice is a native bulk copy. Its buffer is transferred to the
+    // worker, so the live canvas mask is never detached or mutated by saving.
+    data: mask.data.slice(),
+  };
+}
+
+async function projectFromStateForPersistence() {
+  // Capture the lightweight recipe before yielding so the controls, edit
+  // operations, and raster snapshots all describe the same local generation.
+  const project = projectFromState({ raster: { sourceMask: null, baseMask: null } });
+  const sourceMask = backgroundMaskSnapshot(state.sourceMask);
+  const baseMask = backgroundMaskSnapshot(state.baseMask);
+  const transfer = [sourceMask?.data.buffer, baseMask?.data.buffer].filter(Boolean);
+  const startedAt = performance.now();
+  const result = await projectEncodingJobs.run('encode-project-masks', {
+    sourceMask,
+    baseMask,
+  }, { transfer });
+  recordProcessingMetric(
+    'project encode',
+    performance.now() - startedAt,
+    'completed',
+    result.durationMs,
+  );
+  return { ...project, raster: result.value };
+}
+
 async function persistLocally() {
   clearTimeout(localSaveTimer);
   localSaveTimer = null;
@@ -4362,14 +4434,18 @@ async function persistLocally() {
   if (!state.dirty) return lastSavedRecord || (state.projectId ? loadProject(state.projectId) : null);
   const saveStartedAt = performance.now();
   const generation = dirtyGeneration;
+  const localMetadata = {
+    id: state.isDraft ? LOCAL_DRAFT_PROJECT_ID : state.projectId,
+    localDraft: state.isDraft,
+    localSource: state.source?.file ?? null,
+    serverRevision: state.serverRevision,
+    conflictOriginId: state.conflictOriginId,
+  };
   const operation = (async () => {
+    const project = await projectFromStateForPersistence();
     const record = {
-      ...projectFromState(),
-      id: state.isDraft ? LOCAL_DRAFT_PROJECT_ID : state.projectId,
-      localDraft: state.isDraft,
-      localSource: state.source?.file ?? null,
-      serverRevision: state.serverRevision,
-      conflictOriginId: state.conflictOriginId,
+      ...project,
+      ...localMetadata,
     };
     let saved = await saveProject(record);
     state.projectId = saved.id;
@@ -8340,33 +8416,47 @@ function paintSegment(start, end, { liveStructureMask = null, diameterMm = touch
   return changed;
 }
 
+let touchupStructureCache = { signature: null, mask: null };
+
+function touchupStructureSignature() {
+  const currentSheet = sheet();
+  const frame = frameConfig();
+  const bridges = state.bridges
+    .filter((bridge) => bridge.enabled !== false)
+    .map((bridge) => [
+      bridge.id,
+      bridge.start?.x, bridge.start?.y,
+      bridge.end?.x, bridge.end?.y,
+      bridge.width,
+    ]);
+  return JSON.stringify([
+    state.sourceMask?.width,
+    state.sourceMask?.height,
+    currentSheet.widthMm,
+    currentSheet.heightMm,
+    frame,
+    bridges,
+  ]);
+}
+
 function touchupStructureMask() {
   if (!state.sourceMask) return null;
+  const signature = touchupStructureSignature();
+  if (touchupStructureCache.signature === signature && touchupStructureCache.mask) {
+    return touchupStructureCache.mask;
+  }
   const emptyArtwork = {
     width: state.sourceMask.width,
     height: state.sourceMask.height,
     data: new Uint8Array(state.sourceMask.data.length),
   };
-  return buildDesignMask(emptyArtwork, {
+  const mask = buildDesignMask(emptyArtwork, {
     sheet: sheet(),
     frame: frameConfig(),
     bridges: state.bridges.filter((bridge) => bridge.enabled !== false),
   }).mask;
-}
-
-function reportTouchupResult() {
-  if (el('touchup-safety')?.checked !== true || !state.analysis) return;
-  const loose = Math.max(0, state.analysis.componentCount - 1);
-  if (loose > 0) {
-    toast(state.validationPending
-      ? `Edit leaves ${loose} loose ${loose === 1 ? 'piece' : 'pieces'}; rechecking the complete issue queue now.`
-      : `Edit leaves ${loose} loose ${loose === 1 ? 'piece' : 'pieces'}. They are highlighted in Problems.`);
-    setSidePanel('issues');
-  } else {
-    toast(state.validationPending
-      ? 'Edit keeps the panel connected; rechecking opening and gap limits now.'
-      : 'Edit keeps the panel connected. Run validation for hole and gap checks.');
-  }
+  touchupStructureCache = { signature, mask };
+  return mask;
 }
 
 let styleTimer = null;
@@ -9127,8 +9217,9 @@ function wire() {
   el('btn-export-png')?.addEventListener('click', () => exportGeometry('png'));
   el('btn-download-project')?.addEventListener('click', async () => {
     if (!state.sourceMask) { toast('Import an image first.'); return; }
-    await persist();
-    downloadText(exportFilename('project', new Date()), serializeProject(projectFromState(), { pretty: true }));
+    const saved = await persist();
+    if (!saved) return;
+    downloadText(exportFilename('project', new Date()), serializeProject(saved, { pretty: true }));
     toast('Portable project downloaded without the source photograph.');
   });
 
@@ -9525,7 +9616,7 @@ function wire() {
         : touchupFootprintIntersectsMask({ x, y });
       if (!canStart) return;
       const operation = touchupOperation();
-      const liveStructureMask = mode === 'freehand' && operation !== 'restore'
+      const liveStructureMask = operation !== 'restore'
         ? touchupStructureMask() : null;
       const region = mode === 'region' ? touchupRegion({ x, y }) : null;
       if (region?.truncated) {
@@ -9543,7 +9634,9 @@ function wire() {
           const painted = currentManualPainted();
           changed = region.indices.some((index) => painted.keep.has(index) || painted.remove.has(index));
         } else {
-          for (const index of region.indices) changed = paintIndex(index) || changed;
+          for (const index of region.indices) {
+            changed = paintIndex(index, { liveStructureMask }) || changed;
+          }
         }
       } else if (mode === 'freehand' && operation !== 'restore') {
         changed = paintDisc({ x, y }, touchupSizeMm(), { liveStructureMask });
@@ -9787,6 +9880,7 @@ function wire() {
         touchupStroke.lastMm = pointMm;
         if (touchupStroke.operation !== 'restore') {
           touchupStroke.changed = paintSegment(touchupStroke.start, rasterPoint, {
+            liveStructureMask: touchupStroke.liveStructureMask,
             diameterMm: touchupStroke.widthMm,
           }) || touchupStroke.changed;
         }
@@ -9812,6 +9906,8 @@ function wire() {
       } else {
         edit = makeManualRegion(touchupStroke.operation, touchupStroke.regionIndices ?? []);
       }
+      const committedLiveGeometry = touchupStroke.operation !== 'restore' &&
+        Boolean(touchupStroke.liveStructureMask);
       state.painted = touchupStroke.legacyPainted;
       if (touchupStroke.operation === 'restore' && edit) {
         const painted = currentManualPainted();
@@ -9830,12 +9926,12 @@ function wire() {
         mode: 'cursor', point: releasePoint, diameterMm: touchupSizeMm(),
       };
       if (changed) {
-        refresh({ immediate: true, manualGeometryEdit: true });
+        if (committedLiveGeometry) commitLiveManualGeometryEdit();
+        else refresh({ immediate: true, reanalyse: false, manualGeometryEdit: true });
         renderManualEditManager();
         pushHistory();
         scheduleManualValidationReview(reviewAnchor);
         updateTouchupHud('Saved as an editable operation');
-        reportTouchupResult();
       } else {
         draw();
         updateTouchupHud('Nothing under this gesture changed');
