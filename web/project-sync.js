@@ -1,7 +1,9 @@
 import { deserializeProject, serializeProject } from '/core/index.js';
 import {
   acknowledgeProjectSync,
+  cacheServerAsset,
   cacheProject,
+  deleteServerAsset,
   deleteProject,
   deleteProjectSync,
   listArtifacts,
@@ -10,15 +12,20 @@ import {
   listProjectSync,
   loadProject,
   loadProjectSync,
+  loadServerAsset,
   putProjectSync,
   replaceProjectCache,
   replaceProjectSyncOperation,
+  replaceServerProjectIndex,
   storageWorkspaceId,
 } from '/storage.js';
 
 export const PROJECT_BUNDLE_SCHEMA = 'stencil-cnc.share-bundle';
 export const PROJECT_BUNDLE_VERSION = 1;
 const PROJECT_CONTENT_TYPE = 'application/vnd.kerfloom.project-bundle+json';
+export const PROJECT_MANIFEST_SCHEMA = 'kerfloom.project-manifest';
+export const PROJECT_MANIFEST_VERSION = 1;
+const PROJECT_MANIFEST_CONTENT_TYPE = 'application/vnd.kerfloom.project-manifest+json';
 const COMPRESSED_UPLOAD_THRESHOLD_BYTES = 256 * 1024;
 const localOperationLocks = new Map();
 
@@ -89,6 +96,99 @@ async function sha256Text(value) {
     .join('');
 }
 
+async function sha256Blob(blob) {
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function uploadAsset(blob, kind, mimeType, { force = false } = {}) {
+  const sha256 = await sha256Blob(blob);
+  const cached = force ? null : await loadServerAsset(sha256);
+  if (cached?.assetId && cached.sizeBytes === blob.size) {
+    return { ...cached, id: cached.assetId };
+  }
+  const response = await fetch('/api/project-assets', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/octet-stream',
+      'X-Kerfloom-Workspace': storageWorkspaceId(),
+      'X-Kerfloom-Asset-Sha256': sha256,
+      'X-Kerfloom-Asset-Kind': kind,
+      'X-Kerfloom-Asset-Type': mimeType || blob.type || 'application/octet-stream',
+    },
+    body: blob,
+  });
+  if (!response.ok) throw await responseError(response, 'Could not upload a project asset');
+  const receipt = (await response.json()).asset;
+  return cacheServerAsset(receipt);
+}
+
+/** Resolve a durable legacy queue snapshot into a small server state manifest. */
+export async function prepareProjectManifestUpload(payload, { forceAssets = false } = {}) {
+  const bundle = JSON.parse(String(payload));
+  if (bundle.schema === PROJECT_MANIFEST_SCHEMA && bundle.version === PROJECT_MANIFEST_VERSION) {
+    return { payload: JSON.stringify(bundle), assetDigests: [] };
+  }
+  if (bundle.schema !== PROJECT_BUNDLE_SCHEMA || bundle.version !== PROJECT_BUNDLE_VERSION) {
+    const error = new TypeError('The queued project package uses an unsupported format');
+    error.code = 'local_queue_format';
+    throw error;
+  }
+  let source = null;
+  const assetDigests = [];
+  if (bundle.source?.dataUrl) {
+    const blob = dataUrlToBlob(bundle.source.dataUrl);
+    const receipt = await uploadAsset(
+      blob,
+      'source',
+      bundle.source.mimeType || blob.type,
+      { force: forceAssets },
+    );
+    source = {
+      assetId: receipt.assetId || receipt.id,
+      sha256: receipt.sha256,
+      size: receipt.sizeBytes,
+      name: bundle.source.name,
+      mimeType: bundle.source.mimeType || blob.type,
+    };
+    assetDigests.push(receipt.sha256);
+  }
+  const artifacts = await Promise.all((bundle.artifacts || []).map(async (artifact) => {
+    const blob = dataUrlToBlob(artifact.dataUrl);
+    const receipt = await uploadAsset(
+      blob,
+      'artifact',
+      artifact.mimeType || blob.type,
+      { force: forceAssets },
+    );
+    assetDigests.push(receipt.sha256);
+    return {
+      assetId: receipt.assetId || receipt.id,
+      sha256: receipt.sha256,
+      size: receipt.sizeBytes,
+      filename: artifact.filename,
+      kind: artifact.kind,
+      mimeType: artifact.mimeType || blob.type,
+      createdAt: artifact.createdAt,
+      profileSnapshot: artifact.profileSnapshot ?? null,
+      releaseManifest: artifact.releaseManifest ?? null,
+    };
+  }));
+  const manifest = {
+    ...bundle,
+    schema: PROJECT_MANIFEST_SCHEMA,
+    version: PROJECT_MANIFEST_VERSION,
+    source,
+    artifacts,
+  };
+  return { payload: JSON.stringify(manifest), assetDigests };
+}
+
 export async function prepareProjectUpload(payload, { compress = typeof window !== 'undefined' } = {}) {
   const source = new Blob([String(payload)], { type: PROJECT_CONTENT_TYPE });
   const uncompressedBytes = source.size;
@@ -119,10 +219,10 @@ export async function prepareProjectUpload(payload, { compress = typeof window !
   }
 }
 
-async function acknowledgeMatchingUpload(operation, details) {
+async function acknowledgeMatchingUpload(operation, details, uploadedPayload = operation.payload) {
   const metadata = details?.project;
   if (!metadata?.sha256 || metadata.deletedAt || operation.kind !== 'put') return null;
-  if (await sha256Text(operation.payload) !== String(metadata.sha256).toLowerCase()) return null;
+  if (await sha256Text(uploadedPayload) !== String(metadata.sha256).toLowerCase()) return null;
   const acknowledged = await acknowledgeProjectSync(
     operation.projectId,
     operation.operationId,
@@ -248,6 +348,12 @@ async function pullProject(metadata, workspaceId = storageWorkspaceId()) {
     sha256: responseRevision === Number(metadata.revision) ? metadata.sha256 : null,
   };
   return cacheBundle(actualMetadata, await response.json());
+}
+
+export async function downloadServerProject(metadata, workspaceId = storageWorkspaceId()) {
+  if (!metadata?.id) throw new TypeError('Server project metadata is required');
+  if (metadata.deletedAt) throw new Error('That server project was permanently deleted.');
+  return pullProject(metadata, workspaceId);
 }
 
 export async function queueProjectSync(record) {
@@ -524,27 +630,37 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
       };
     }
 
-    const upload = await prepareProjectUpload(operation.payload);
-    const response = await fetch(`/api/projects/${encodeURIComponent(operation.projectId)}`, {
-      method: 'PUT',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': PROJECT_CONTENT_TYPE,
-        ...(upload.contentEncoding ? { 'Content-Encoding': upload.contentEncoding } : {}),
-        'If-Match': `"${operation.expectedRevision}"`,
-        'X-Kerfloom-Workspace': operation.workspaceId,
-      },
-      body: upload.body,
-    });
-    if (!response.ok) {
+    let response;
+    let manifestUpload;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      manifestUpload = await prepareProjectManifestUpload(operation.payload, {
+        forceAssets: attempt > 0,
+      });
+      const upload = await prepareProjectUpload(manifestUpload.payload);
+      response = await fetch(`/api/projects/${encodeURIComponent(operation.projectId)}`, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': PROJECT_MANIFEST_CONTENT_TYPE,
+          ...(upload.contentEncoding ? { 'Content-Encoding': upload.contentEncoding } : {}),
+          'If-Match': `"${operation.expectedRevision}"`,
+          'X-Kerfloom-Workspace': operation.workspaceId,
+        },
+        body: upload.body,
+      });
+      if (response.ok) break;
       const error = await responseError(response, 'Could not save the server project');
+      if (attempt === 0 && error.code === 'bad_asset_reference') {
+        await Promise.all(manifestUpload.assetDigests.map((digest) => deleteServerAsset(digest)));
+        continue;
+      }
       if (isProjectConflict(error)) {
         // A second tab may repeat the deterministic conflict-copy upload after
         // the first tab committed it. Matching content is an acknowledgement,
         // not another conflict that needs another copy.
-        const recovered = await acknowledgeMatchingUpload(operation, error.details);
+        const recovered = await acknowledgeMatchingUpload(operation, error.details, manifestUpload.payload);
         if (recovered) return recovered;
       }
       if (isProjectConflict(error) && resolveConflicts) {
@@ -558,6 +674,7 @@ async function performProjectOperation(operation, { resolveConflicts = true } = 
       }
       throw error;
     }
+    if (!response?.ok) throw new Error('Could not save the server project');
     const metadata = (await response.json()).project;
     const acknowledged = await acknowledgeProjectSync(
       operation.projectId,
@@ -601,9 +718,10 @@ export async function deleteServerProject(record) {
   return flushProjectOperation(operation);
 }
 
-export async function synchronizeProjectLibrary(onProgress = null) {
+export async function synchronizeProjectLibrary(onProgress = null, { activeProjectId = null } = {}) {
   if (!navigator.onLine) return { status: 'offline', pending: (await listProjectSync()).length };
   const remote = await requestProjects();
+  await replaceServerProjectIndex(remote);
   const remoteById = new Map(remote.map((row) => [row.id, row]));
   const local = [...await listProjects(), ...await listProjects({ trashed: true })];
   const localById = new Map(local.map((row) => [row.id, row]));
@@ -613,6 +731,9 @@ export async function synchronizeProjectLibrary(onProgress = null) {
   const failures = [];
   const remapped = [];
   const total = remote.length + local.length + pending.size;
+  const priorityProjectId = activeProjectId || (
+    local.length === 0 ? remote.find((row) => !row.deletedAt && !row.trashedAt)?.id : null
+  );
   const progress = (message) => onProgress?.({ completed, total, message });
   const fail = (details) => {
     const failure = projectFailure(details);
@@ -635,7 +756,8 @@ export async function synchronizeProjectLibrary(onProgress = null) {
           pending.delete(metadata.id);
           deleted.push(metadata.id);
         }
-      } else if (!pending.has(metadata.id) && !cached?.localSyncPending && (
+      } else if (metadata.id === priorityProjectId &&
+        !pending.has(metadata.id) && !cached?.localSyncPending && (
         !cached || Number(cached.serverRevision) < metadata.revision
       )) {
         progress(`Downloading “${metadata.name}”…`);

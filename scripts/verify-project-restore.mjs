@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { openDatabase } from '../server/db.js';
+import { ProjectAssetService } from '../server/project-assets.js';
 import { resolveProjectEncryption } from '../server/project-keys.js';
 import { ProjectService } from '../server/projects.js';
 import { parseBundle } from '../server/shares.js';
@@ -16,15 +17,23 @@ if (restoredDirectory === liveDirectory) {
 }
 const databaseFile = path.join(restoredDirectory, 'stencil-cnc.db');
 const projectDirectory = path.join(restoredDirectory, 'projects');
+const projectAssetDirectory = path.join(restoredDirectory, 'project-assets');
 if (!fs.existsSync(databaseFile) || !fs.existsSync(projectDirectory)) {
   throw new Error('The isolated restore must contain stencil-cnc.db and projects/.');
 }
 
 const database = openDatabase(databaseFile);
 try {
+  const encryption = resolveProjectEncryption();
+  const assets = new ProjectAssetService(database, {
+    directory: projectAssetDirectory,
+    ...encryption,
+    recoverOnStart: false,
+  });
   const service = new ProjectService(database, {
     directory: projectDirectory,
-    ...resolveProjectEncryption(),
+    ...encryption,
+    assets,
     recoverOnStart: false,
   });
   const rows = database.prepare(`

@@ -6,7 +6,7 @@ const FILE_MAGIC = Buffer.from('KAST1');
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const ASSET_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ASSET_FILE = /^[0-9a-f-]{36}\.asset$/i;
+const ASSET_FILE = /^[0-9a-f-]{36}(?:\.[0-9a-f-]{36})?\.asset$/i;
 const DEFAULT_ORPHAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function encryptionKey(secret) {
@@ -79,7 +79,10 @@ export class ProjectAssetService {
     );
     this.orphanGraceMs = Number(options.orphanGraceMs ?? DEFAULT_ORPHAN_GRACE_MS);
     this.onStorageWarning = options.onStorageWarning || ((message, error) => console.error(message, error));
-    this.recoverySummary = options.recoverOnStart === false ? null : this.recoverStorage();
+    this.recoverySummary = options.recoverOnStart === false ? null : {
+      ...this.recoverStorage(),
+      ...this.cleanupUnreferenced(),
+    };
   }
 
   ensureAvailable() {
@@ -158,9 +161,11 @@ export class ProjectAssetService {
       SELECT
         (SELECT COALESCE(SUM(size_bytes), 0) FROM server_projects
           WHERE workspace_id = ? AND deleted_at IS NULL) +
+        (SELECT COALESCE(SUM(b.size_bytes), 0) FROM project_revision_backups b
+          JOIN server_projects p ON p.id = b.project_id WHERE p.workspace_id = ?) +
         (SELECT COALESCE(SUM(size_bytes), 0) FROM project_assets
           WHERE workspace_id = ?) AS bytes
-    `).get(workspaceId, workspaceId);
+    `).get(workspaceId, workspaceId, workspaceId);
     return Number(row?.bytes) || 0;
   }
 
@@ -270,16 +275,65 @@ export class ProjectAssetService {
       if (!row) {
         throw new ProjectAssetError(400, 'The project manifest references an unavailable asset.', 'bad_asset_reference');
       }
-      if (entry.role === 'source' && row.kind !== 'source' ||
-          entry.role === 'artifact' && row.kind !== 'artifact') {
-        throw new ProjectAssetError(400, 'The project manifest asset role is invalid.', 'bad_asset_reference');
-      }
+      // `kind` records the first upload's intent for diagnostics. Identical
+      // bytes may legitimately be reused as both a source and an export; the
+      // manifest reference supplies the authoritative role.
       if (entry.value.sha256 && !sameHash(entry.value.sha256, row.sha256) ||
           Number.isFinite(Number(entry.value.size)) && Number(entry.value.size) !== row.size_bytes) {
         throw new ProjectAssetError(400, 'The project manifest asset metadata does not match.', 'bad_asset_reference');
       }
       return { ...entry, row };
     });
+  }
+
+  migrateEncryption() {
+    this.ensureAvailable();
+    const result = { keyId: this.keyId, migrated: 0, unchanged: 0, skipped: 0, failed: 0 };
+    const rows = this.db.prepare('SELECT * FROM project_assets ORDER BY created_at ASC').all();
+    for (const row of rows) {
+      if (row.key_id === this.keyId) {
+        result.unchanged += 1;
+        continue;
+      }
+      let plain;
+      try {
+        plain = this.read(row.workspace_id, row.id).buffer;
+      } catch (error) {
+        result.failed += 1;
+        try { this.onStorageWarning('Kerfloom could not read an asset during key migration.', error); } catch {}
+        continue;
+      }
+      const fileName = `${row.id}.${crypto.randomUUID()}.asset`;
+      let committed = false;
+      try {
+        this.publish(fileName, this.encrypt(plain));
+        this.db.exec('BEGIN IMMEDIATE');
+        const changed = this.db.prepare(`
+          UPDATE project_assets SET file_name = ?, key_id = ?
+          WHERE id = ? AND file_name = ?
+        `).run(fileName, this.keyId, row.id, row.file_name);
+        if (changed.changes !== 1) {
+          this.db.exec('ROLLBACK');
+          fs.rmSync(this.filePath(fileName), { force: true });
+          result.skipped += 1;
+          continue;
+        }
+        this.db.exec('COMMIT');
+        committed = true;
+        fs.rmSync(this.filePath(row.file_name), { force: true });
+        result.migrated += 1;
+      } catch (error) {
+        if (!committed) {
+          try { this.db.exec('ROLLBACK'); } catch {}
+          fs.rmSync(this.filePath(fileName), { force: true });
+          result.failed += 1;
+        } else {
+          result.migrated += 1;
+        }
+        try { this.onStorageWarning('Kerfloom could not migrate a project asset key.', error); } catch {}
+      }
+    }
+    return result;
   }
 
   recoverStorage() {

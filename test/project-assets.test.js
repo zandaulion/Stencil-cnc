@@ -131,12 +131,32 @@ test('asset manifests stay small, track references, and hydrate legacy bundles',
       kind: 'source',
       mimeType: 'image/jpeg',
     }).asset;
+    const legacy = Buffer.from(JSON.stringify({
+      schema: 'stencil-cnc.share-bundle',
+      version: 1,
+      clientProjectId: id,
+      trashedAt: null,
+      project: project(id, 'Legacy portrait'),
+      source: {
+        name: 'portrait.jpg',
+        mimeType: 'image/jpeg',
+        size: bytes.length,
+        dataUrl: `data:image/jpeg;base64,${bytes.toString('base64')}`,
+      },
+      checkpoints: [],
+      artifacts: [],
+    }));
+    projects.save(owner.workspaceId, id, legacy, '0');
     const payload = manifest(id, asset);
-    const saved = projects.save(owner.workspaceId, id, payload, '0');
+    const saved = projects.save(owner.workspaceId, id, payload, '1');
+    assert.equal(saved.revision, 2);
     assert.equal(saved.storageFormat, 'asset-manifest-v1');
     assert.equal(saved.thumbnail, project(id).editor.projectSummary.thumbnail);
     assert.deepEqual(projects.state(owner.workspaceId, id).buffer, payload);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM project_asset_refs').get().count, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM project_revision_backups').get().count, 1);
+    assert.equal(fs.readdirSync(path.join(root, 'projects')).length, 2,
+      'the legacy revision remains during the migration rollback window');
 
     const portable = JSON.parse(projects.bundle(owner.workspaceId, id).buffer);
     assert.equal(portable.schema, 'stencil-cnc.share-bundle');
@@ -145,14 +165,61 @@ test('asset manifests stay small, track references, and hydrate legacy bundles',
     const withoutSource = JSON.parse(payload);
     withoutSource.source = null;
     withoutSource.project.name = 'No source';
-    projects.save(owner.workspaceId, id, Buffer.from(JSON.stringify(withoutSource)), '1');
+    projects.save(owner.workspaceId, id, Buffer.from(JSON.stringify(withoutSource)), '2');
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM project_asset_refs').get().count, 0);
     advance(2_000);
     assert.equal(assets.cleanupUnreferenced().removed, 1);
     assert.equal(fs.existsSync(path.join(root, 'assets', `${asset.id}.asset`)), false);
+    projects.delete(owner.workspaceId, id, '3');
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM project_revision_backups').get().count, 0);
+    assert.equal(fs.readdirSync(path.join(root, 'projects')).length, 0,
+      'permanent deletion removes both the live manifest and migration backup');
   } finally {
     db.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
+test('immutable project assets participate in staged encryption-key rotation', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kerfloom-asset-key-test-'));
+  const db = initDatabase(new DatabaseSync(':memory:'));
+  try {
+    const auth = new AuthService(db);
+    const owner = auth.redeemInvite(auth.createInvite('Key owner').code).device;
+    const oldSecret = 'old-asset-key'.padEnd(64, 'a');
+    const newSecret = 'new-asset-key'.padEnd(64, 'b');
+    const directory = path.join(root, 'assets');
+    const oldService = new ProjectAssetService(db, {
+      directory,
+      encryptionSecret: oldSecret,
+      encryptionKeyId: 'asset-old',
+    });
+    const bytes = Buffer.from('key rotation asset');
+    const asset = oldService.upload(owner.workspaceId, bytes, {
+      sha256: digest(bytes), kind: 'source', mimeType: 'image/jpeg',
+    }).asset;
+
+    const rotating = new ProjectAssetService(db, {
+      directory,
+      encryptionSecret: newSecret,
+      encryptionKeyId: 'asset-new',
+      decryptionKeys: { 'asset-old': oldSecret },
+    });
+    assert.deepEqual(rotating.read(owner.workspaceId, asset.id).buffer, bytes);
+    assert.deepEqual(rotating.migrateEncryption(), {
+      keyId: 'asset-new', migrated: 1, unchanged: 0, skipped: 0, failed: 0,
+    });
+    assert.equal(db.prepare('SELECT key_id FROM project_assets WHERE id = ?').get(asset.id).key_id,
+      'asset-new');
+
+    const retired = new ProjectAssetService(db, {
+      directory,
+      encryptionSecret: newSecret,
+      encryptionKeyId: 'asset-new',
+    });
+    assert.deepEqual(retired.read(owner.workspaceId, asset.id).buffer, bytes);
+  } finally {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

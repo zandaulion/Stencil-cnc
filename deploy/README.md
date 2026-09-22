@@ -44,8 +44,9 @@ normal encrypted backups if active project links must survive host loss.
 
 ## Canonical project storage
 
-Normal editing uses encrypted server projects under `/data/projects`, indexed
-by SQLite in `/data/stencil-cnc.db`. `PROJECT_ENCRYPTION_KEY` should be a stable
+Normal editing uses encrypted server state under `/data/projects`, immutable
+source/export bytes under `/data/project-assets`, and metadata/references in
+`/data/stencil-cnc.db`. `PROJECT_ENCRYPTION_KEY` should be a stable
 32-byte hexadecimal secret generated with `openssl rand -hex 32`. If it is
 blank, Kerfloom derives a separate domain key from `SHARE_ENCRYPTION_KEY` or
 `ADMIN_TOKEN`. Rotating the active source key without re-encrypting stored

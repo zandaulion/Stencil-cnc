@@ -68,12 +68,28 @@ async function syncHarness() {
   fs.writeFileSync(storagePath, `
     export const state = {
       workspaceId: 'workspace-a', projects: new Map(), sync: new Map(), sequence: 0,
-      checkpoints: new Map(), artifacts: new Map(), replaceError: null,
+      checkpoints: new Map(), artifacts: new Map(), serverAssets: new Map(), serverProjects: new Map(), replaceError: null,
     };
     export const storageWorkspaceId = () => state.workspaceId;
     export const listArtifacts = async (id) => state.artifacts.get(id) || [];
     export const listCheckpoints = async (id) => state.checkpoints.get(id) || [];
     export const loadProject = async (id) => state.projects.get(id) || null;
+    export const loadServerAsset = async (sha256) => state.serverAssets.get(sha256) || null;
+    export const cacheServerAsset = async (asset) => {
+      const value = {
+        ...asset,
+        assetId: asset.id || asset.assetId,
+        sizeBytes: Number(asset.sizeBytes || asset.size),
+      };
+      state.serverAssets.set(value.sha256, value);
+      return value;
+    };
+    export const deleteServerAsset = async (sha256) => state.serverAssets.delete(sha256);
+    export const replaceServerProjectIndex = async (rows) => {
+      state.serverProjects.clear();
+      for (const row of rows) state.serverProjects.set(row.id, row);
+      return rows;
+    };
     export const cacheProject = async (record) => (state.projects.set(record.id, record), record);
     export const replaceProjectCache = async (record, { checkpoints = [], artifacts = [] } = {}) => {
       if (state.replaceError) throw state.replaceError;
@@ -182,6 +198,84 @@ test('large project uploads are compressed without changing their canonical bund
     assert.ok(upload.uploadBytes < upload.uncompressedBytes / 20);
     assert.equal(gunzipSync(Buffer.from(await upload.body.arrayBuffer())).toString(), payload);
   } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('ordinary edits reuse immutable source and export assets instead of reuploading them', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const OriginalFileReader = globalThis.FileReader;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  globalThis.FileReader = class {
+    readAsDataURL(blob) {
+      blob.arrayBuffer().then((bytes) => {
+        this.result = `data:${blob.type};base64,${Buffer.from(bytes).toString('base64')}`;
+        this.onload?.();
+      });
+    }
+  };
+  const requests = [];
+  let revision = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === '/api/project-assets') {
+      const headers = new Headers(options.headers);
+      const sha256 = headers.get('X-Kerfloom-Asset-Sha256');
+      return new Response(JSON.stringify({
+        asset: {
+          id: `${sha256.slice(0, 8)}-1111-4111-8111-${sha256.slice(8, 20)}`,
+          sha256,
+          kind: headers.get('X-Kerfloom-Asset-Kind'),
+          mimeType: headers.get('X-Kerfloom-Asset-Type'),
+          sizeBytes: options.body.size,
+        },
+      }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+    }
+    revision += 1;
+    const body = JSON.parse(options.body);
+    assert.equal(body.schema, sync.PROJECT_MANIFEST_SCHEMA);
+    assert.equal(body.source.dataUrl, undefined);
+    assert.equal(body.artifacts[0].dataUrl, undefined);
+    const sha256 = createHash('sha256').update(options.body).digest('hex');
+    return response({ id: body.clientProjectId, revision, sha256 });
+  };
+
+  try {
+    const source = new Blob(['same source'], { type: 'image/jpeg' });
+    const artifact = {
+      filename: 'same.svg',
+      kind: 'svg',
+      mimeType: 'image/svg+xml',
+      createdAt: '2026-09-22T10:00:00.000Z',
+      blob: new Blob(['same export'], { type: 'image/svg+xml' }),
+    };
+    const first = { id: 'project-1', name: 'First', serverRevision: 0, localSource: source };
+    storage.state.projects.set(first.id, first);
+    storage.state.artifacts.set(first.id, [artifact]);
+    assert.equal((await sync.syncProject(first)).status, 'synced');
+
+    const edited = { ...first, name: 'Only parameters changed', serverRevision: 1 };
+    storage.state.projects.set(edited.id, edited);
+    assert.equal((await sync.syncProject(edited)).status, 'synced');
+
+    assert.equal(requests.filter(({ url }) => url === '/api/project-assets').length, 2,
+      'the source and export upload once each');
+    assert.equal(requests.filter(({ url }) => url === '/api/projects/project-1').length, 2,
+      'both project revisions upload their small state manifest');
+    assert.equal(storage.state.serverAssets.size, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    if (OriginalFileReader === undefined) delete globalThis.FileReader;
+    else globalThis.FileReader = OriginalFileReader;
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -667,6 +761,60 @@ test('a downloaded bundle records the response revision instead of stale list me
   }
 });
 
+test('library reconciliation stores all metadata but downloads only the active project', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNavigator = globalThis.navigator;
+  const { directory, sync, storage } = await syncHarness();
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: true },
+  });
+  storage.state.projects.set('project-1', {
+    id: 'project-1', name: 'Cached one', serverRevision: 1,
+  });
+  storage.state.projects.set('project-2', {
+    id: 'project-2', name: 'Cached active', serverRevision: 1,
+  });
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(url);
+    if (url === '/api/projects') {
+      return new Response(JSON.stringify({ projects: [
+        { id: 'project-1', name: 'Remote one', revision: 2, sha256: 'one' },
+        { id: 'project-2', name: 'Remote active', revision: 2, sha256: 'two' },
+        { id: 'project-3', name: 'Remote only', revision: 1, sha256: 'three' },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    assert.equal(url, '/api/projects/project-2/bundle');
+    return new Response(JSON.stringify({
+      schema: sync.PROJECT_BUNDLE_SCHEMA,
+      version: sync.PROJECT_BUNDLE_VERSION,
+      clientProjectId: 'project-2',
+      project: { id: 'project-2', name: 'Remote active' },
+      source: null,
+      checkpoints: [],
+      artifacts: [],
+    }), { status: 200, headers: { 'Content-Type': 'application/json', ETag: '"2"' } });
+  };
+
+  try {
+    const result = await sync.synchronizeProjectLibrary(null, { activeProjectId: 'project-2' });
+    assert.equal(result.status, 'synced');
+    assert.deepEqual(requested, ['/api/projects', '/api/projects/project-2/bundle']);
+    assert.equal(storage.state.serverProjects.size, 3);
+    assert.equal(storage.state.projects.get('project-1').name, 'Cached one');
+    assert.equal(storage.state.projects.get('project-2').name, 'Remote active');
+    assert.equal(storage.state.projects.has('project-3'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('startup recovers a locally saved edit whose upload was never queued', async () => {
   const originalFetch = globalThis.fetch;
   const originalNavigator = globalThis.navigator;
@@ -804,7 +952,7 @@ test('a malformed downloaded asset cannot replace the last complete local revisi
   };
 
   try {
-    const result = await sync.synchronizeProjectLibrary();
+    const result = await sync.synchronizeProjectLibrary(null, { activeProjectId: oldProject.id });
     assert.equal(result.status, 'partial');
     assert.equal(result.failures.length, 1);
     assert.equal(result.failures[0].projectId, oldProject.id);
@@ -862,7 +1010,7 @@ test('a failed atomic cache replacement retains the prior revision and queued ed
   };
 
   try {
-    const result = await sync.synchronizeProjectLibrary();
+    const result = await sync.synchronizeProjectLibrary(null, { activeProjectId: oldProject.id });
     assert.equal(result.status, 'partial');
     assert.ok(result.failures.some((failure) => failure.error?.name === 'QuotaExceededError'));
     assert.strictEqual(storage.state.projects.get(oldProject.id), oldProject);

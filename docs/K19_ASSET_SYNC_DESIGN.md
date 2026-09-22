@@ -1,6 +1,6 @@
 # K19 asset-based project synchronization
 
-Status: implementation in progress, migration-compatible.
+Status: implemented and migration-compatible.
 
 ## Storage contract
 
@@ -43,15 +43,18 @@ protocol.
 
 Deleting or replacing a manifest removes its reference rows, not its asset
 bytes. Unreferenced assets use a conservative seven-day grace period before
-cleanup. This protects interrupted uploads, rollback, candidates, shares, and
-release recovery. Cleanup always rechecks references in the delete statement.
+cleanup. A legacy bundle replaced by its first manifest is itself recorded as
+a seven-day migration backup and is removed immediately if the project is
+permanently deleted. This protects interrupted uploads, rollback, candidates,
+shares, and release recovery. Cleanup always rechecks references in the delete
+statement.
 
 Workspace quota accounts for both live project-state files and unique asset
 bytes. Identical bytes are deduplicated only within the same workspace.
 
-## Client rollout
+## Client behavior
 
-The browser rollout is intentionally staged:
+The browser follows this sequence:
 
 1. Upload immutable source/export blobs and retain their returned opaque IDs.
 2. Queue an `asset-manifest-v1` snapshot containing those references.
@@ -61,6 +64,14 @@ The browser rollout is intentionally staged:
 5. Provide an explicit “Available offline” action that pins every referenced
    asset in IndexedDB.
 
-Until all five steps are deployed, the compatibility bundle route is the safe
-fallback and no existing revision is discarded by migration.
+The durable offline queue deliberately retains a complete bundle snapshot. It
+can reconstruct a failed operation even before any asset receipt exists. That
+does not increase network transfer: synchronization resolves the snapshot to
+cached asset IDs and sends the small manifest. If an asset receipt has become
+stale after conservative server cleanup, the client discards it, uploads those
+bytes again, and retries the unchanged project operation once.
 
+The compatibility bundle route remains the safe rollback path. Server-only
+project cards are metadata records, not incomplete editable projects: opening
+one downloads its complete bundle, while **Save offline** makes that retrieval
+explicit without switching the open canvas.

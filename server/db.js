@@ -115,6 +115,21 @@ export function initDatabase(db) {
     CREATE INDEX IF NOT EXISTS idx_server_projects_trash
       ON server_projects(workspace_id, trashed_at, updated_at DESC);
 
+    CREATE TABLE IF NOT EXISTS project_revision_backups (
+      id                  TEXT PRIMARY KEY,
+      project_id          TEXT NOT NULL REFERENCES server_projects(id) ON DELETE CASCADE,
+      file_name           TEXT NOT NULL UNIQUE,
+      size_bytes          INTEGER NOT NULL,
+      bundle_sha256       TEXT NOT NULL,
+      key_id              TEXT,
+      storage_format      TEXT NOT NULL,
+      created_at          TEXT NOT NULL,
+      expires_at          TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_project_revision_backups_expiry
+      ON project_revision_backups(expires_at);
+
     CREATE TABLE IF NOT EXISTS project_assets (
       id                  TEXT PRIMARY KEY,
       workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

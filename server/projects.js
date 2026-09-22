@@ -16,6 +16,7 @@ const REVISION_PROJECT_FILE = new RegExp(
   'i',
 );
 const DEFAULT_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MIGRATION_BACKUP_MS = 7 * 24 * 60 * 60 * 1000;
 const PROJECT_MANIFEST_SCHEMA = 'kerfloom.project-manifest';
 const PROJECT_MANIFEST_VERSION = 1;
 const LEGACY_STORAGE_FORMAT = 'legacy-bundle-v1';
@@ -135,6 +136,7 @@ export class ProjectService {
       options.maximumWorkspaceBytes ?? process.env.PROJECT_WORKSPACE_MAX_BYTES ?? 2 * 1024 * 1024 * 1024,
     );
     this.orphanGraceMs = Number(options.orphanGraceMs ?? DEFAULT_ORPHAN_GRACE_MS);
+    this.migrationBackupMs = Number(options.migrationBackupMs ?? DEFAULT_MIGRATION_BACKUP_MS);
     this.faultInjector = options.faultInjector || null;
     this.assets = options.assets || null;
     this.onStorageWarning = options.onStorageWarning || ((message, error) => {
@@ -245,6 +247,20 @@ export class ProjectService {
       SELECT file_name, bundle_sha256 FROM server_projects
       WHERE deleted_at IS NULL
     `).all();
+    const now = this.clock().toISOString();
+    const expiredBackups = this.db.prepare(`
+      SELECT id, file_name FROM project_revision_backups WHERE expires_at <= ?
+    `).all(now);
+    for (const backup of expiredBackups) {
+      try {
+        this.db.prepare('DELETE FROM project_revision_backups WHERE id = ?').run(backup.id);
+        fs.rmSync(this.filePath(backup.file_name), { force: true });
+        summary.removedOrphans += 1;
+      } catch (error) {
+        summary.warnings += 1;
+        this.warn('Kerfloom could not expire a legacy migration backup.', error);
+      }
+    }
 
     // Recover files written by the old replace-in-place protocol. Depending on
     // its crash point, SQLite may still describe the .bak while the target is
@@ -270,7 +286,13 @@ export class ProjectService {
       }
     }
 
-    const referenced = new Set(activeRows.map((row) => path.basename(row.file_name)));
+    const retainedBackups = this.db.prepare(`
+      SELECT file_name FROM project_revision_backups WHERE expires_at > ?
+    `).all(now);
+    const referenced = new Set([
+      ...activeRows.map((row) => path.basename(row.file_name)),
+      ...retainedBackups.map((row) => path.basename(row.file_name)),
+    ]);
     const cutoff = Date.now() - Math.max(0, this.orphanGraceMs);
     for (const entry of fs.readdirSync(this.directory, { withFileTypes: true })) {
       if (!entry.isFile() || referenced.has(entry.name) || !this.ownedOrphanFile(entry.name)) continue;
@@ -389,9 +411,11 @@ export class ProjectService {
       SELECT
         (SELECT COALESCE(SUM(size_bytes), 0) FROM server_projects
           WHERE workspace_id = ? AND deleted_at IS NULL AND (? IS NULL OR id <> ?)) +
+        (SELECT COALESCE(SUM(b.size_bytes), 0) FROM project_revision_backups b
+          JOIN server_projects p ON p.id = b.project_id WHERE p.workspace_id = ?) +
         (SELECT COALESCE(SUM(size_bytes), 0) FROM project_assets
           WHERE workspace_id = ?) AS bytes
-    `).get(workspaceId, excludingId, excludingId, workspaceId).bytes;
+    `).get(workspaceId, excludingId, excludingId, workspaceId, workspaceId).bytes;
   }
 
   save(workspaceId, clientProjectId, buffer, ifMatch) {
@@ -470,6 +494,21 @@ export class ProjectService {
       this.injectFault('after_file_published', { fileName, revision });
       this.db.exec('BEGIN IMMEDIATE');
       transactionOpen = true;
+      const retainLegacyRevision = current &&
+        (current.storage_format || LEGACY_STORAGE_FORMAT) === LEGACY_STORAGE_FORMAT &&
+        storageFormat === MANIFEST_STORAGE_FORMAT;
+      if (retainLegacyRevision) {
+        const expiresAt = new Date(this.clock().getTime() + Math.max(0, this.migrationBackupMs)).toISOString();
+        this.db.prepare(`
+          INSERT INTO project_revision_backups (
+            id, project_id, file_name, size_bytes, bundle_sha256, key_id,
+            storage_format, created_at, expires_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          crypto.randomUUID(), current.id, current.file_name, current.size_bytes,
+          current.bundle_sha256, current.key_id, LEGACY_STORAGE_FORMAT, now, expiresAt,
+        );
+      }
       if (current) {
         const changed = this.db.prepare(`
           UPDATE server_projects SET
@@ -566,7 +605,10 @@ export class ProjectService {
       }
       throw error;
     }
-    if (current?.file_name && current.file_name !== fileName) {
+    const retainedAsMigrationBackup = current &&
+      (current.storage_format || LEGACY_STORAGE_FORMAT) === LEGACY_STORAGE_FORMAT &&
+      storageFormat === MANIFEST_STORAGE_FORMAT;
+    if (current?.file_name && current.file_name !== fileName && !retainedAsMigrationBackup) {
       try {
         this.injectFault('before_old_revision_cleanup', {
           fileName,
@@ -738,6 +780,9 @@ export class ProjectService {
     };
     const deletedAt = this.clock().toISOString();
     const revision = row.revision + 1;
+    const backupFiles = this.db.prepare(`
+      SELECT file_name FROM project_revision_backups WHERE project_id = ?
+    `).all(row.id).map((backup) => backup.file_name);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = this.db.prepare(`
@@ -751,6 +796,7 @@ export class ProjectService {
         throw new ProjectError(409, 'This project changed on another device.', 'revision_conflict');
       }
       this.db.prepare('DELETE FROM project_asset_refs WHERE project_id = ?').run(row.id);
+      this.db.prepare('DELETE FROM project_revision_backups WHERE project_id = ?').run(row.id);
       this.db.exec('COMMIT');
     } catch (error) {
       try { this.db.exec('ROLLBACK'); } catch {}
@@ -758,6 +804,7 @@ export class ProjectService {
     }
     try {
       fs.rmSync(this.filePath(row.file_name), { force: true });
+      for (const fileName of backupFiles) fs.rmSync(this.filePath(fileName), { force: true });
       this.syncDirectory();
     } catch (error) {
       this.warn('Kerfloom committed a project deletion but could not remove its bundle.', error);

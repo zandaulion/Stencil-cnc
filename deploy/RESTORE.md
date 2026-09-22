@@ -29,7 +29,7 @@ coverage.
 ## What must travel together
 
 - the entire `stencil-cnc-data` volume, including the SQLite database, WAL/SHM
-  files if present, `projects/`, and `shares/`;
+  files if present, `projects/`, `project-assets/`, and `shares/`;
 - the protected deployment environment file containing the active admin,
   project, share, and retained previous project keys;
 - the application image or Git commit used for the snapshot.
@@ -91,6 +91,8 @@ volume.
    restart, and verify again.
 
 Files without a key ID from older releases remain readable while their secret
-is retained. Migration rewrites them as immutable encrypted revision files and
-atomically changes the SQLite pointer; it never accepts a secret on the command
-line or prints one.
+is retained. Migration rewrites project state and immutable asset files and
+atomically changes each SQLite pointer; it never accepts a secret on the
+command line or prints one. Do not retire a previous key until both the
+`projects` and `projectAssets` failure counts are zero and any seven-day legacy
+migration-backup window has expired.

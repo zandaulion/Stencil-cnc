@@ -5,12 +5,14 @@ import { reconcileProjectAcknowledgement } from '/core/sync-state.js';
 
 const LEGACY_DB_NAME = 'stencil-cnc';
 const WORKSPACE_DB_PREFIX = 'stencil-cnc-workspace:';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const PROJECT_STORE = 'projects';
 const META_STORE = 'meta';
 const CHECKPOINT_STORE = 'checkpoints';
 const ARTIFACT_STORE = 'artifacts';
 const SYNC_STORE = 'projectSync';
+const SERVER_ASSET_STORE = 'serverAssets';
+const SERVER_PROJECT_STORE = 'serverProjects';
 const CHECKPOINT_LIMIT = 10;
 const ARTIFACT_LIMIT = 30;
 export const LOCAL_DRAFT_PROJECT_ID = 'kerfloom-local-draft';
@@ -68,6 +70,12 @@ function openDatabase(databaseName = workspaceDatabaseName(storageWorkspaceId())
       if (!db.objectStoreNames.contains(SYNC_STORE)) {
         const sync = db.createObjectStore(SYNC_STORE, { keyPath: 'projectId' });
         sync.createIndex('queuedAt', 'queuedAt');
+      }
+      if (!db.objectStoreNames.contains(SERVER_ASSET_STORE)) {
+        db.createObjectStore(SERVER_ASSET_STORE, { keyPath: 'sha256' });
+      }
+      if (!db.objectStoreNames.contains(SERVER_PROJECT_STORE)) {
+        db.createObjectStore(SERVER_PROJECT_STORE, { keyPath: 'id' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -211,6 +219,59 @@ export async function loadLastProject() {
 
 export async function clearLastProject() {
   await transaction(META_STORE, 'readwrite', (store) => requestResult(store.delete('lastProjectId')));
+}
+
+export async function loadServerAsset(sha256) {
+  const digest = String(sha256 || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(digest)) return null;
+  return transaction(SERVER_ASSET_STORE, 'readonly', (store) => requestResult(store.get(digest)));
+}
+
+export async function cacheServerAsset(asset) {
+  const value = {
+    assetId: String(asset?.id || asset?.assetId || ''),
+    sha256: String(asset?.sha256 || '').toLowerCase(),
+    kind: String(asset?.kind || ''),
+    mimeType: String(asset?.mimeType || 'application/octet-stream'),
+    sizeBytes: Number(asset?.sizeBytes ?? asset?.size) || 0,
+    cachedAt: new Date().toISOString(),
+  };
+  if (!/^[0-9a-f]{64}$/.test(value.sha256) || !value.assetId || value.sizeBytes < 1) {
+    throw new TypeError('A valid server asset receipt is required');
+  }
+  await transaction(SERVER_ASSET_STORE, 'readwrite', (store) => requestResult(store.put(value)));
+  return value;
+}
+
+export async function deleteServerAsset(sha256) {
+  const digest = String(sha256 || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(digest)) return false;
+  await transaction(SERVER_ASSET_STORE, 'readwrite', (store) => requestResult(store.delete(digest)));
+  return true;
+}
+
+export async function replaceServerProjectIndex(rows) {
+  if (!Array.isArray(rows)) throw new TypeError('Server project metadata must be an array');
+  await transaction(SERVER_PROJECT_STORE, 'readwrite', async (store) => {
+    await Promise.all([
+      requestResult(store.clear()),
+      ...rows
+        .filter((row) => row?.id)
+        .map((row) => requestResult(store.put({ ...row }))),
+    ]);
+  });
+  return rows;
+}
+
+export async function listServerProjects({ trashed = null } = {}) {
+  const rows = await transaction(
+    SERVER_PROJECT_STORE,
+    'readonly',
+    (store) => requestResult(store.getAll()),
+  );
+  return rows
+    .filter((row) => !row.deletedAt && (trashed == null || Boolean(row.trashedAt) === trashed))
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
 export async function listProjects({ trashed = false, includeDraft = false } = {}) {

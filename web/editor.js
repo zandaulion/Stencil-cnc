@@ -99,6 +99,7 @@ import {
   listArtifacts,
   listCheckpoints,
   listProjects,
+  listServerProjects,
   legacyProjectSummary,
   loadLastProject,
   loadProject,
@@ -116,6 +117,7 @@ import {
 import {
   buildProjectBundle,
   deleteServerProject,
+  downloadServerProject,
   flushQueuedProjectSync,
   hasPendingProjectSync,
   pendingProjectSyncCount,
@@ -4542,7 +4544,7 @@ async function syncWorkspaceProjects({ announce = false } = {}) {
           ? `Syncing projects ${Math.min(completed + 1, total)}/${total}…`
           : message || 'Syncing projects…');
       }
-    });
+    }, { activeProjectId });
     const activeRemap = result.remapped?.find((entry) => entry.fromProjectId === activeProjectId);
     if (activeRemap && state.projectId === activeProjectId) {
       const remappedProject = await loadProject(activeRemap.toProjectId);
@@ -4743,7 +4745,7 @@ let duplicateConflictGroups = [];
 const projectThumbnailCache = new Map();
 
 function projectStatus(record) {
-  return record.editor?.projectSummary?.status ??
+  return record.status ?? record.editor?.projectSummary?.status ??
     (record.raster?.sourceMask ? 'needs-validation' : 'draft');
 }
 
@@ -4798,7 +4800,7 @@ function projectThumbnailKey(record) {
 
 function projectThumbnail(record) {
   return projectThumbnailCache.get(projectThumbnailKey(record)) ??
-    record.editor?.projectSummary?.thumbnail ?? null;
+    record.thumbnail ?? record.editor?.projectSummary?.thumbnail ?? null;
 }
 
 function isConflictProject(record) {
@@ -4864,6 +4866,7 @@ async function hydrateProjectThumbnails(records, renderToken) {
     if (renderToken !== projectThumbnailRender) return;
     const thumbnailKey = projectThumbnailKey(record);
     if (projectThumbnailCache.has(thumbnailKey)) continue;
+    if (record.remoteOnly) continue;
     // Rebuild saved thumbnails from the sheet mask so old projects also use
     // their physical panel proportions. Yield between projects to keep the
     // library responsive when many previews need their first render.
@@ -4911,16 +4914,18 @@ function buildProjectCard(record) {
 
   const meta = document.createElement('div');
   meta.className = 'project-card-meta';
-  const style = record.editor?.projectSummary?.cutStyle ?? record.editor?.controls?.cutStyle ?? 'line-art';
+  const style = record.cutStyle ?? record.editor?.projectSummary?.cutStyle ??
+    record.editor?.controls?.cutStyle ?? 'line-art';
   const sourceSize = record.localSource instanceof Blob ? formatStorage(record.localSource.size) : '';
   for (const value of [
     formatProjectDate(record.updatedAt),
-    `${record.sheet.widthMm} × ${record.sheet.heightMm} mm`,
+    record.sheet ? `${record.sheet.widthMm} × ${record.sheet.heightMm} mm` : 'Panel size unavailable',
     CUT_STYLE_NAMES[style] || style,
     sourceSize
       ? `${record.serverRevision ? 'Source on server' : 'Source queued'} · ${sourceSize}`
-      : 'Processed geometry only',
-  ]) {
+      : record.remoteOnly ? 'On server · download when opened' : 'Processed geometry only',
+    record.remoteUpdateAvailable ? 'Newer server revision · opens on demand' : null,
+  ].filter(Boolean)) {
     const span = document.createElement('span');
     span.textContent = value;
     meta.append(span);
@@ -4938,6 +4943,12 @@ function buildProjectCard(record) {
     actions.append(
       projectAction('Restore', 'restore', { primary: true }),
       projectAction('Delete forever', 'delete'),
+    );
+  } else if (record.remoteOnly || record.remoteUpdateAvailable) {
+    actions.append(
+      projectAction('Open', 'open', { primary: true }),
+      projectAction(record.remoteOnly ? 'Save offline' : 'Update offline copy', 'offline'),
+      projectAction('Trash', 'trash'),
     );
   } else {
     actions.append(
@@ -4983,19 +4994,64 @@ function renderProjectLibrary() {
 }
 
 async function refreshProjectLibrary() {
-  const [active, trash, legacy, draft] = await Promise.all([
+  const [localActive, localTrash, remote, legacy, draft] = await Promise.all([
     listProjects(),
     listProjects({ trashed: true }),
+    listServerProjects(),
     legacyProjectSummary(),
     loadProject(LOCAL_DRAFT_PROJECT_ID),
   ]);
-  duplicateConflictGroups = await findDuplicateConflictGroups(active);
+  const localById = new Map([...localActive, ...localTrash].map((record) => [record.id, record]));
+  const mergedRemote = remote.map((metadata) => {
+    const local = localById.get(metadata.id);
+    if (local) {
+      const remoteUpdateAvailable = !local.localSyncPending &&
+        Number(metadata.revision) > Number(local.serverRevision);
+      return {
+        ...local,
+        ...(remoteUpdateAvailable ? {
+          name: metadata.name,
+          sheet: metadata.sheet || local.sheet,
+          cutStyle: metadata.cutStyle || local.editor?.projectSummary?.cutStyle,
+          status: metadata.status || projectStatus(local),
+          updatedAt: metadata.updatedAt,
+          trashedAt: metadata.trashedAt || null,
+        } : {}),
+        thumbnail: metadata.thumbnail || local.editor?.projectSummary?.thumbnail || null,
+        remoteMetadata: metadata,
+        remoteUpdateAvailable,
+      };
+    }
+    return {
+      ...metadata,
+      remoteOnly: true,
+      editor: { projectSummary: {
+        status: metadata.status || 'draft',
+        cutStyle: metadata.cutStyle || 'line-art',
+        thumbnail: metadata.thumbnail || null,
+      } },
+    };
+  });
+  const remoteById = new Map(mergedRemote.map((record) => [record.id, record]));
+  const mergedLocal = [...localActive, ...localTrash]
+    .map((record) => remoteById.get(record.id) || record);
+  const active = [
+    ...mergedLocal.filter((record) => !record.trashedAt),
+    ...mergedRemote.filter((record) => record.remoteOnly && !record.trashedAt),
+  ];
+  const trash = [
+    ...mergedLocal.filter((record) => record.trashedAt),
+    ...mergedRemote.filter((record) => record.remoteOnly && record.trashedAt),
+  ];
+  duplicateConflictGroups = await findDuplicateConflictGroups(localActive);
   el('project-count-active').textContent = String(active.length);
   el('project-count-trash').textContent = String(trash.length);
   const baseRows = projectLibraryView === 'trash' ? trash : active;
   projectLibraryRows = await Promise.all(baseRows.map(async (record) => ({
     ...record,
-    checkpointCount: (await listCheckpoints(record.id)).length,
+    checkpointCount: record.remoteOnly
+      ? Number(record.checkpointCount) || 0
+      : (await listCheckpoints(record.id)).length,
   })));
   for (const tab of all('[data-project-view]')) {
     const selected = tab.dataset.projectView === projectLibraryView;
@@ -5347,7 +5403,18 @@ async function openStoredProject(id) {
     return;
   }
   if (!await flushPendingSave()) return;
-  const project = await loadProject(id);
+  let project = await loadProject(id);
+  const remote = (await listServerProjects()).find((row) => row.id === id && !row.deletedAt);
+  if (remote && (!project || (
+    !project.localSyncPending && Number(remote.revision) > Number(project.serverRevision)
+  ))) {
+    if (!navigator.onLine) {
+      toast('This project is on the server but is not available offline yet.');
+      return;
+    }
+    toast(`Downloading “${remote.name}”…`);
+    project = await downloadServerProject(remote);
+  }
   if (!project || project.trashedAt) {
     toast('That project is no longer available.');
     await refreshProjectLibrary();
@@ -5432,6 +5499,16 @@ async function handleProjectAction(action, record) {
     await openStoredProject(record.id);
     return;
   }
+  if (action === 'offline') {
+    if (!navigator.onLine) {
+      toast('Reconnect to save this project for offline use.');
+      return;
+    }
+    await downloadServerProject(record.remoteMetadata || record);
+    await refreshProjectLibrary();
+    toast(`“${record.name}” is now available offline with its source and exports.`);
+    return;
+  }
   if (action === 'rename') {
     await beginRenameProject(record);
     return;
@@ -5472,6 +5549,13 @@ async function handleProjectAction(action, record) {
     return;
   }
   if (action === 'restore') {
+    if ((record.remoteOnly || record.remoteUpdateAvailable) && !navigator.onLine) {
+      toast('Reconnect before restoring this server-only project.');
+      return;
+    }
+    if (record.remoteOnly || record.remoteUpdateAvailable) {
+      await downloadServerProject(record.remoteMetadata || record);
+    }
     const restored = await restoreProject(record.id);
     await syncStoredProject(restored);
     projectLibraryView = 'active';
@@ -5490,6 +5574,14 @@ async function handleProjectAction(action, record) {
       return;
     }
     if (record.id === state.projectId && !await flushPendingSave()) return;
+    if ((record.remoteOnly || record.remoteUpdateAvailable) && !navigator.onLine) {
+      await openProjectLibrary({ flush: false });
+      toast('Reconnect before moving this server-only project to Trash.');
+      return;
+    }
+    if (record.remoteOnly || record.remoteUpdateAvailable) {
+      await downloadServerProject(record.remoteMetadata || record);
+    }
     const trashed = await trashProject(record.id);
     await syncStoredProject(trashed);
     if (record.id === state.projectId) {
