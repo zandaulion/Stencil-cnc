@@ -251,6 +251,20 @@ test('server-backed project management is searchable, recoverable, and offline s
   assert.match(editor, /Saved to server at/);
   assert.match(editor, /async function saveDraftAsProject/);
   assert.match(editor, /findDuplicateConflictGroups/);
+  const openLibrary = editor.slice(
+    editor.indexOf('async function openProjectLibrary'),
+    editor.indexOf('function closeProjectLibrary'),
+  );
+  assert.ok(
+    openLibrary.indexOf('dialog.showModal()') < openLibrary.indexOf('await flushPendingLocalSave()'),
+    'the project library must become visible before saving or synchronizing',
+  );
+  assert.ok(
+    openLibrary.indexOf('await refreshProjectLibrary()') < openLibrary.indexOf('void refreshOpenProjectLibraryFromServer(generation)'),
+    'cached projects must render before the background server refresh starts',
+  );
+  assert.doesNotMatch(openLibrary, /flushPendingSave\(\)/);
+  assert.match(editor, /async function refreshOpenProjectLibraryFromServer\(generation\)[\s\S]*?await syncWorkspaceProjects\(\)/);
   const editorStartup = editor.slice(editor.indexOf('export async function startEditor'));
   assert.ok(
     editorStartup.indexOf('await loadLastProject()') < editorStartup.indexOf('syncWorkspaceProjects({ announce: false })'),

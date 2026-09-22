@@ -232,7 +232,7 @@ The release record makes an export identifiable and tamper-evident; it is not a 
 
 ## 9. Projects, autosave, and recovery
 
-Open **Projects** from the desktop header or mobile tool rail. Cards show the generated artwork preview, panel size, style, validation state, time, and source availability. You can open, rename, duplicate, download, share, or move a project to Trash. Trash remains recoverable until **Delete forever**.
+Open **Projects** from the desktop header or mobile tool rail. The library appears immediately, saves the current edit to the device cache, and shows cached projects before it refreshes server changes in the background. You can keep using the cached library while that refresh runs, and an offline or slow server cannot block it from opening. Cards show the generated artwork preview, panel size, style, validation state, time, and source availability. You can open, rename, duplicate, download, share, or move a project to Trash. Trash remains recoverable until **Delete forever**.
 
 Kerfloom saves every edit to a local IndexedDB cache first, then uploads a complete encrypted project bundle through a durable queue. The status distinguishes:
 

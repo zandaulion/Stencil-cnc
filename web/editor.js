@@ -4738,6 +4738,7 @@ let sharingProject = null;
 let receivedShare = null;
 let deviceManagerInvite = null;
 let projectThumbnailRender = 0;
+let projectLibraryOpenGeneration = 0;
 let duplicateConflictGroups = [];
 const projectThumbnailCache = new Map();
 
@@ -5052,20 +5053,68 @@ async function cleanDuplicateConflictProjects() {
   toast(`${duplicates.length} identical conflict ${duplicates.length === 1 ? 'copy was' : 'copies were'} moved to Trash.`);
 }
 
-async function openProjectLibrary({ flush = true } = {}) {
-  if (flush && !await flushPendingSave()) return;
+function projectLibraryIsOpen(generation) {
+  return generation === projectLibraryOpenGeneration && Boolean(el('project-library-dialog')?.open);
+}
+
+async function refreshOpenProjectLibraryFromServer(generation) {
   try {
-    if (navigator.onLine) await syncWorkspaceProjects();
+    const result = await syncWorkspaceProjects();
+    if (!projectLibraryIsOpen(generation)) return;
     await refreshProjectLibrary();
-    const dialog = el('project-library-dialog');
-    if (!dialog?.open) {
-      dialog.returnValue = '';
-      dialog.showModal();
+    if (!projectLibraryIsOpen(generation)) return;
+    if (['error', 'offline', 'retrying', 'storage-full', 'workspace-changed'].includes(result?.status)) {
+      el('project-storage-summary').textContent = 'Server refresh unavailable · showing cached projects';
     }
-    requestAnimationFrame(() => el('project-search')?.focus());
   } catch (error) {
-    console.error(error);
-    toast('The project library could not be opened.');
+    console.error('Could not refresh the open project library from the server:', error);
+    if (projectLibraryIsOpen(generation)) {
+      el('project-storage-summary').textContent = 'Server refresh failed · cached projects available';
+    }
+  }
+}
+
+async function openProjectLibrary({ flush = true } = {}) {
+  const dialog = el('project-library-dialog');
+  if (!dialog) return;
+  const generation = ++projectLibraryOpenGeneration;
+  if (!dialog.open) {
+    dialog.returnValue = '';
+    dialog.showModal();
+  }
+
+  const list = el('project-list');
+  list?.setAttribute('aria-busy', 'true');
+  if (list) list.inert = true;
+  el('project-library-result').textContent = 'Loading cached projects…';
+  el('project-storage-summary').textContent = navigator.onLine
+    ? 'Opening local cache…'
+    : 'Opening offline cache…';
+  requestAnimationFrame(() => el('project-search')?.focus());
+
+  try {
+    // Navigation must never wait on the network. Save the current edit to the
+    // durable local cache, render that cache, then reconcile the server in the
+    // background while the library remains usable.
+    if (flush) await flushPendingLocalSave();
+    if (!projectLibraryIsOpen(generation)) return;
+    await refreshProjectLibrary();
+    if (!projectLibraryIsOpen(generation)) return;
+    list?.setAttribute('aria-busy', 'false');
+    if (list) list.inert = false;
+    if (navigator.onLine) {
+      el('project-storage-summary').textContent = 'Refreshing from server…';
+      void refreshOpenProjectLibraryFromServer(generation);
+    }
+  } catch (error) {
+    console.error('Could not load the cached project library:', error);
+    if (projectLibraryIsOpen(generation)) {
+      list?.setAttribute('aria-busy', 'false');
+      if (list) list.inert = false;
+      el('project-library-result').textContent = 'Cached projects could not be loaded';
+      el('project-storage-summary').textContent = 'Your open project remains available';
+      toast('The cached project library could not be loaded.');
+    }
   }
 }
 
@@ -9038,6 +9087,10 @@ function wire() {
   el('btn-close-projects')?.addEventListener('click', closeProjectLibrary);
   el('project-library-dialog')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeProjectLibrary();
+  });
+  el('project-library-dialog')?.addEventListener('close', () => {
+    projectLibraryOpenGeneration += 1;
+    projectThumbnailRender += 1;
   });
   el('project-search')?.addEventListener('input', renderProjectLibrary);
   el('project-status-filter')?.addEventListener('change', renderProjectLibrary);
