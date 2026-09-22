@@ -4072,17 +4072,20 @@ select:focus {
   display: flex;
   align-items: flex-end;
   flex-direction: column;
-  color: var(--ink-soft);
+  color: #ef233c;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.5rem;
+  font-weight: 700;
+  text-shadow: 0 0 2px rgb(255 255 255 / 95%), 0 1px 2px rgb(0 0 0 / 55%);
 }
 
 .scale-indicator span {
   width: 75px;
   height: 6px;
   margin-bottom: 3px;
-  border: solid var(--ink-soft);
+  border: solid #ef233c;
   border-width: 0 1px 1px;
+  filter: drop-shadow(0 0 1px rgb(255 255 255 / 95%)) drop-shadow(0 1px 1px rgb(0 0 0 / 55%));
 }
 
 .canvas-statusbar {

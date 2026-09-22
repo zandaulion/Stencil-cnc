@@ -542,6 +542,13 @@ test('Tools remains available beside the canvas and becomes a mobile bottom bar'
   assert.match(css, /\.tools-rail \{[\s\S]*?position: fixed;[\s\S]*?bottom: 0;/);
 });
 
+test('the physical scale remains visible over both metal and openings', () => {
+  const css = fs.readFileSync(path.join(projectRoot, 'web/app.css'), 'utf8');
+  assert.match(html, /class="scale-indicator" id="scale-readout"/);
+  assert.match(css, /\.scale-indicator \{[\s\S]*?color: #ef233c;[\s\S]*?text-shadow:/);
+  assert.match(css, /\.scale-indicator span \{[\s\S]*?border: solid #ef233c;[\s\S]*?drop-shadow/);
+});
+
 test('smart supports use a global filter-aware aesthetic strategy', () => {
   assert.match(html, /id="bridge-count"[^>]*value="2"/);
   assert.match(html, /id="bridge-count-value"[^>]*>Aesthetic</);
