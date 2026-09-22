@@ -7633,10 +7633,17 @@ function openMobileSheet(kind) {
   el('mobile-sheet-backdrop')?.removeAttribute('hidden');
   document.body.classList.add('mobile-sheet-open');
   syncMobileWorkspaceLayout();
-  requestAnimationFrame(() => {
-    el(kind === 'controls' ? 'btn-close-mobile-controls' : 'btn-close-mobile-review')
-      ?.focus({ preventScroll: true });
-  });
+  const focusCloseAction = () => {
+    if (mobileSheet !== kind) return;
+    const close = el(kind === 'controls' ? 'btn-close-mobile-controls' : 'btn-close-mobile-review');
+    if (!close || close.closest('[inert]')) return;
+    close.focus({ preventScroll: true });
+  };
+  requestAnimationFrame(focusCloseAction);
+  // Chromium can reject focus while the sheet is still transitioning from
+  // visibility:hidden. Retry once after that short transition, but only if
+  // this same sheet is still open so a fast close never steals focus back.
+  setTimeout(focusCloseAction, 220);
 }
 
 function wireTabKeyboard(tabList, selector = '[role="tab"]') {

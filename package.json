@@ -10,7 +10,9 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "benchmark:processing": "node scripts/benchmark-processing.mjs",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:browser": "node --test test/browser/editor-interactions.test.js",
+    "test:browser:install": "playwright install chromium"
   },
   "engines": {
     "node": ">=24"
@@ -18,5 +20,8 @@
   "dependencies": {
     "express": "^4.21.2",
     "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }

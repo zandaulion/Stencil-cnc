@@ -196,8 +196,15 @@ Then open `http://127.0.0.1:3000` and redeem the generated one-time code.
 Run the JavaScript server, geometry, workflow, security, and deployment tests:
 
 ```bash
+npm run test:browser:install
 npm test
 ```
+
+The one-time browser install supplies an isolated Chromium runtime. `npm test`
+then includes real editor interactions for candidate restore, field-level undo,
+rulers, draft PNG export, and the mobile sheets. The browser fixture uses only
+synthetic artwork and an in-memory server, and rejects requests to any external
+origin. Run just that coverage with `npm run test:browser`.
 
 Run the Python image-processing tests:
 
