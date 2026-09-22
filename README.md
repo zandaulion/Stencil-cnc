@@ -2,15 +2,17 @@
 
 **Art that holds together.**
 
-Kerfloom turns photographs and prepared artwork into connected, manufacturing-aware geometry for CNC plasma cutting. It combines creative image treatments with panel layout, support design, physical validation, manual touch-ups, and export in one installable web application.
+Kerfloom turns photographs and prepared artwork into connected, manufacturing-aware geometry for CNC plasma cutting. It combines creative image treatments with panel layout, support design, physical validation, manual touch-ups, server-backed project management, and export in one installable web application.
 
 The central rule is simple: dark geometry represents retained metal and light geometry represents material to remove. The editor keeps the source treatment, structural frame, supports, manual edits, and automatic manufacturing repairs as separate inputs so the final panel can be rebuilt and checked consistently.
+
+Kerfloom is a fabrication aid, not a machine-safety certificate. **Ready for CAM review** means that the current geometry passed Kerfloom's configured checks; the operator must still verify the material, machine, consumables, compensation, lead-ins, cut order, fixturing, heat behavior, and final use.
 
 ## Documentation
 
 Select **Help** in the Kerfloom header for the searchable, mobile-responsive handbook. The existing question-mark button in each workflow stage opens that handbook directly at the relevant chapter. It covers the complete creative workflow, all style families, tone and placement, cutting-profile terminology, smart and manual supports, validation and reversible repairs, CAM hand-off, autosave and recovery, linked devices, sharing, keyboard/mobile use, privacy boundaries, troubleshooting, and a final release checklist.
 
-The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_USER_GUIDE.md). The separate [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md) records the outstanding physical-device and assistive-technology acceptance matrix, [`docs/K16_PROCESSING_BASELINE.md`](docs/K16_PROCESSING_BASELINE.md) records the deterministic performance baseline and device-acceptance procedure, and [`docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md`](docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md) records the product audit and implementation history.
+The operator handbook source is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_USER_GUIDE.md). The separate [`docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md`](docs/K14_MOBILE_ACCESSIBILITY_ACCEPTANCE.md) records the outstanding physical-device and assistive-technology acceptance matrix, [`docs/K16_PROCESSING_BASELINE.md`](docs/K16_PROCESSING_BASELINE.md) records the deterministic performance baseline and device-acceptance procedure, [`docs/K19_ASSET_SYNC_DESIGN.md`](docs/K19_ASSET_SYNC_DESIGN.md) describes the current state/asset synchronization contract, and [`docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md`](docs/KERFLOOM_AUDIT_AND_ACTION_PLAN.md) records the product audit and implementation history.
 
 ## What it does
 
@@ -20,10 +22,10 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 - Suggests an explicit, reversible starting point for physical pattern dimensions from the current panel size and cutting-profile limits; mandatory clamps remain explained beside the changed controls.
 - Flow engraving bends long, parallel cut ribbons around broad facial forms while enforcing the selected opening and finished-web limits during generation.
 - Radial cuts use a directly controlled solid-hub diameter and split rays progressively toward the panel edge.
-- Fits artwork proportionally to portrait or landscape stock without stretching it.
+- Fits artwork proportionally to portrait or landscape stock without stretching it, then lets the user position, rotate, and scale it within the panel.
 - Models a configurable panel frame and preserves unused letterbox areas as metal.
 - Adds manual or filter-aware automatic supports, including portrait-aware dark-feature placement and organic slat stabilizers that can add one sparse station to avoid a face. Smart supports remain a dashed, reviewable proposal until accepted.
-- Keeps manual Add, Remove, and Restore work as ordered, non-destructive operations in physical panel units. Freehand strokes can be smoothed, straight strokes can be angle-constrained, connected regions remain reversible, and an Edit tool can select, move, resize, hide, change, or delete one operation without rewinding later work.
+- Keeps manual Add, Remove, and Restore work as ordered, non-destructive operations in physical panel units. Freehand strokes can be smoothed, straight strokes can be angle-constrained, connected regions remain reversible, and an Edit tool can select, move, resize, hide, change, or delete one operation without rewinding later work. Creative painting commits immediately and marks manufacturing results stale instead of freezing the next gesture for a full-panel scan.
 - Simulates kerf and checks disconnected material, minimum openings, close cuts, and configured minimum-web geometry.
 - Stores a versioned cutting-profile snapshot with each project and retained export: process, stock, machine/consumable, geometry limits, support assumptions, revision, and evidence status travel together.
 - Builds reversible manufacturing-repair previews before changing the artwork.
@@ -31,7 +33,7 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
 - Keeps validation, repair planning, repair-choice evaluation, and smart-support planning off the interface thread. Each operation has visible progress and Cancel; stale results are rejected while the last accepted geometry remains usable. Private per-device timing diagnostics are available in Help.
 - Autosaves complete projects to an encrypted server workspace, with a durable offline browser cache, searchable library, recoverable Trash, and recent recovery points.
 - Publishes an explicit, encrypted project snapshot for one invited recipient when the owner creates a private share link.
-- Exports validated geometry as SVG, DXF, or a shareable PNG. Variable Dots
+- Exports current validated cutting geometry as SVG or DXF. PNG is always available once geometry exists and receives a visible draft watermark whenever validation is absent, stale, or blocking. Variable Dots
   retain their generated circle primitives, so zoomed previews and CNC vector
   exports remain round instead of tracing raster stair steps.
 - Reports the export mask's effective X/Y millimetres per cell and retains a
@@ -43,19 +45,30 @@ The repository source of truth is [`docs/KERFLOOM_USER_GUIDE.md`](docs/KERFLOOM_
   intersections, and exact-circle clearance, then pass the manufacturing
   validator after rasterization; otherwise export falls back automatically to
   the exact raster contours. The release manifest records the decision.
-- Runs as an installable, offline-capable PWA after an authorised device has loaded it.
+- Runs as an installable PWA. An authorised device can reopen cached projects and queue edits offline after it has loaded the application once; server-only projects and photographic processing still require a connection.
 
 ## Workflow
 
-1. **Prepare** — import an image, inspect Original → Tone → Artwork, choose a visually identified cut style, optionally apply its panel/profile-guided starting dimensions, and tune its creative parameters. The canvas distinguishes a quick provisional preview from the current processed style geometry; processing completion is not manufacturing validation.
-2. **Panel** — set stock dimensions, orientation, frame edges, artwork fitting, and plasma constraints.
+1. **Prepare** — import an image, inspect Original → Tone → Artwork, choose a visually identified cut style, optionally apply its panel/profile-guided starting dimensions, and tune its creative parameters. Tone controls remain available independently of the selected cut style. The canvas distinguishes a quick provisional preview from the current processed style geometry; processing completion is not manufacturing validation.
+2. **Panel** — set stock dimensions and orientation, position/rotate/scale the artwork, configure frame and anchor edges, and choose the versioned plasma constraints used by generation, validation, and export.
 3. **Support** — inspect connectivity, preview and accept smart bridges, or create supports by dragging or tapping start/end points. A keyboard-accessible list can select, locate, move numerically, rotate, resize, or delete each support; Pan never edits geometry.
-4. **Validate** — compare pre- and post-kerf geometry, locate problems, and preview manufacturing repairs.
-5. **Export** — download the checked result as SVG, DXF, PNG, or a portable Kerfloom project.
+4. **Validate** — run the deliberate full check, compare pre- and post-kerf geometry, locate individual problems, and preview reversible manufacturing repairs. During explicit problem-by-problem review, a manual correction can recheck the selected issue without discarding accepted automatic repairs. Escape clears the current problem selection.
+5. **Export** — download validated SVG/DXF cutting geometry, a validated or visibly watermarked draft PNG, or a portable Kerfloom project. Exports use descriptive filenames with the project, panel size, style, frame choice, purpose, and timestamp.
+
+## Access, installation, and offline use
+
+Kerfloom is device-gated. A new browser first needs a one-time invite code from the administrator or a device-link invitation from an already authorised workspace device.
+
+- **Windows:** open Kerfloom in Microsoft Edge or Google Chrome and select the install icon in the address bar, or use the browser's **Apps / Install** menu.
+- **Android:** open Kerfloom in Chrome and choose **Install app** or **Add to Home screen**.
+- **iPhone/iPad:** open Kerfloom in Safari, use **Share**, then choose **Add to Home Screen**.
+- **Another personal device:** open **Projects → Devices**, name the new device, and scan the one-time QR code or privately send its link. This joins the same live workspace; project **Share** instead creates an independent editable copy for another person.
+
+Open an installed copy while online after an update so the service worker can refresh it. Cached projects remain editable without a connection and changes stay in the durable local queue until synchronization succeeds. A project marked server-only must be opened or explicitly made **Available offline** before disconnecting. Logging out removes that browser's online credential but cannot remotely erase data already cached on an offline device.
 
 ### Mobile and keyboard workflow
 
-On screens up to 720 px wide, the canvas remains fixed in the available app viewport. Tap any numbered stage, or **Adjust _stage_**, to open that stage's controls in a compact bottom sheet; close it to inspect the result without scrolling past the controls. **Candidates/Problems** opens the review sheet. Projects, synchronization state, Undo/Redo, and editing tools remain in the bottom rail, while **Fit** remains visible in the two-row canvas toolbar. The tool rail scrolls horizontally when the screen cannot hold every editing tool.
+On screens up to 720 px wide, the canvas remains fixed in the available app viewport. Tap any numbered stage, or **Adjust _stage_**, to open that stage's controls in a compact bottom sheet; close it to inspect the result without scrolling past the controls. **Candidates/Problems** opens the review sheet. Projects, synchronization state, Undo/Redo, and editing tools remain in the bottom rail, while **Fit** remains visible in the two-row canvas toolbar. The tool rail scrolls horizontally when the screen cannot hold every editing tool. Rulers retain physical units as the canvas zooms, and the red scale indicator remains visible over both retained metal and openings.
 
 Workflow, review, and project-library tabs use Left/Right Arrow, Home, and End. Visible focus is retained throughout the editor, and transient visual notices are mirrored into persistent polite or urgent live regions. In **Pan**, one finger moves the canvas and browser pinch zoom remains available. Add/Remove/Restore/Artwork/Support modes reserve one primary pointer for the active edit and cancel safely on browser interruption; switch back to Pan for page-level pinch zoom. Hold Space for temporary Pan while the canvas has focus. Support creation and editing also have tap-start/tap-end, numeric, list, and keyboard alternatives.
 
@@ -106,13 +119,15 @@ The default panel is 1250 × 2500 mm. The reusable General plasma profile starts
 
 ## Project library
 
-Select **Projects** in the desktop header or the permanent mobile Tools bar to browse the encrypted server workspace. The library opens immediately from the device cache, saves the current edit locally, and refreshes lightweight server metadata and thumbnails in the background; it does not download the whole library. The open project is refreshed first. A server-only project downloads when opened, or **Save offline** retains its complete source and exports without opening it. Slow or unavailable networking does not block access to projects already cached. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is included. Projects can be opened, renamed, duplicated, downloaded, shared, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
+Select **Projects** in the desktop header or the permanent mobile Tools bar to browse the encrypted server workspace. The library opens immediately from the device cache, saves the current edit locally, and refreshes lightweight server metadata and thumbnails in the background; opening the library is not blocked by a full synchronization pass and does not download the whole library. The open project is refreshed first. A server-only project downloads when opened, or **Save offline** retains its complete source and exports without opening it. Slow or unavailable networking does not block access to projects already cached. Project cards show a processed-geometry thumbnail, panel size, cut style, validation status, modification time, and whether the original source image is included. Projects can be opened, renamed, duplicated, downloaded, shared, or moved to Trash; trashed projects remain recoverable until they are explicitly deleted forever.
+
+**New project** starts as one recoverable device-local draft rather than immediately creating an empty server project. Import and edit normally, then choose **Save to Projects** when it should join the encrypted workspace. Starting another project warns before replacing an unsaved draft.
 
 Select **Projects → Devices** to connect a phone, tablet, or another computer to the same live workspace. Name the device, then scan the one-time QR code or privately send its link. The credential is carried in the URL fragment so it is not included in HTTP request logs, expires automatically, and can be cancelled before use. The Devices screen shows every linked device and its last connection time; another linked device can revoke a lost device, while Kerfloom prevents the current device from accidentally revoking itself. If a browser already belongs to a different workspace, it must explicitly confirm replacing that connection. Device linking gives both devices access to the same projects and is intentionally distinct from **Share**, which creates an independent editable copy.
 
 Autosave reports `Saving…`, `Saved to server`, an offline queued state, or a retry action if synchronization fails. Every change is written to IndexedDB first and placed in a durable complete upload queue; online synchronization uploads each immutable source/export asset once, then sends small versioned state manifests for ordinary edits. The UI reports a server save only after the server acknowledges the revision. Synchronization isolates failures per project, repairs a damaged queued package from its complete local copy when possible, and gives retries of the same edit one stable conflict-copy identity. A problem in an older project therefore cannot block a healthy current project or multiply conflict copies. Pending changes are flushed before opening or replacing a panel, and `Ctrl/Cmd+S` requests an immediate save. Kerfloom retains up to ten recovery points per project after validation, manufacturing repair, accepted smart-support changes, and export.
 
-Accepted manufacturing repairs remain active while the user completes manual material and support corrections. A hand-painted cell overrides only an opposite generated edit at that cell; unaffected generated repairs remain reversible and active. The combined geometry is checked automatically after each committed manual gesture. Changing the underlying artwork, panel geometry, or cutting limits still marks dependent repair work stale and requires regeneration.
+Accepted manufacturing repairs remain active while the user completes manual material and support corrections. A hand-painted cell overrides only an opposite generated edit at that cell; unaffected generated repairs remain reversible and active. Ordinary creative gestures update the canvas immediately, invalidate stale validation, and leave the next full scan to **Run all checks**. When the user is deliberately fixing a selected item from Problems, **Recheck selected problem** refreshes that review queue after the correction. Changing the underlying artwork, panel geometry, or cutting limits still marks dependent repair work stale and requires regeneration.
 
 The canonical encrypted package contains the editable geometry, original photograph, candidates, supports, repairs, recovery points, and retained SVG, DXF, and PNG exports. Each project and newly retained export records its full cutting-profile snapshot rather than only a mutable preset name. Portable `.stencil.json` downloads intentionally omit the source photograph.
 
@@ -130,12 +145,14 @@ Sharing creates an independent copy for the recipient. It does not grant access 
 Browser PWA
 ├── editor state, offline IndexedDB cache and durable sync outbox
 ├── deterministic geometry core (masks, topology, repair, export)
+├── cancellable workers for validation, repair, supports and project encoding
 └── authenticated project synchronization and photographic styles
           │
           ▼
 Node / Express service
 ├── invite-based device access
-├── isolated workspaces and encrypted canonical project bundles
+├── isolated workspaces and encrypted project-state manifests
+├── workspace-scoped immutable source/export assets
 ├── encrypted, expiring project-share packages
 ├── static PWA and protected editor modules
 └── private proxy to the analysis service
@@ -202,9 +219,10 @@ npm test
 
 The one-time browser install supplies an isolated Chromium runtime. `npm test`
 then includes real editor interactions for candidate restore, field-level undo,
-rulers, draft PNG export, and the mobile sheets. The browser fixture uses only
-synthetic artwork and an in-memory server, and rejects requests to any external
-origin. Run just that coverage with `npm run test:browser`.
+rulers, draft PNG export, uninterrupted manual material editing, and the mobile
+sheets. The browser fixture uses only synthetic artwork and an in-memory server,
+and rejects requests to any external origin. Run just that coverage with
+`npm run test:browser`.
 
 Run the Python image-processing tests:
 
