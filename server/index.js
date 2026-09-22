@@ -15,6 +15,7 @@ import {
 } from './auth.js';
 import { versionedWeb } from './serve-sw.js';
 import { ShareError, ShareService } from './shares.js';
+import { ProjectAssetError, ProjectAssetService } from './project-assets.js';
 import { ProjectError, ProjectService } from './projects.js';
 import { resolveProjectEncryption } from './project-keys.js';
 
@@ -103,10 +104,18 @@ export function createApp(options = {}) {
     shareEncryptionKey: configuredShareKey,
     adminToken: auth.adminToken,
   });
+  const projectAssets = options.projectAssets || new ProjectAssetService(database, {
+    directory: options.projectAssetDirectory,
+    ...projectEncryption,
+    maximumBytes: options.projectAssetMaximumBytes,
+    maximumWorkspaceBytes: options.projectWorkspaceMaximumBytes,
+  });
   const projects = options.projects || new ProjectService(database, {
     directory: options.projectDirectory,
     ...projectEncryption,
     maximumBytes: options.projectMaximumBytes,
+    maximumWorkspaceBytes: options.projectWorkspaceMaximumBytes,
+    assets: projectAssets,
   });
   const limiter = options.limiter || new RedemptionLimiter({
     maxPerKey: envInteger('REDEEM_MAX_FAILURES_PER_MINUTE', 8),
@@ -240,7 +249,7 @@ export function createApp(options = {}) {
   });
 
   const projectFailure = (res, error) => {
-    if (error instanceof ProjectError) {
+    if (error instanceof ProjectError || error instanceof ProjectAssetError) {
       setPrivateNoStore(res);
       return res.status(error.status).json({
         error: error.message,
@@ -272,12 +281,63 @@ export function createApp(options = {}) {
     }
   });
 
+  app.get('/api/projects/:id/state', requireDevice, requireWorkspace, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      const result = projects.state(req.device.workspaceId, req.params.id);
+      res.setHeader('ETag', `"${result.row.revision}"`);
+      res.type(result.row.storageFormat === 'asset-manifest-v1'
+        ? 'application/vnd.kerfloom.project-manifest+json'
+        : 'application/vnd.kerfloom.project-bundle+json');
+      return res.send(result.buffer);
+    } catch (error) {
+      return projectFailure(res, error);
+    }
+  });
+
+  app.post(
+    '/api/project-assets',
+    requireDevice,
+    requireWorkspace,
+    express.raw({ type: 'application/octet-stream', limit: projectAssets.maximumBytes }),
+    (req, res) => {
+      setPrivateNoStore(res);
+      try {
+        const result = projectAssets.upload(req.device.workspaceId, req.body, {
+          sha256: req.get('x-kerfloom-asset-sha256'),
+          kind: req.get('x-kerfloom-asset-kind'),
+          mimeType: req.get('x-kerfloom-asset-type'),
+        });
+        return res.status(result.created ? 201 : 200).json(result);
+      } catch (error) {
+        return projectFailure(res, error);
+      }
+    },
+  );
+
+  app.get('/api/project-assets/:id', requireDevice, requireWorkspace, (req, res) => {
+    setPrivateNoStore(res);
+    try {
+      const result = projectAssets.read(req.device.workspaceId, req.params.id);
+      res.setHeader('ETag', `"${result.asset.sha256}"`);
+      res.setHeader('Content-Length', String(result.buffer.length));
+      res.type(result.asset.mimeType);
+      return res.send(result.buffer);
+    } catch (error) {
+      return projectFailure(res, error);
+    }
+  });
+
   app.put(
     '/api/projects/:id',
     requireDevice,
     requireWorkspace,
     express.raw({
-      type: ['application/vnd.kerfloom.project-bundle+json', 'application/octet-stream'],
+      type: [
+        'application/vnd.kerfloom.project-bundle+json',
+        'application/vnd.kerfloom.project-manifest+json',
+        'application/octet-stream',
+      ],
       limit: projects.maximumBytes,
     }),
     (req, res) => {
@@ -607,6 +667,7 @@ export function createApp(options = {}) {
   app.locals.auth = auth;
   app.locals.shares = shares;
   app.locals.projects = projects;
+  app.locals.projectAssets = projectAssets;
   app.locals.db = database;
   app.locals.webVersion = versioned.version;
   return app;

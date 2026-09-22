@@ -114,6 +114,35 @@ export function initDatabase(db) {
       ON server_projects(workspace_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_server_projects_trash
       ON server_projects(workspace_id, trashed_at, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS project_assets (
+      id                  TEXT PRIMARY KEY,
+      workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      sha256              TEXT NOT NULL,
+      kind                TEXT NOT NULL,
+      mime_type           TEXT NOT NULL,
+      size_bytes          INTEGER NOT NULL,
+      key_id              TEXT NOT NULL,
+      file_name           TEXT NOT NULL,
+      created_at          TEXT NOT NULL,
+      last_referenced_at  TEXT NOT NULL,
+      UNIQUE(workspace_id, sha256)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_project_assets_workspace
+      ON project_assets(workspace_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS project_asset_refs (
+      project_id          TEXT NOT NULL REFERENCES server_projects(id) ON DELETE CASCADE,
+      asset_id            TEXT NOT NULL REFERENCES project_assets(id) ON DELETE RESTRICT,
+      role                TEXT NOT NULL,
+      slot_key            TEXT NOT NULL,
+      created_at          TEXT NOT NULL,
+      PRIMARY KEY(project_id, role, slot_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_project_asset_refs_asset
+      ON project_asset_refs(asset_id);
   `);
 
   // SQLite's CREATE TABLE IF NOT EXISTS does not add columns to existing
@@ -129,6 +158,12 @@ export function initDatabase(db) {
   }
   if (!hasColumn(db, 'server_projects', 'key_id')) {
     db.exec('ALTER TABLE server_projects ADD COLUMN key_id TEXT;');
+  }
+  if (!hasColumn(db, 'server_projects', 'storage_format')) {
+    db.exec("ALTER TABLE server_projects ADD COLUMN storage_format TEXT NOT NULL DEFAULT 'legacy-bundle-v1';");
+  }
+  if (!hasColumn(db, 'server_projects', 'thumbnail_data_url')) {
+    db.exec('ALTER TABLE server_projects ADD COLUMN thumbnail_data_url TEXT;');
   }
 
   // Every pre-workspace device receives an isolated workspace. Nothing is

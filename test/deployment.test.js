@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,12 +32,14 @@ const auth = new AuthService(db, {
 });
 const shareDirectory = path.join(temporaryRoot, 'shares');
 const projectDirectory = path.join(temporaryRoot, 'projects');
+const projectAssetDirectory = path.join(temporaryRoot, 'project-assets');
 const app = createApp({
   db,
   auth,
   webDir: webDirectory,
   shareDirectory,
   projectDirectory,
+  projectAssetDirectory,
   projectEncryptionKey: 'server-project-test-key'.repeat(4),
 });
 const server = app.listen(0, '127.0.0.1');
@@ -447,6 +450,93 @@ test('server projects synchronize complete encrypted bundles across linked works
     },
   })).status, 404);
   assert.equal(fs.readdirSync(projectDirectory).length, 0);
+
+  const sourceBytes = Buffer.from('immutable source bytes');
+  const sourceDigest = crypto.createHash('sha256').update(sourceBytes).digest('hex');
+  const uploadedAsset = await request('/api/project-assets', {
+    method: 'POST',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/octet-stream',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+      'X-Kerfloom-Asset-Sha256': sourceDigest,
+      'X-Kerfloom-Asset-Kind': 'source',
+      'X-Kerfloom-Asset-Type': 'image/jpeg',
+    },
+    body: sourceBytes,
+  });
+  assert.equal(uploadedAsset.status, 201);
+  const asset = (await uploadedAsset.json()).asset;
+  const duplicateAsset = await request('/api/project-assets', {
+    method: 'POST',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/octet-stream',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+      'X-Kerfloom-Asset-Sha256': sourceDigest,
+      'X-Kerfloom-Asset-Kind': 'source',
+      'X-Kerfloom-Asset-Type': 'image/jpeg',
+    },
+    body: sourceBytes,
+  });
+  assert.equal(duplicateAsset.status, 200);
+  assert.equal((await duplicateAsset.json()).asset.id, asset.id);
+
+  const stranger = await register('Separate workspace');
+  assert.equal((await request(`/api/project-assets/${asset.id}`, { headers: {
+    Cookie: stranger.cookie,
+    'X-Kerfloom-Workspace': stranger.body.device.workspaceId,
+  } })).status, 404);
+
+  const manifestId = 'c1f88990-7028-4722-83c0-1bc6666c466b';
+  const manifest = {
+    schema: 'kerfloom.project-manifest',
+    version: 1,
+    clientProjectId: manifestId,
+    trashedAt: null,
+    project: { ...bundle.project, id: manifestId, name: 'Manifest portrait' },
+    source: {
+      assetId: asset.id,
+      sha256: asset.sha256,
+      size: asset.sizeBytes,
+      name: 'portrait.jpg',
+      mimeType: 'image/jpeg',
+    },
+    checkpoints: [],
+    artifacts: [],
+  };
+  const savedManifest = await request(`/api/projects/${manifestId}`, {
+    method: 'PUT',
+    headers: {
+      Cookie: owner.cookie,
+      'Content-Type': 'application/vnd.kerfloom.project-manifest+json',
+      'If-Match': '"0"',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+    },
+    body: JSON.stringify(manifest),
+  });
+  assert.equal(savedManifest.status, 201);
+  assert.equal((await savedManifest.json()).project.storageFormat, 'asset-manifest-v1');
+  const state = await request(`/api/projects/${manifestId}/state`, { headers: {
+    Cookie: owner.cookie,
+    'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+  } });
+  assert.match(state.headers.get('content-type'), /^application\/vnd\.kerfloom\.project-manifest\+json/);
+  assert.deepEqual(await state.json(), manifest);
+  const portable = await request(`/api/projects/${manifestId}/bundle`, { headers: {
+    Cookie: owner.cookie,
+    'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+  } });
+  assert.equal((await portable.json()).source.dataUrl,
+    `data:image/jpeg;base64,${sourceBytes.toString('base64')}`);
+  assert.equal((await request(`/api/projects/${manifestId}`, {
+    method: 'DELETE',
+    headers: {
+      Cookie: owner.cookie,
+      'If-Match': '"1"',
+      'X-Kerfloom-Workspace': owner.body.device.workspaceId,
+    },
+  })).status, 200);
 });
 
 test('pwa-kit worker is content-stamped and the escape hatch has hard headers', async () => {

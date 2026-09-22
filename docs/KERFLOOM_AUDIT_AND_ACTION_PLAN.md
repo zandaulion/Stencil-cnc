@@ -597,11 +597,11 @@ Done when output round trips preserve units/topology within the stated tolerance
 
 ### K19 — Reduce sync transfer and startup friction
 
-- [ ] Design workspace-authorized immutable source/export assets plus a small versioned state manifest.
-- [ ] Scope content addressing and authorization correctly; a guessed hash must not grant another workspace's asset access or existence information.
+- [x] Design workspace-authorized immutable source/export assets plus a small versioned state manifest. The encrypted server store, exact-state route, and backward-compatible hydrated bundle route are implemented; see `docs/K19_ASSET_SYNC_DESIGN.md`.
+- [x] Scope content addressing and authorization correctly; a guessed hash must not grant another workspace's asset access or existence information. Assets use opaque random IDs, every lookup is workspace-scoped, and content hashes deduplicate only inside that workspace.
 - [ ] Load metadata/thumbnails first and prioritize the active project; fetch other originals/exports on demand with an explicit offline-availability option.
-- [ ] Migrate existing bundles without discarding old versions until completeness and rollback are verified.
-- [ ] Define asset retention, reference tracking, quotas, and conservative cleanup for candidates, shares, and release records.
+- [ ] Migrate existing bundles without discarding old versions until completeness and rollback are verified. The compatibility layer is complete; client-side staged migration and rollback verification remain.
+- [x] Define asset retention, reference tracking, quotas, and conservative cleanup for candidates, shares, and release records. Manifests create exact references, workspace quota includes unique asset bytes, and unreferenced assets retain a seven-day safety window.
 
 Done when an ordinary parameter edit does not reupload the original photo/all exports, opening one project does not require the entire library, and offline/recovery behavior remains correct.
 

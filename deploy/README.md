@@ -51,8 +51,9 @@ blank, Kerfloom derives a separate domain key from `SHARE_ENCRYPTION_KEY` or
 `ADMIN_TOKEN`. Rotating the active source key without re-encrypting stored
 bundles makes those bundles unreadable.
 
-`PROJECT_MAX_BYTES` limits one complete project package and
-`PROJECT_WORKSPACE_MAX_BYTES` bounds one workspace. Browser IndexedDB is only
+`PROJECT_MAX_BYTES` limits one project state package,
+`PROJECT_ASSET_MAX_BYTES` limits one immutable source/export asset, and
+`PROJECT_WORKSPACE_MAX_BYTES` bounds their combined storage in one workspace. Browser IndexedDB is only
 an offline cache and durable upload queue: a save is labelled "Saved to server"
 only after the encrypted bundle and its matching SQLite revision are committed.
 

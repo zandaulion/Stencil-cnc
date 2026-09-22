@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { ProjectAssetError } from './project-assets.js';
 import { parseBundle, ShareError } from './shares.js';
 
 const FILE_MAGIC_V1 = Buffer.from('STPJ1');
@@ -15,10 +16,40 @@ const REVISION_PROJECT_FILE = new RegExp(
   'i',
 );
 const DEFAULT_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+const PROJECT_MANIFEST_SCHEMA = 'kerfloom.project-manifest';
+const PROJECT_MANIFEST_VERSION = 1;
+const LEGACY_STORAGE_FORMAT = 'legacy-bundle-v1';
+const MANIFEST_STORAGE_FORMAT = 'asset-manifest-v1';
 
 function cleanText(value, fallback, maximum = 120) {
   const cleaned = typeof value === 'string' ? value.trim().slice(0, maximum) : '';
   return cleaned || fallback;
+}
+
+function cleanThumbnail(value) {
+  if (typeof value !== 'string' || value.length > 256 * 1024) return null;
+  return /^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : null;
+}
+
+function parseProjectPayload(buffer) {
+  let candidate;
+  try {
+    candidate = JSON.parse(buffer.toString('utf8'));
+  } catch {
+    candidate = null;
+  }
+  if (candidate?.schema !== PROJECT_MANIFEST_SCHEMA) {
+    return { bundle: parseBundle(buffer), storageFormat: LEGACY_STORAGE_FORMAT, assetRefs: [] };
+  }
+  if (candidate.version !== PROJECT_MANIFEST_VERSION ||
+      !candidate.project || candidate.project.schema !== 'stencil-cnc.project' ||
+      !Array.isArray(candidate.checkpoints) || !Array.isArray(candidate.artifacts) ||
+      candidate.checkpoints.length > 10 || candidate.artifacts.length > 30 ||
+      candidate.source != null && typeof candidate.source !== 'object' ||
+      candidate.artifacts.some((artifact) => !artifact || typeof artifact !== 'object')) {
+    throw new ProjectError(400, 'The project state manifest is invalid.', 'bad_manifest');
+  }
+  return { bundle: candidate, storageFormat: MANIFEST_STORAGE_FORMAT, assetRefs: null };
 }
 
 function sameHash(left, right) {
@@ -53,6 +84,8 @@ function publicRow(row) {
     deletedAt: row.deleted_at,
     sizeBytes: row.size_bytes,
     sha256: row.bundle_sha256,
+    storageFormat: row.storage_format || LEGACY_STORAGE_FORMAT,
+    thumbnail: row.thumbnail_data_url || null,
   };
 }
 
@@ -103,6 +136,7 @@ export class ProjectService {
     );
     this.orphanGraceMs = Number(options.orphanGraceMs ?? DEFAULT_ORPHAN_GRACE_MS);
     this.faultInjector = options.faultInjector || null;
+    this.assets = options.assets || null;
     this.onStorageWarning = options.onStorageWarning || ((message, error) => {
       console.error(message, error);
     });
@@ -352,10 +386,12 @@ export class ProjectService {
 
   usage(workspaceId, excludingId = null) {
     return this.db.prepare(`
-      SELECT COALESCE(SUM(size_bytes), 0) AS bytes
-      FROM server_projects
-      WHERE workspace_id = ? AND (? IS NULL OR id <> ?)
-    `).get(workspaceId, excludingId, excludingId).bytes;
+      SELECT
+        (SELECT COALESCE(SUM(size_bytes), 0) FROM server_projects
+          WHERE workspace_id = ? AND deleted_at IS NULL AND (? IS NULL OR id <> ?)) +
+        (SELECT COALESCE(SUM(size_bytes), 0) FROM project_assets
+          WHERE workspace_id = ?) AS bytes
+    `).get(workspaceId, excludingId, excludingId, workspaceId).bytes;
   }
 
   save(workspaceId, clientProjectId, buffer, ifMatch) {
@@ -369,10 +405,21 @@ export class ProjectService {
       throw new ProjectError(428, 'A project revision is required.', 'revision_required');
     }
     let bundle;
+    let storageFormat;
+    let assetRefs;
     try {
-      bundle = parseBundle(buffer);
+      ({ bundle, storageFormat, assetRefs } = parseProjectPayload(buffer));
+      if (storageFormat === MANIFEST_STORAGE_FORMAT) {
+        if (!this.assets) {
+          throw new ProjectError(503, 'Project asset storage is unavailable.', 'storage_unavailable');
+        }
+        assetRefs = this.assets.resolveReferences(workspaceId, bundle);
+      }
     } catch (error) {
       if (error instanceof ShareError) {
+        throw new ProjectError(error.status, error.message, error.code);
+      }
+      if (error instanceof ProjectAssetError) {
         throw new ProjectError(error.status, error.message, error.code);
       }
       throw error;
@@ -412,6 +459,7 @@ export class ProjectService {
     const project = bundle.project;
     const summary = project.editor?.projectSummary ?? {};
     const trashedAt = typeof bundle.trashedAt === 'string' ? bundle.trashedAt : null;
+    const thumbnail = cleanThumbnail(summary.thumbnail);
 
     let published = false;
     let transactionOpen = false;
@@ -428,7 +476,7 @@ export class ProjectService {
             revision = ?, name = ?, panel_width_mm = ?, panel_height_mm = ?,
             cut_style = ?, status = ?, has_source = ?, checkpoint_count = ?,
             artifact_count = ?, updated_at = ?, trashed_at = ?, deleted_at = NULL, size_bytes = ?,
-            bundle_sha256 = ?, key_id = ?, file_name = ?
+            bundle_sha256 = ?, key_id = ?, file_name = ?, storage_format = ?, thumbnail_data_url = ?
           WHERE id = ? AND revision = ?
         `).run(
           revision,
@@ -446,6 +494,8 @@ export class ProjectService {
           digest,
           this.keyId,
           fileName,
+          storageFormat,
+          thumbnail,
           current.id,
           expected,
         );
@@ -458,8 +508,9 @@ export class ProjectService {
             id, workspace_id, client_project_id, revision, name,
             panel_width_mm, panel_height_mm, cut_style, status,
             has_source, checkpoint_count, artifact_count, created_at, updated_at,
-            trashed_at, deleted_at, size_bytes, bundle_sha256, key_id, file_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            trashed_at, deleted_at, size_bytes, bundle_sha256, key_id, file_name,
+            storage_format, thumbnail_data_url
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id,
           workspaceId,
@@ -481,7 +532,18 @@ export class ProjectService {
           digest,
           this.keyId,
           fileName,
+          storageFormat,
+          thumbnail,
         );
+      }
+      this.db.prepare('DELETE FROM project_asset_refs WHERE project_id = ?').run(id);
+      for (const reference of assetRefs) {
+        this.db.prepare(`
+          INSERT INTO project_asset_refs (project_id, asset_id, role, slot_key, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(id, reference.row.id, reference.role, reference.slotKey, now);
+        this.db.prepare('UPDATE project_assets SET last_referenced_at = ? WHERE id = ?')
+          .run(now, reference.row.id);
       }
       this.injectFault('before_database_commit', { fileName, revision });
       this.db.exec('COMMIT');
@@ -599,7 +661,7 @@ export class ProjectService {
     return result;
   }
 
-  bundle(workspaceId, clientProjectId) {
+  state(workspaceId, clientProjectId) {
     this.ensureAvailable();
     const row = this.row(workspaceId, this.validateClientId(clientProjectId));
     if (!row || row.deleted_at) throw new ProjectError(404, 'Project not found.', 'project_not_found');
@@ -615,6 +677,42 @@ export class ProjectService {
       throw new ProjectError(500, 'The project package failed its integrity check.', 'bundle_damaged');
     }
     return { row: publicRow(row), buffer };
+  }
+
+  bundle(workspaceId, clientProjectId) {
+    const stored = this.state(workspaceId, clientProjectId);
+    if (stored.row.storageFormat !== MANIFEST_STORAGE_FORMAT) return stored;
+    let manifest;
+    try {
+      manifest = JSON.parse(stored.buffer.toString('utf8'));
+    } catch {
+      throw new ProjectError(500, 'The project state manifest is damaged.', 'bundle_damaged');
+    }
+    const encodeAsset = (reference) => {
+      const result = this.assets.read(workspaceId, reference.assetId);
+      return `data:${result.asset.mimeType};base64,${result.buffer.toString('base64')}`;
+    };
+    const bundle = {
+      ...manifest,
+      schema: 'stencil-cnc.share-bundle',
+      version: 1,
+      source: manifest.source ? {
+        name: manifest.source.name,
+        mimeType: manifest.source.mimeType,
+        size: manifest.source.size,
+        dataUrl: encodeAsset(manifest.source),
+      } : null,
+      artifacts: manifest.artifacts.map((artifact) => ({
+        filename: artifact.filename,
+        kind: artifact.kind,
+        mimeType: artifact.mimeType,
+        createdAt: artifact.createdAt,
+        profileSnapshot: artifact.profileSnapshot ?? null,
+        releaseManifest: artifact.releaseManifest ?? null,
+        dataUrl: encodeAsset(artifact),
+      })),
+    };
+    return { row: stored.row, buffer: Buffer.from(JSON.stringify(bundle)) };
   }
 
   delete(workspaceId, clientProjectId, ifMatch) {
@@ -640,14 +738,23 @@ export class ProjectService {
     };
     const deletedAt = this.clock().toISOString();
     const revision = row.revision + 1;
-    const result = this.db.prepare(`
-      UPDATE server_projects SET
-        revision = ?, updated_at = ?, deleted_at = ?, size_bytes = 0,
-        bundle_sha256 = '', has_source = 0, checkpoint_count = 0, artifact_count = 0
-      WHERE workspace_id = ? AND client_project_id = ? AND revision = ?
-    `).run(revision, deletedAt, deletedAt, workspaceId, clientId, expected);
-    if (result.changes !== 1) {
-      throw new ProjectError(409, 'This project changed on another device.', 'revision_conflict');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db.prepare(`
+        UPDATE server_projects SET
+          revision = ?, updated_at = ?, deleted_at = ?, size_bytes = 0,
+          bundle_sha256 = '', has_source = 0, checkpoint_count = 0, artifact_count = 0,
+          thumbnail_data_url = NULL
+        WHERE workspace_id = ? AND client_project_id = ? AND revision = ?
+      `).run(revision, deletedAt, deletedAt, workspaceId, clientId, expected);
+      if (result.changes !== 1) {
+        throw new ProjectError(409, 'This project changed on another device.', 'revision_conflict');
+      }
+      this.db.prepare('DELETE FROM project_asset_refs WHERE project_id = ?').run(row.id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
     }
     try {
       fs.rmSync(this.filePath(row.file_name), { force: true });
